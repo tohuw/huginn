@@ -1,6 +1,6 @@
 [project]
 name = "huginn"
-version = "0.1.0"
+version = "2026.07.18"
 description = "Local monitor for AI coding-agent sessions (Claude Code, Codex, Claude Desktop)"
 requires-python = ">=3.12"
 dependencies = [

@@ -1,0 +1,20 @@
+[project]
+name = "huginn"
+version = "0.1.0"
+description = "Local monitor for AI coding-agent sessions (Claude Code, Codex, Claude Desktop)"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "watchfiles>=0.24",
+]
+
+[project.scripts]
+huginn = "huginn.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["huginn"]

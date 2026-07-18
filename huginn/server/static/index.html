@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Huginn</title>
+<link rel="stylesheet" href="/static/style.css">
+<link id="favicon" rel="icon" href="data:,">
+</head>
+<body>
+<header>
+  <div class="brand">⛬ huginn</div>
+  <div class="attention" id="attention-pill" hidden><span id="attention-n">0</span> need you</div>
+  <div class="spacer"></div>
+  <label class="ctl" title="LLM blurbs on state change">
+    <input type="checkbox" id="llm-toggle"> blurbs
+  </label>
+  <select id="provider" class="ctl" title="Q&A provider">
+    <option value="claude">claude</option>
+    <option value="codex">codex</option>
+  </select>
+  <button id="chat-toggle" class="ctl">ask ▸</button>
+</header>
+
+<main>
+  <div id="grid"></div>
+  <div id="empty" hidden>no sessions</div>
+</main>
+
+<aside id="chat" hidden>
+  <div id="chat-log"></div>
+  <form id="chat-form">
+    <textarea id="chat-input" rows="2"
+      placeholder="ask about your sessions… (@name to focus one)"></textarea>
+    <button type="submit">→</button>
+  </form>
+</aside>
+
+<template id="card-tpl">
+  <div class="card">
+    <div class="row1">
+      <span class="src"></span><span class="name"></span>
+      <span class="badge"></span><span class="dur"></span>
+    </div>
+    <div class="row2"><span class="cwd"></span><span class="branch"></span><span class="model"></span></div>
+    <div class="blurb"></div>
+    <pre class="peek" hidden></pre>
+    <div class="actions">
+      <button class="jump">jump</button>
+      <button class="peek-btn">peek</button>
+      <button class="ask">ask</button>
+      <span class="tokens"></span>
+    </div>
+  </div>
+</template>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

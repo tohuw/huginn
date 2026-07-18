@@ -1,0 +1,8 @@
+#!/bin/sh
+# huginn hook forwarder: stdin (hook JSON) -> local huginn daemon.
+# Must never block or fail the calling session: tight timeouts, always exit 0.
+PORT=$(cat "$HOME/.local/state/huginn/port" 2>/dev/null || echo 47100)
+curl -s -m 1 --connect-timeout 0.2 -X POST \
+  --data-binary @- -H 'Content-Type: application/json' \
+  "http://127.0.0.1:$PORT/api/hook/$1/$2" >/dev/null 2>&1 || true
+exit 0

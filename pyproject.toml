@@ -24,4 +24,16 @@ packages = ["huginn"]
 dev = [
     "httpx>=0.28.1",
     "pytest>=9.1.1",
+    "ruff>=0.15.22",
 ]
+
+[tool.ruff]
+line-length = 130
+
+[tool.ruff.lint]
+# Small, intentional set (issue #21): pyflakes + pycodestyle, not the full
+# default ruleset -- this codebase deliberately uses semicolon one-liners
+# (E702) and doesn't wrap to 79/88 cols, so those are excluded rather than
+# reformatted to match a style the project never adopted.
+select = ["E", "F", "W"]
+ignore = ["E702"]

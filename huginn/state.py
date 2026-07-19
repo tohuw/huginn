@@ -7,7 +7,6 @@ by a hook holds for a grace window against lower-priority contradictions
 from __future__ import annotations
 
 import time
-from pathlib import Path
 
 from .config import Config
 from .model import ATTENTION_STATES, Event, Session, SessionState

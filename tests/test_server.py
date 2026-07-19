@@ -59,6 +59,19 @@ class AuthTests(unittest.TestCase):
         r = c.get("/static/app.js")
         self.assertEqual(r.status_code, 200)
 
+    def test_hook_stats_counts_by_source_and_event(self):
+        c = make_client()
+        headers = {"X-Huginn-Token": "secret-token"}
+        c.post("/api/hook/claude/Stop", json={}, headers=headers)
+        c.post("/api/hook/claude/Stop", json={}, headers=headers)
+        c.post("/api/hook/codex/SessionStart", json={}, headers=headers)
+        r = c.get("/api/hook-stats", headers=headers)
+        self.assertEqual(r.json()["hits"], {"claude.Stop": 2, "codex.SessionStart": 1})
+
+    def test_hook_stats_requires_token(self):
+        c = make_client()
+        self.assertEqual(c.get("/api/hook-stats").status_code, 401)
+
 
 if __name__ == "__main__":
     unittest.main()

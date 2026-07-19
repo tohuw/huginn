@@ -96,6 +96,7 @@ def create_app(daemon: "Daemon") -> FastAPI:
         except Exception:
             data = {}
         payload = {"event": event, "data": data}
+        daemon.record_hook_hit(source, event)
         if event == "Notification" and cfg.section("patterns").get("debug_log"):
             _log_notification(source, data.get("message") or "")
         if source == "claude" and event == "Stop":
@@ -110,6 +111,12 @@ def create_app(daemon: "Daemon") -> FastAPI:
                     payload["asked_question"] = getattr(analyzer, "asked_user_question", False)
         bus.emit(Event(f"hook.{source}", None, time.time(), "hook", payload))
         return {"ok": True}
+
+    @api.get("/hook-stats")
+    def hook_stats():
+        """issue #2: which hook events actually fire, per source. Persists
+        across restarts (piggybacks on the #7 sessions.json snapshot)."""
+        return {"hits": daemon.hook_hits}
 
     @api.get("/settings")
     def get_settings():

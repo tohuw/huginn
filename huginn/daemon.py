@@ -25,13 +25,19 @@ class Daemon:
         # session key -> (Tail, analyzer)
         self.tails: dict[str, tuple[Tail, ClaudeAnalyzer | CodexAnalyzer]] = {}
         self._last_attention = -1
-        self._dirty = False   # sessions changed since the last snapshot write
+        self._dirty = False   # sessions/hook_hits changed since the last snapshot write
         self.token = ""   # set for real in run(); tests may set it directly
+        self.hook_hits: dict[str, int] = {}   # "{source}.{event}" -> count, issue #2
         from .llm.blurb import BlurbWorker
         self.blurbs = BlurbWorker(self)
 
     def mark_dirty(self) -> None:
         self._dirty = True
+
+    def record_hook_hit(self, source: str, event: str) -> None:
+        key = f"{source}.{event}"
+        self.hook_hits[key] = self.hook_hits.get(key, 0) + 1
+        self.mark_dirty()
 
     # ---------------------------------------------------------- persistence
     SNAPSHOT_PATH = property(lambda self: config.STATE_DIR / "sessions.json")
@@ -41,10 +47,11 @@ class Daemon:
             data = json.loads(self.SNAPSHOT_PATH.read_text())
         except (OSError, json.JSONDecodeError):
             return
-        self.reducer.restore(data)
+        self.reducer.restore(data.get("sessions", {}))
+        self.hook_hits = data.get("hook_hits", {})
 
     def _write_snapshot(self) -> None:
-        data = json.dumps(self.reducer.snapshot())
+        data = json.dumps({"sessions": self.reducer.snapshot(), "hook_hits": self.hook_hits})
         tmp = self.SNAPSHOT_PATH.with_suffix(".json.tmp")
         tmp.write_text(data)
         os.replace(tmp, self.SNAPSHOT_PATH)

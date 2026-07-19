@@ -149,6 +149,14 @@ class CodexStreamLifecycleTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0.1)
         self.assertFalse(_alive(pid), "child survived stream() cancellation")
 
+    async def test_separates_distinct_agent_message_updates(self):
+        first = '{"type":"item.updated","item":{"type":"agent_message","text":"I will inspect."}}'
+        final = '{"type":"item.completed","item":{"type":"agent_message","text":"The result is ready."}}'
+        script = _script(self.tmp_path, "codex", f"echo '{first}'\necho '{final}'")
+        with patch("huginn.llm.providers.CODEX_BIN", script):
+            chunks = [c async for c in CodexCLI().stream("hi")]
+        self.assertEqual(chunks, ["I will inspect.", "\n", "The result is ready."])
+
 
 if __name__ == "__main__":
     unittest.main()

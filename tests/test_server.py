@@ -130,6 +130,27 @@ class AuthTests(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json()["ui"]["ended_ttl_s"], 600)
 
+    def test_providers_reports_installed_and_missing_options(self):
+        class FakeProvider:
+            def __init__(self, reason):
+                self.reason = reason
+
+            def available(self):
+                return self.reason
+
+        c = make_client()
+        providers = {
+            "claude": FakeProvider(None),
+            "codex": FakeProvider("embedded codex binary not found"),
+        }
+        with patch("huginn.llm.providers.get_provider", side_effect=providers.get):
+            r = c.get("/api/providers", headers={"X-Huginn-Token": "secret-token"})
+        self.assertEqual(r.status_code, 200)
+        body = r.json()["providers"]
+        self.assertTrue(body["claude"]["available"])
+        self.assertFalse(body["codex"]["available"])
+        self.assertEqual(body["codex"]["reason"], "embedded codex binary not found")
+
     def test_settings_put_rejects_invalid_value_with_422(self):
         self._isolated_config_dir()
         c = make_client()

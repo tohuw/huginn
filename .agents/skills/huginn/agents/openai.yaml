@@ -1,0 +1,4 @@
+interface:
+  display_name: "Huginn"
+  short_description: "Read and interact with live agent sessions"
+  default_prompt: "Use $huginn to check which agent sessions need attention."

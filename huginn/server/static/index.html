@@ -9,7 +9,7 @@
 </head>
 <body>
 <header>
-  <div class="brand"><img src="/static/bird.svg" alt="">huginn</div>
+  <div class="brand"><img src="/static/bird.svg" alt="">Huginn</div>
   <div class="attention" id="attention-pill" hidden><span id="attention-n">0</span> need you</div>
   <div class="spacer"></div>
   <label class="ctl" title="LLM blurbs on state change">
@@ -19,7 +19,7 @@
     <option value="claude">claude</option>
     <option value="codex">codex</option>
   </select>
-  <button id="chat-toggle" class="ctl">ask ▸</button>
+  <button id="chat-toggle" class="ctl">ask ▾</button>
 </header>
 
 <main>
@@ -27,12 +27,12 @@
   <div id="empty" hidden>no sessions</div>
 </main>
 
-<aside id="chat" hidden>
+<aside id="chat">
   <div id="chat-log"></div>
   <form id="chat-form">
     <div class="chat-input-wrap">
       <textarea id="chat-input" rows="2" autocomplete="off"
-        placeholder="ask about your sessions… (@name to focus one)"></textarea>
+        placeholder="ask about sessions… use @name"></textarea>
       <div id="mention-menu" role="listbox" hidden></div>
     </div>
     <button type="submit">→</button>

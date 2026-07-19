@@ -79,6 +79,16 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return run_doctor()
 
 
+def cmd_install_agent(args: argparse.Namespace) -> int:
+    from .agent_install import install
+    return install()
+
+
+def cmd_uninstall_agent(args: argparse.Namespace) -> int:
+    from .agent_install import uninstall
+    return uninstall()
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="huginn", description="Local AI coding-session monitor")
     sub = p.add_subparsers(dest="command", required=True)
@@ -94,6 +104,9 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("install-hooks", help="install Claude Code + Codex hooks").set_defaults(fn=cmd_install_hooks)
     sub.add_parser("uninstall-hooks", help="remove huginn hooks").set_defaults(fn=cmd_uninstall_hooks)
     sub.add_parser("doctor", help="check environment and configuration").set_defaults(fn=cmd_doctor)
+
+    sub.add_parser("install-agent", help="run huginn as a LaunchAgent (auto-start on login)").set_defaults(fn=cmd_install_agent)
+    sub.add_parser("uninstall-agent", help="remove the huginn LaunchAgent").set_defaults(fn=cmd_uninstall_agent)
 
     args = p.parse_args(argv)
     return args.fn(args)

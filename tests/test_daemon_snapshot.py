@@ -5,6 +5,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from huginn import config
 from huginn.config import Config
@@ -42,6 +43,18 @@ class DaemonSnapshotTests(unittest.TestCase):
         d._restore_snapshot()   # no sessions.json written yet
         self.assertEqual(d.reducer.sessions, {})
         self.assertEqual(d.hook_hits, {})
+
+    def test_failed_write_stays_dirty_for_retry(self):
+        d = Daemon(Config({}))
+        d.mark_dirty()
+        with patch.object(d, "_write_snapshot", side_effect=OSError("disk busy")):
+            self.assertFalse(d._flush_snapshot_if_dirty())
+        self.assertTrue(d._dirty)
+
+        with patch.object(d, "_write_snapshot") as write:
+            self.assertTrue(d._flush_snapshot_if_dirty())
+        write.assert_called_once_with()
+        self.assertFalse(d._dirty)
 
 
 if __name__ == "__main__":

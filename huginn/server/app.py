@@ -17,6 +17,7 @@ from .sse import event_stream
 
 if TYPE_CHECKING:
     from ..daemon import Daemon
+    from ..diagnostics import Diagnostics
 
 STATIC_DIR = Path(__file__).parent / "static"
 NOTIFICATIONS_LOG = config.STATE_DIR / "notifications.log"
@@ -37,7 +38,7 @@ def _rotate_notifications_log() -> None:
     NOTIFICATIONS_LOG.write_text("\n".join(lines) + ("\n" if lines else ""))
 
 
-def _log_notification(source: str, message: str) -> None:
+def _log_notification(source: str, message: str, diagnostics: "Diagnostics") -> None:
     """Opt-in (patterns.debug_log) raw-message capture for tuning the
     permission/waiting pattern lists against real traffic -- issue #1."""
     if not message:
@@ -48,8 +49,9 @@ def _log_notification(source: str, message: str) -> None:
         with NOTIFICATIONS_LOG.open("a") as f:
             f.write(json.dumps({"ts": time.time(), "source": source, "message": message}) + "\n")
         NOTIFICATIONS_LOG.chmod(0o600)   # regardless of umask
-    except OSError:
-        pass
+        diagnostics.ok("notifications_log")
+    except OSError as e:
+        diagnostics.error("notifications_log", e)
 
 
 def create_app(daemon: "Daemon") -> FastAPI:
@@ -138,7 +140,7 @@ def create_app(daemon: "Daemon") -> FastAPI:
         payload = {"event": event, "data": data}
         daemon.record_hook_hit(source, event)
         if event == "Notification" and cfg.section("patterns").get("debug_log"):
-            _log_notification(source, data.get("message") or "")
+            _log_notification(source, data.get("message") or "", daemon.diagnostics)
         if source == "claude" and event == "Stop":
             # Disambiguate DONE vs WAITING_INPUT from the transcript tail.
             sid = data.get("session_id", "")
@@ -158,6 +160,14 @@ def create_app(daemon: "Daemon") -> FastAPI:
         """issue #2: which hook events actually fire, per source. Persists
         across restarts (piggybacks on the #7 sessions.json snapshot)."""
         return {"hits": daemon.hook_hits}
+
+    @api.get("/health")
+    def health():
+        """issue #15: per-source last-success/last-error, so a source going
+        dark shows up here instead of the dashboard just looking stale.
+        Redacted by construction -- Diagnostics never stores exception
+        message text, only the class name and counts."""
+        return {"sources": daemon.diagnostics.snapshot()}
 
     @api.get("/settings")
     def get_settings():

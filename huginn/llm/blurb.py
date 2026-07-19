@@ -71,8 +71,12 @@ class BlurbWorker:
                 prompt, model=cfg.get("llm", "blurb_model"),
                 timeout=cfg.get("llm", "blurb_timeout_s"),
                 cwd=str(_config.CACHE_DIR))
-        except Exception:
-            return  # silent: the card keeps its old blurb
+            self.daemon.diagnostics.ok("blurb")
+        except Exception as e:
+            # the card keeps its old blurb -- but the failure is now
+            # recorded (issue #15) instead of vanishing silently.
+            self.daemon.diagnostics.error("blurb", e)
+            return
         first_line = text.splitlines()[0].strip() if text else ""
         if not first_line:
             return

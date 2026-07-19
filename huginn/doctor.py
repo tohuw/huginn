@@ -22,15 +22,31 @@ def _warn(label: str, detail: str = "") -> None:
     print(f" \033[33m!\033[0m {label}" + (f" — {detail}" if detail else ""))
 
 
-def _daemon_session_count(port: int) -> int:
-    """Query the authenticated daemon health endpoint."""
+def _authed_get(port: int, path: str) -> dict:
     token = config.TOKEN_PATH.read_text().strip()
     request = urllib.request.Request(
-        f"http://127.0.0.1:{port}/api/sessions",
+        f"http://127.0.0.1:{port}{path}",
         headers={"X-Huginn-Token": token},
     )
     with urllib.request.urlopen(request, timeout=2) as response:
-        return len(json.load(response)["sessions"])
+        return json.load(response)
+
+
+def _daemon_session_count(port: int) -> int:
+    return len(_authed_get(port, "/api/sessions")["sessions"])
+
+
+def _report_source_health(port: int) -> None:
+    """issue #15: surface any background source that's currently failing --
+    a source going dark otherwise just looks like a stale dashboard."""
+    sources = _authed_get(port, "/api/health")["sources"]
+    for name, h in sources.items():
+        failing = h["last_error_ts"] is not None and (
+            h["last_success"] is None or h["last_error_ts"] > h["last_success"])
+        if failing:
+            age = int(time.time() - h["last_error_ts"])
+            _warn(f"{name} failing", f"{h['last_error_class']}, {h['error_count']}x, "
+                                     f"last {age}s ago")
 
 
 def run_doctor() -> int:
@@ -93,6 +109,7 @@ def run_doctor() -> int:
             info = json.loads(daemon_json.read_text())
             n = _daemon_session_count(info["port"])
             _check("daemon running", True, f"port {info['port']}, {n} sessions")
+            _report_source_health(info["port"])
         except Exception:
             _warn("daemon state file present but daemon unreachable",
                   "stale daemon.json or crashed daemon")

@@ -15,12 +15,16 @@ from huginn.server.app import create_app
 
 
 def make_client(token: str = "secret-token") -> TestClient:
+    return make_client_with_daemon(token)[0]
+
+
+def make_client_with_daemon(token: str = "secret-token") -> tuple[TestClient, Daemon]:
     daemon = Daemon(Config({}))
     daemon.token = token
     app = create_app(daemon)
     # base_url controls the Host header TestClient sends; require_local_origin
     # rejects anything but 127.0.0.1/localhost, so this must match.
-    return TestClient(app, base_url="http://127.0.0.1")
+    return TestClient(app, base_url="http://127.0.0.1"), daemon
 
 
 class AuthTests(unittest.TestCase):
@@ -160,6 +164,21 @@ class AuthTests(unittest.TestCase):
     def test_hook_stats_requires_token(self):
         c = make_client()
         self.assertEqual(c.get("/api/hook-stats").status_code, 401)
+
+    def test_health_requires_token(self):
+        c = make_client()
+        self.assertEqual(c.get("/api/health").status_code, 401)
+
+    def test_health_reflects_injected_failure_and_redacts_message(self):
+        c, daemon = make_client_with_daemon()
+        secret = "leaked prompt text: do not expose me"
+        daemon.diagnostics.error("blurb", RuntimeError(secret))
+        r = c.get("/api/health", headers={"X-Huginn-Token": "secret-token"})
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual(body["sources"]["blurb"]["last_error_class"], "RuntimeError")
+        self.assertEqual(body["sources"]["blurb"]["error_count"], 1)
+        self.assertNotIn(secret, r.text)
 
     def test_chat_rejection_uses_error_status(self):
         c = make_client()

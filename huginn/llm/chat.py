@@ -48,7 +48,6 @@ async def start_chat(daemon: "Daemon", body: dict) -> dict:
     provider = get_provider(body.get("provider") or daemon.cfg.get("llm", "provider"))
     unavailable = provider.available()
     if unavailable:
-        daemon.bus.broadcast("chat.error", {"error": f"{provider.name}: {unavailable}"})
         return {"ok": False, "error": unavailable}
     _active_chat = asyncio.create_task(_run_chat(daemon, provider, question))
     return {"ok": True}

@@ -96,3 +96,18 @@ def save(cfg: Config) -> None:
 def ensure_state_dirs() -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+TOKEN_PATH = STATE_DIR / "token"
+
+
+def write_token() -> str:
+    """Fresh per-daemon-start auth token; any open dashboard tab hard-reloads on 401."""
+    import secrets
+    ensure_state_dirs()
+    token = secrets.token_urlsafe(32)
+    tmp = TOKEN_PATH.with_suffix(".tmp")
+    tmp.write_text(token)
+    tmp.chmod(0o600)
+    os.replace(tmp, TOKEN_PATH)
+    return token

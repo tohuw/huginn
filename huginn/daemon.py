@@ -25,6 +25,7 @@ class Daemon:
         # session key -> (Tail, analyzer)
         self.tails: dict[str, tuple[Tail, ClaudeAnalyzer | CodexAnalyzer]] = {}
         self._last_attention = -1
+        self.token = ""   # set for real in run(); tests may set it directly
         from .llm.blurb import BlurbWorker
         self.blurbs = BlurbWorker(self)
 
@@ -210,6 +211,7 @@ class Daemon:
         from .server.app import create_app
 
         config.ensure_state_dirs()
+        self.token = config.write_token()
         host = self.cfg.get("server", "host")
         port = self.cfg.get("server", "port")
         app = create_app(self)
@@ -232,6 +234,8 @@ class Daemon:
                 t.cancel()
             with contextlib.suppress(Exception):
                 (config.STATE_DIR / "daemon.json").unlink()
+            with contextlib.suppress(Exception):
+                config.TOKEN_PATH.unlink()
         return 0
 
     def _write_daemon_state(self, port: int) -> None:

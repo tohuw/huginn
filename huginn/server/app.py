@@ -1,12 +1,13 @@
 """FastAPI routes. The app is created against a running Daemon instance."""
 from __future__ import annotations
 
+import hmac
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .. import config
@@ -23,23 +24,41 @@ def create_app(daemon: "Daemon") -> FastAPI:
     app = FastAPI(title="huginn")
     bus, reducer, cfg = daemon.bus, daemon.reducer, daemon.cfg
 
+    def require_token(request: Request) -> None:
+        supplied = request.headers.get("X-Huginn-Token") or request.query_params.get("token") or ""
+        if not hmac.compare_digest(supplied, daemon.token):
+            raise HTTPException(401, "bad or missing token")
+
+    # A router-level dependency (not @app.middleware("http")) so this doesn't
+    # go through Starlette's BaseHTTPMiddleware, which buffers/breaks SSE
+    # streaming (StreamingResponse disconnect detection hangs under it).
+    api = APIRouter(prefix="/api", dependencies=[Depends(require_token)])
+
     @app.get("/")
     def index():
-        return FileResponse(STATIC_DIR / "index.html")
+        # Same-origin bootstrap: the token rides in the page the browser
+        # already trusts (127.0.0.1-only) instead of a separate fetch.
+        html = (STATIC_DIR / "index.html").read_text()
+        html = html.replace(
+            "<script src=\"/static/app.js\"></script>",
+            f'<script>const HUGINN_TOKEN = "{daemon.token}";</script>\n'
+            '<script src="/static/app.js"></script>',
+        )
+        return HTMLResponse(html)
 
-    @app.get("/api/sessions")
+    @api.get("/sessions")
     def sessions():
         items = sorted(reducer.sessions.values(),
                        key=lambda s: (STATE_RANK[s.state], s.state_since))
         return {"sessions": [s.to_dict() for s in items],
                 "attention": reducer.attention_count()}
 
-    @app.get("/api/events")
+    @api.get("/events")
     async def events():
         return StreamingResponse(event_stream(bus), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache"})
 
-    @app.get("/api/sessions/{key}/tail")
+    @api.get("/sessions/{key}/tail")
     def tail(key: str, n: int = 15):
         s = reducer.sessions.get(key)
         if s is None:
@@ -47,7 +66,7 @@ def create_app(daemon: "Daemon") -> FastAPI:
         from ..llm.context import distill
         return {"lines": distill(s.transcript_path or "", s.source, max_lines=n)}
 
-    @app.post("/api/sessions/{key}/focus")
+    @api.post("/sessions/{key}/focus")
     def focus(key: str):
         s = reducer.sessions.get(key)
         if s is None:
@@ -55,7 +74,7 @@ def create_app(daemon: "Daemon") -> FastAPI:
         from ..focus import focus_session
         return focus_session(s)
 
-    @app.post("/api/hook/{source}/{event}")
+    @api.post("/hook/{source}/{event}")
     async def hook(source: str, event: str, request: Request):
         try:
             data = await request.json()
@@ -75,11 +94,11 @@ def create_app(daemon: "Daemon") -> FastAPI:
         bus.emit(Event(f"hook.{source}", None, time.time(), "hook", payload))
         return {"ok": True}
 
-    @app.get("/api/settings")
+    @api.get("/settings")
     def get_settings():
         return cfg.to_dict()
 
-    @app.put("/api/settings")
+    @api.put("/settings")
     async def put_settings(request: Request):
         body = await request.json()
         for section, values in body.items():
@@ -91,11 +110,12 @@ def create_app(daemon: "Daemon") -> FastAPI:
         config.save(cfg)
         return cfg.to_dict()
 
-    @app.post("/api/chat")
+    @api.post("/chat")
     async def chat(request: Request):
         body = await request.json()
         from ..llm.chat import start_chat
         return await start_chat(daemon, body)
 
+    app.include_router(api)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     return app

@@ -1,5 +1,14 @@
 "use strict";
 
+// HUGINN_TOKEN is injected server-side into index.html (same-origin bootstrap).
+function apiFetch(url, opts = {}) {
+  const headers = { ...(opts.headers || {}), "X-Huginn-Token": HUGINN_TOKEN };
+  return fetch(url, { ...opts, headers }).then((r) => {
+    if (r.status === 401) { location.reload(); throw new Error("stale token"); }
+    return r;
+  });
+}
+
 const sessions = new Map();   // key -> session object
 const cards = new Map();      // key -> card element
 const grid = document.getElementById("grid");
@@ -93,7 +102,7 @@ function setAttention(n) {
 // ------------------------------------------------------------------- actions
 
 async function jump(key) {
-  const r = await fetch(`/api/sessions/${encodeURIComponent(key)}/focus`, { method: "POST" });
+  const r = await apiFetch(`/api/sessions/${encodeURIComponent(key)}/focus`, { method: "POST" });
   if (!r.ok) console.warn("focus failed", await r.text());
 }
 
@@ -101,7 +110,7 @@ async function peek(key) {
   const card = cards.get(key);
   const pre = card.querySelector(".peek");
   if (!pre.hidden) { pre.hidden = true; return; }
-  const r = await fetch(`/api/sessions/${encodeURIComponent(key)}/tail?n=15`);
+  const r = await apiFetch(`/api/sessions/${encodeURIComponent(key)}/tail?n=15`);
   const data = await r.json();
   pre.textContent = (data.lines || []).join("\n") || "(no transcript yet)";
   pre.hidden = false;
@@ -135,7 +144,7 @@ document.getElementById("chat-form").onsubmit = async (e) => {
   addMsg("q", q);
   currentAnswer = addMsg("a", "");
   const provider = document.getElementById("provider").value;
-  const r = await fetch("/api/chat", {
+  const r = await apiFetch("/api/chat", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ question: q, provider }),
   });
@@ -166,18 +175,18 @@ document.getElementById("chat-input").addEventListener("keydown", (e) => {
 // ------------------------------------------------------------------ settings
 
 async function loadSettings() {
-  const r = await fetch("/api/settings");
+  const r = await apiFetch("/api/settings");
   const cfg = await r.json();
   document.getElementById("llm-toggle").checked = cfg.llm.enabled;
   document.getElementById("provider").value = cfg.llm.provider;
 }
 document.getElementById("llm-toggle").onchange = (e) =>
-  fetch("/api/settings", {
+  apiFetch("/api/settings", {
     method: "PUT", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ llm: { enabled: e.target.checked } }),
   });
 document.getElementById("provider").onchange = (e) =>
-  fetch("/api/settings", {
+  apiFetch("/api/settings", {
     method: "PUT", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ llm: { provider: e.target.value } }),
   });
@@ -185,7 +194,7 @@ document.getElementById("provider").onchange = (e) =>
 // -------------------------------------------------------------------- wiring
 
 async function snapshot() {
-  const r = await fetch("/api/sessions");
+  const r = await apiFetch("/api/sessions");
   const data = await r.json();
   const seen = new Set();
   for (const s of data.sessions) { seen.add(s.key); upsertCard(s); }
@@ -194,7 +203,8 @@ async function snapshot() {
 }
 
 function connect() {
-  const es = new EventSource("/api/events");
+  // EventSource can't set custom headers; the token rides as a query param.
+  const es = new EventSource(`/api/events?token=${encodeURIComponent(HUGINN_TOKEN)}`);
   es.addEventListener("session.upsert", (e) => upsertCard(JSON.parse(e.data)));
   es.addEventListener("session.remove", (e) => removeCard(JSON.parse(e.data).key));
   es.addEventListener("attention.count", (e) => setAttention(JSON.parse(e.data).count));

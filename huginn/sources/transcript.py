@@ -6,12 +6,16 @@ front. Attach at size-64KB, then incremental reads past a stored offset.
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any
 
 ATTACH_WINDOW = 64 * 1024
 MAX_READ = 256 * 1024
+
+_TASK_NOTIF_TOOL_ID_RE = re.compile(r"<tool-use-id>(.*?)</tool-use-id>")
+_TASK_NOTIF_STATUS_RE = re.compile(r"<status>(.*?)</status>")
 
 
 class Tail:
@@ -93,12 +97,20 @@ class ClaudeAnalyzer:
         self.error: bool = False
         self.asked_user_question: bool = False
         self.last_ts: float = 0.0
+        self.subagents: dict[str, str] = {}   # Agent tool_use id -> running/completed/failed/killed
 
     def feed(self, entries: list[dict]) -> bool:
         """Returns True if anything meaningful changed."""
         changed = False
         for e in entries:
             etype = e.get("type")
+            if etype == "queue-operation":
+                # Subagent completion is reported via a synthetic entry (not
+                # user/assistant/system) whose content carries a
+                # <task-notification> block -- see issue #8 research notes.
+                if self._feed_task_notification(e.get("content") or ""):
+                    changed = True
+                continue
             if etype not in ("user", "assistant", "system"):
                 continue
             changed = True
@@ -128,6 +140,8 @@ class ClaudeAnalyzer:
                         self.pending_tools[item.get("id", "?")] = time.time()
                         if item.get("name") == "AskUserQuestion":
                             self.asked_user_question = True
+                        elif item.get("name") == "Agent":
+                            self.subagents[item.get("id", "?")] = "running"
                     elif it == "text" and item.get("text"):
                         self.last_assistant_text = item["text"][-2000:]
             elif etype == "user":
@@ -149,6 +163,23 @@ class ClaudeAnalyzer:
             return None
         return time.time() - min(self.pending_tools.values())
 
+    def _feed_task_notification(self, content: str) -> bool:
+        tool_use_id = _TASK_NOTIF_TOOL_ID_RE.search(content)
+        status = _TASK_NOTIF_STATUS_RE.search(content)
+        if not tool_use_id or not status:
+            return False
+        self.subagents[tool_use_id.group(1)] = status.group(1)
+        return True
+
+    def _subagent_counts(self) -> dict[str, int] | None:
+        if not self.subagents:
+            return None
+        counts: dict[str, int] = {}
+        for status in self.subagents.values():
+            label = "done" if status == "completed" else status
+            counts[label] = counts.get(label, 0) + 1
+        return counts
+
     def activity(self) -> dict[str, Any]:
         return {
             "pending_tools": len(self.pending_tools),
@@ -162,6 +193,7 @@ class ClaudeAnalyzer:
             "tokens": self.tokens,
             "error": self.error,
             "last_ts": self.last_ts,
+            "subagents": self._subagent_counts(),
         }
 
 

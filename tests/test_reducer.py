@@ -141,6 +141,28 @@ class ClaudeAnalyzerTests(unittest.TestCase):
         self.assertFalse(an.feed([{"type": "file-history-snapshot"},
                                   {"type": "ai-title"}, {"unknown": 1}]))
 
+    def test_subagent_spawn_and_completion(self):
+        # Real shapes captured from a live session (issue #8 research): the
+        # spawning tool_use is named "Agent", and completion arrives later as
+        # a queue-operation entry whose content carries <task-notification>.
+        an = ClaudeAnalyzer()
+        an.feed([{"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "toolu_1", "name": "Agent",
+             "input": {"description": "do research", "subagent_type": "Explore"}}]}}])
+        self.assertEqual(an.activity()["subagents"], {"running": 1})
+
+        an.feed([{"type": "queue-operation", "operation": "enqueue",
+                  "content": "<task-notification>\n<task-id>abc123</task-id>\n"
+                             "<tool-use-id>toolu_1</tool-use-id>\n"
+                             "<status>completed</status>\n"
+                             "<summary>done</summary>\n</task-notification>"}])
+        self.assertEqual(an.activity()["subagents"], {"done": 1})
+
+    def test_no_subagents_reports_none(self):
+        an = ClaudeAnalyzer()
+        an.feed([{"type": "user", "message": {"content": [{"type": "text", "text": "hi"}]}}])
+        self.assertIsNone(an.activity()["subagents"])
+
 
 class CodexAnalyzerTests(unittest.TestCase):
     def test_turn_lifecycle(self):

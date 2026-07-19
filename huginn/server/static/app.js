@@ -23,6 +23,13 @@ function fmtAge(since) {
   return `${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}`;
 }
 
+function fmtSubagents(subagents) {
+  if (!subagents) return "";
+  const total = Object.values(subagents).reduce((a, b) => a + b, 0);
+  const parts = Object.entries(subagents).map(([status, n]) => `${n} ${status}`);
+  return `${total} subagent${total === 1 ? "" : "s"}: ${parts.join(", ")}`;
+}
+
 const BADGES = {
   working: "working", waiting_input: "input?", waiting_permission: "permit?",
   error: "error", done: "done", idle: "idle", ended: "ended",
@@ -51,6 +58,7 @@ function upsertCard(s) {
   card.querySelector(".branch").textContent = s.git_branch ? `⎇ ${s.git_branch}` : "";
   card.querySelector(".model").textContent = s.model || "";
   card.querySelector(".blurb").textContent = s.blurb || s.last_prompt || "";
+  card.querySelector(".subagents").textContent = fmtSubagents(s.subagents);
   card.querySelector(".tokens").textContent = s.tokens ? `${(s.tokens / 1000).toFixed(0)}k tok` : "";
   reorder();
 }

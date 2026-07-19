@@ -124,7 +124,8 @@ class Reducer:
         a = ev.payload
         changed = False
         for attr, key in (("git_branch", "git_branch"), ("model", "model"),
-                          ("tokens", "tokens"), ("last_prompt", "last_prompt")):
+                          ("tokens", "tokens"), ("last_prompt", "last_prompt"),
+                          ("subagents", "subagents")):
             v = a.get(key)
             if v and v != getattr(s, attr):
                 setattr(s, attr, v); changed = True
@@ -144,7 +145,8 @@ class Reducer:
             self.sessions[incoming.key] = incoming
             return [incoming]
         changed = False
-        for attr in ("name", "model", "git_branch", "tokens", "cwd", "transcript_path", "last_prompt"):
+        for attr in ("name", "model", "git_branch", "tokens", "cwd", "transcript_path",
+                    "last_prompt", "subagents"):
             v = getattr(incoming, attr)
             if v and v != getattr(s, attr):
                 setattr(s, attr, v); changed = True

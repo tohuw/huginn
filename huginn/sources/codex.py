@@ -67,6 +67,19 @@ def _available_cols(conn: sqlite3.Connection) -> list[str]:
     return [c for c in _THREAD_COLS if c in have]
 
 
+def _subagent_counts(conn: sqlite3.Connection, thread_id: str) -> dict[str, int] | None:
+    """Group child threads spawned by this one (issue #8) by status."""
+    try:
+        rows = conn.execute(
+            "SELECT status, COUNT(*) FROM thread_spawn_edges "
+            "WHERE parent_thread_id=? GROUP BY status",
+            (thread_id,),
+        ).fetchall()
+    except sqlite3.Error:
+        return None
+    return {status: count for status, count in rows} or None
+
+
 def scan(cfg: config.Config | None = None) -> list[Session]:
     """One-shot scan of recent, unarchived Codex threads."""
     cfg = cfg or config.load()
@@ -96,7 +109,7 @@ def scan(cfg: config.Config | None = None) -> list[Session]:
             # register as threads too — don't monitor ourselves
             if (t.get("cwd") or "").startswith(huginn_dir):
                 continue
-            sessions.append(_thread_to_session(t))
+            sessions.append(_thread_to_session(t, subagents=_subagent_counts(conn, t["id"])))
     except sqlite3.Error:
         return sessions
     finally:
@@ -104,7 +117,7 @@ def scan(cfg: config.Config | None = None) -> list[Session]:
     return sessions
 
 
-def _thread_to_session(t: dict) -> Session:
+def _thread_to_session(t: dict, subagents: dict[str, int] | None = None) -> Session:
     updated_s = (t.get("updated_at_ms") or t.get("recency_at_ms") or 0) / 1000.0
     rollout = t.get("rollout_path")
     rollout_mtime = 0.0
@@ -140,6 +153,7 @@ def _thread_to_session(t: dict) -> Session:
         last_prompt=(t.get("first_user_message") or "")[:300] or None,
         tokens=t.get("tokens_used"),
         version=t.get("cli_version"),
+        subagents=subagents,
     )
 
 

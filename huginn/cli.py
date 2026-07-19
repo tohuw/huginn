@@ -64,6 +64,21 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return run(config.load(), open_browser=not args.no_open)
 
 
+def cmd_open(args: argparse.Namespace) -> int:
+    """Reopen the dashboard with a fresh auth bootstrap, without restarting
+    the daemon -- the token rides in a URL fragment, never sent to the
+    server (see issue #23), so a previously-opened tab can't self-recover
+    after a restart and needs this instead."""
+    import webbrowser
+    if not (config.STATE_DIR / "daemon.json").exists():
+        print("huginn: daemon not running (try `huginn serve`)")
+        return 1
+    port = (config.STATE_DIR / "port").read_text().strip()
+    token = config.TOKEN_PATH.read_text().strip()
+    webbrowser.open(f"http://127.0.0.1:{port}/#t={token}")
+    return 0
+
+
 def cmd_install_hooks(args: argparse.Namespace) -> int:
     from .hooks.install import install
     return install()
@@ -100,6 +115,8 @@ def main(argv: list[str] | None = None) -> int:
     sp = sub.add_parser("serve", help="run the daemon + dashboard")
     sp.add_argument("--no-open", action="store_true", help="don't open the browser")
     sp.set_defaults(fn=cmd_serve)
+
+    sub.add_parser("open", help="reopen the dashboard with a fresh auth bootstrap").set_defaults(fn=cmd_open)
 
     sub.add_parser("install-hooks", help="install Claude Code + Codex hooks").set_defaults(fn=cmd_install_hooks)
     sub.add_parser("uninstall-hooks", help="remove huginn hooks").set_defaults(fn=cmd_uninstall_hooks)

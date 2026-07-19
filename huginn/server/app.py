@@ -7,8 +7,8 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .. import config
@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 STATIC_DIR = Path(__file__).parent / "static"
 NOTIFICATIONS_LOG = config.STATE_DIR / "notifications.log"
+SESSION_COOKIE = "huginn_token"
 
 
 def _log_notification(source: str, message: str) -> None:
@@ -39,27 +40,50 @@ def create_app(daemon: "Daemon") -> FastAPI:
     app = FastAPI(title="huginn")
     bus, reducer, cfg = daemon.bus, daemon.reducer, daemon.cfg
 
+    port = cfg.get("server", "port")
+
     def require_token(request: Request) -> None:
-        supplied = request.headers.get("X-Huginn-Token") or request.query_params.get("token") or ""
+        # No query-param fallback: a bearer token must never ride in a URL
+        # (browser history, access logs). SSE authenticates via the cookie
+        # set by POST /api/session instead -- see issue #23.
+        supplied = request.headers.get("X-Huginn-Token") or request.cookies.get(SESSION_COOKIE) or ""
         if not hmac.compare_digest(supplied, daemon.token):
             raise HTTPException(401, "bad or missing token")
 
-    # A router-level dependency (not @app.middleware("http")) so this doesn't
+    def require_local_origin(request: Request) -> None:
+        # Defends against DNS-rebinding / malicious-webpage requests: a page
+        # served from any other hostname will show that hostname in Host,
+        # even if it resolves to 127.0.0.1.
+        host = (request.headers.get("host") or "").split(":")[0]
+        if host not in ("127.0.0.1", "localhost"):
+            raise HTTPException(400, "unexpected host")
+        origin = request.headers.get("origin")
+        if origin is not None and origin not in (
+                f"http://127.0.0.1:{port}", f"http://localhost:{port}"):
+            raise HTTPException(403, "cross-origin request rejected")
+
+    # Router-level dependencies (not @app.middleware("http")) so this doesn't
     # go through Starlette's BaseHTTPMiddleware, which buffers/breaks SSE
     # streaming (StreamingResponse disconnect detection hangs under it).
-    api = APIRouter(prefix="/api", dependencies=[Depends(require_token)])
+    api = APIRouter(prefix="/api",
+                    dependencies=[Depends(require_local_origin), Depends(require_token)])
 
     @app.get("/")
     def index():
-        # Same-origin bootstrap: the token rides in the page the browser
-        # already trusts (127.0.0.1-only) instead of a separate fetch.
-        html = (STATIC_DIR / "index.html").read_text()
-        html = html.replace(
-            "<script src=\"/static/app.js\"></script>",
-            f'<script>const HUGINN_TOKEN = "{daemon.token}";</script>\n'
-            '<script src="/static/app.js"></script>',
-        )
-        return HTMLResponse(html)
+        # The shell carries no secret: GET / must be safely fetchable by any
+        # local process. The token only ever reaches the browser via a URL
+        # fragment (never sent to the server) -- see huginn open / `serve`.
+        return FileResponse(STATIC_DIR / "index.html")
+
+    @api.post("/session")
+    def create_session(response: Response):
+        # Called once by app.js after it pulls the token out of the URL
+        # fragment. Establishes an HttpOnly cookie so subsequent requests
+        # (including EventSource, which can't set custom headers) never need
+        # to put the token in a URL or JS-readable storage again.
+        response.set_cookie(SESSION_COOKIE, daemon.token, httponly=True,
+                            samesite="strict", path="/")
+        return {"ok": True}
 
     @api.get("/sessions")
     def sessions():

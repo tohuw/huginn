@@ -279,6 +279,13 @@ class CodexWaitingReducerTests(unittest.TestCase):
         self.feed("codex.activity", s.key, an.activity())
         self.assertEqual(s.state, SessionState.WAITING_INPUT)
 
+    def test_missing_from_complete_scan_ends_session(self):
+        s = codex_session(state=SessionState.DONE)
+        self.r.sessions[s.key] = s
+        changed = self.feed("codex.missing", s.key, {})
+        self.assertEqual(changed, [s])
+        self.assertEqual(s.state, SessionState.ENDED)
+
 
 if __name__ == "__main__":
     unittest.main()

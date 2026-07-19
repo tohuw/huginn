@@ -4,9 +4,13 @@ the real schema in a temp sqlite file rather than relying on live data."""
 from __future__ import annotations
 
 import sqlite3
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
-from huginn.sources.codex import _subagent_counts
+from huginn.config import Config
+from huginn.sources.codex import _subagent_counts, scan_with_status
 
 DDL = """
 CREATE TABLE thread_spawn_edges (
@@ -42,6 +46,16 @@ class CodexSubagentTests(unittest.TestCase):
     def test_missing_table_returns_none(self):
         conn = sqlite3.connect(":memory:")   # no DDL applied
         self.assertIsNone(_subagent_counts(conn, "any"))
+
+
+class CodexScanStatusTests(unittest.TestCase):
+    def test_unreadable_database_is_not_a_complete_empty_scan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "missing.sqlite"
+            with patch("huginn.sources.codex.STATE_DB", missing):
+                sessions, complete = scan_with_status(Config({}))
+        self.assertEqual(sessions, [])
+        self.assertFalse(complete)
 
 
 if __name__ == "__main__":

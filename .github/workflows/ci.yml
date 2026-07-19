@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (py${{ matrix.python-version }})
+    # macOS-only (issue #21, "include macOS coverage where feasible"):
+    # huginn is a macOS-specific tool -- LaunchAgent install, iTerm2/osascript
+    # focus, and the embedded ChatGPT.app codex binary path all assume it.
+    # A Linux runner wouldn't exercise anything meaningful here.
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Install Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Sync dependencies (fails clearly on lockfile drift)
+        run: uv sync --locked --python ${{ matrix.python-version }}
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Test
+        run: uv run pytest -q
+
+      - name: Build wheel
+        run: uv build
+
+      - name: Install wheel into a clean venv and smoke-test
+        run: |
+          python3 -m venv /tmp/huginn-smoke-venv
+          /tmp/huginn-smoke-venv/bin/pip install --quiet dist/*.whl
+          /tmp/huginn-smoke-venv/bin/python -c "import huginn; print('import ok')"
+          /tmp/huginn-smoke-venv/bin/huginn --help
+          /tmp/huginn-smoke-venv/bin/huginn status

@@ -51,7 +51,6 @@ def _report_source_health(port: int) -> None:
 
 def run_doctor() -> int:
     ok = True
-    cfg = config.load()
 
     print("binaries:")
     from .llm.providers import CODEX_BIN, claude_binary

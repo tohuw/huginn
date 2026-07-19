@@ -138,7 +138,10 @@ def create_app(daemon: "Daemon") -> FastAPI:
     async def chat(request: Request):
         body = await request.json()
         from ..llm.chat import start_chat
-        return await start_chat(daemon, body)
+        result = await start_chat(daemon, body)
+        if not result.get("ok"):
+            raise HTTPException(409, result.get("error") or "chat rejected")
+        return result
 
     app.include_router(api)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

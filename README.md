@@ -17,6 +17,10 @@ Windows version covered by automated CI but never once tested on a real Windows
 machine (Codex seemed pretty sure it did a good job — I hope someone finds out
 if that's true at some point).
 
+![Huginn dashboard showing a fictional busy agent roster and the guided Ask tour](docs/huginn-demo.png)
+
+_The privacy-safe interactive demo, with fictional sessions and transcript text._
+
 Huginn provides deterministic tools and interfaces, including a skill your
 agents can use, plus the agentic Ask interface in the console. Agents using the
 skill see the same live evidence Ask receives, so which one you use is your
@@ -42,10 +46,18 @@ just ask it how this works. :)**
 ```sh
 uv run huginn serve          # daemon + dashboard at http://127.0.0.1:47100
 uv run huginn open           # reopen the dashboard tab with a fresh auth bootstrap
+uv run huginn demo           # privacy-safe interactive fictional roster
 uv run huginn status         # one-shot table in the terminal
 uv run huginn install-hooks  # sub-second state changes (recommended, once)
 uv run huginn doctor         # environment/hook/daemon health check
 ```
+
+`huginn demo` opens a self-contained product tour with fictional sessions,
+transcript tails, title editing, sorting, view controls, desktop tiles, and
+deterministic Ask answers. It never reads the live roster API, so it is safe for
+screenshots, recordings, and demonstrations; closing the tab discards all demo
+changes. The dashboard's **help** button opens the demo in a separate tab and
+starts a guided walkthrough in the Ask panel.
 
 ### macOS menu-bar app
 
@@ -140,10 +152,11 @@ generated only when a session hits a decision point (debounced and rate-capped)
 available on demand. Blurbs are cleared on state changes and are deliberately
 excluded from Ask's evidence so an old summary cannot invent a current blocker.
 
-The live roster expires non-actionable records: idle sessions and completed
-interactive Codex turns remain for 5 minutes, while completed `codex exec`
-jobs remain for 30 seconds. Persistent editor backends and one-off scratchpad
-probes therefore leave the live view without hiding attention states.
+The live roster expires non-actionable records, but never merely ages out an
+open terminal session. Claude CLI cards remain for the life of their process;
+Codex CLI cards require repeated roster misses plus a live-process/TTY poll
+confirming the tab is gone. Completed `codex exec` jobs remain for 30 seconds,
+and persistent editor backends still leave the view after their idle cutoff.
 
 ## How it watches
 

@@ -5,6 +5,7 @@ import asyncio
 import contextlib
 import json
 import os
+import socket
 import time
 import webbrowser
 from pathlib import Path
@@ -30,6 +31,9 @@ class Daemon:
         self.token = ""   # set for real in run(); tests may set it directly
         self.refresh_token = ""  # persistent; lets authorized browser tabs recover
         self.hook_hits: dict[str, int] = {}   # "{source}.{event}" -> count, issue #2
+        # A database roster can omit an open CLI thread because it crossed a
+        # recency window or row cap.  Require repeated misses before removal.
+        self._codex_missing_polls: dict[str, int] = {}
         # Owned here (not a chat.py module global) so multiple Daemon
         # instances in one process never share chat state -- issue #17.
         self.active_chat: asyncio.Task | None = None
@@ -116,8 +120,12 @@ class Daemon:
                         if p.suffix != ".json":
                             continue
                         if not p.exists():
-                            self.bus.emit(Event("claude.dead", f"claude:{p.stem}",
-                                                time.time(), "statusfile"))
+                            key = f"claude:{p.stem}"
+                            sess = self.reducer.sessions.get(key)
+                            if sess is not None and (sess.pid is None
+                                                     or not claude_code.pid_alive(sess.pid)):
+                                self.bus.emit(Event("claude.dead", key,
+                                                    time.time(), "statusfile"))
                         else:
                             self._emit_claude_file(p)
         finally:
@@ -140,7 +148,8 @@ class Daemon:
         # session has aged out it is real, but no longer useful in a live
         # attention roster. Remove an already-known card and suppress re-adds
         # until the status file reports fresh activity.
-        if (sess.state == SessionState.IDLE
+        if (sess.entrypoint != "cli"
+                and sess.state == SessionState.IDLE
                 and time.time() - sess.last_activity >= self.cfg.get("ui", "idle_ttl_s")):
             if sess.key in self.reducer.sessions:
                 self.bus.emit(Event("session.hide", sess.key, time.time(), "timeout"))
@@ -211,13 +220,20 @@ class Daemon:
         sessions, succeeded = codex.scan_with_status(self.cfg)
         seen = {s.key for s in sessions}
         for sess in sessions:
+            self._codex_missing_polls.pop(sess.key, None)
             self.bus.emit(Event("codex.thread", sess.key, time.time(), "poll",
                                 {"session": sess}))
         if succeeded:
             for key, existing in list(self.reducer.sessions.items()):
                 if (existing.source == "codex" and not key.startswith("wsl:")
                         and key not in seen):
-                    self.bus.emit(Event("codex.missing", key, time.time(), "poll"))
+                    misses = self._codex_missing_polls.get(key, 0) + 1
+                    self._codex_missing_polls[key] = misses
+                    if existing.entrypoint == "cli" and codex.cli_terminal_alive(existing):
+                        continue
+                    if misses >= 2:
+                        self._codex_missing_polls.pop(key, None)
+                        self.bus.emit(Event("codex.missing", key, time.time(), "poll"))
 
     async def codex_rollout_watcher(self) -> None:
         from watchfiles import awatch
@@ -330,10 +346,17 @@ class Daemon:
 
         config.ensure_state_dirs()
         self._restore_snapshot()
-        self.token = config.write_token()
-        self.refresh_token = config.get_or_create_refresh_token()
         host = self.cfg.get("server", "host")
         port = self.cfg.get("server", "port")
+        # Do this before rotating credentials or publishing daemon.json. A
+        # losing second launch used to clobber the healthy daemon's ownership
+        # files and then enter a restart loop after Uvicorn reported EADDRINUSE.
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.settimeout(0.2)
+            if probe.connect_ex((host, port)) == 0:
+                raise OSError("address already in use")
+        self.token = config.write_token()
+        self.refresh_token = config.get_or_create_refresh_token()
         app = create_app(self)
         # SSE connections are intentionally long-lived. On restart they may
         # not observe disconnect quickly enough for Uvicorn's unbounded drain,
@@ -376,9 +399,13 @@ class Daemon:
             with contextlib.suppress(Exception):
                 self._write_snapshot()   # best-effort: survive a graceful restart
             with contextlib.suppress(Exception):
-                (config.STATE_DIR / "daemon.json").unlink()
+                state_path = config.STATE_DIR / "daemon.json"
+                state = json.loads(state_path.read_text())
+                if state.get("pid") == os.getpid():
+                    state_path.unlink()
             with contextlib.suppress(Exception):
-                config.TOKEN_PATH.unlink()
+                if config.TOKEN_PATH.read_text().strip() == self.token:
+                    config.TOKEN_PATH.unlink()
         return 0
 
     def _write_daemon_state(self, port: int) -> None:

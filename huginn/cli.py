@@ -1,4 +1,4 @@
-"""huginn CLI: status | serve | install-hooks | uninstall-hooks | doctor"""
+"""huginn CLI: status | serve | open | demo | hooks | doctor"""
 from __future__ import annotations
 
 import argparse
@@ -80,6 +80,17 @@ def cmd_open(args: argparse.Namespace) -> int:
     port = (config.STATE_DIR / "port").read_text().strip()
     token = config.TOKEN_PATH.read_text().strip()
     webbrowser.open(f"http://127.0.0.1:{port}/#t={token}")
+    return 0
+
+
+def cmd_demo(args: argparse.Namespace) -> int:
+    """Open the self-contained fictional dashboard without live roster data."""
+    import webbrowser
+    if not (config.STATE_DIR / "port").exists():
+        print("huginn: daemon not running (try `huginn serve`)")
+        return 1
+    port = (config.STATE_DIR / "port").read_text().strip()
+    webbrowser.open(f"http://127.0.0.1:{port}/?demo=1")
     return 0
 
 
@@ -232,6 +243,7 @@ def main(argv: list[str] | None = None) -> int:
     sp.set_defaults(fn=cmd_serve)
 
     sub.add_parser("open", help="reopen the dashboard with a fresh auth bootstrap").set_defaults(fn=cmd_open)
+    sub.add_parser("demo", help="open an interactive fictional dashboard").set_defaults(fn=cmd_demo)
 
     sp = sub.add_parser("roster", help="compact live roster for agents and scripts")
     sp.add_argument("--attention", action="store_true", help="only sessions needing user attention")

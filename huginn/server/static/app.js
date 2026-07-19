@@ -7,6 +7,8 @@
 // custom headers), so the token never needs to touch a URL or JS-readable
 // storage again.
 let refreshInFlight = null;
+const DEMO_MODE = new URLSearchParams(location.search).get("demo") === "1";
+const DEMO_TOUR = DEMO_MODE && new URLSearchParams(location.search).get("tour") === "1";
 
 async function bootstrapSession() {
   const params = new URLSearchParams(location.hash.slice(1));
@@ -47,10 +49,12 @@ let rosterLoading = true;
 const PROVIDER_KEY = "huginn.provider";
 const providerSelect = document.getElementById("provider");
 function getRememberedProvider() {
+  if (DEMO_MODE) return null;
   try { return localStorage.getItem(PROVIDER_KEY); }
   catch (_) { return null; }
 }
 function rememberProvider(value) {
+  if (DEMO_MODE) return;
   try {
     if (value) localStorage.setItem(PROVIDER_KEY, value);
     else localStorage.removeItem(PROVIDER_KEY);
@@ -59,6 +63,185 @@ function rememberProvider(value) {
 const rememberedProvider = getRememberedProvider();
 if ([...providerSelect.options].some((o) => o.value === rememberedProvider)) {
   providerSelect.value = rememberedProvider;
+}
+
+function demoSessions() {
+  const now = Date.now() / 1000;
+  const base = {
+    attention: false, git_branch: "main", shells: 0, subagents: null,
+    title_origin: "guessed", transcript_path: null, version: "",
+  };
+  return [
+    { ...base, key: "demo:claude-atlas", source: "claude", session_id: "atlas",
+      cwd: "/Users/demo/Projects/atlas", name: "atlas-7c2a", entrypoint: "cli",
+      state: "working", rank: 4, state_since: now - 263, last_activity: now - 4,
+      model: "claude-opus-4-8", title: "Refactor Search Pipeline",
+      blurb: "Splitting the indexer into resumable stages and running regression tests.",
+      tokens: 184000, shells: 2, subagents: { running: 2, done: 1 } },
+    { ...base, key: "demo:codex-lantern", source: "codex", session_id: "lantern",
+      cwd: "/Users/demo/Projects/lantern", name: "lantern-b19f", entrypoint: "cli",
+      state: "waiting_permission", rank: 0, attention: true,
+      state_since: now - 38, last_activity: now - 38, model: "gpt-5.6-codex",
+      title: "Ship Database Migration", blurb: "Ready to apply the migration after approval.",
+      tokens: 92000 },
+    { ...base, key: "demo:claude-orbit", source: "claude", session_id: "orbit",
+      cwd: "/Users/demo/Projects/orbit", name: "orbit-42e1", entrypoint: "cli",
+      state: "waiting_input", rank: 1, attention: true,
+      state_since: now - 74, last_activity: now - 74, model: "claude-sonnet-4-6",
+      title: "Design Import Workflow", blurb: "Needs a choice between streaming and batch imports.",
+      tokens: 61000, subagents: { done: 3 } },
+    { ...base, key: "demo:codex-canopy", source: "codex", session_id: "canopy",
+      cwd: "/Users/demo/Projects/canopy", name: "canopy-91ad", entrypoint: "cli",
+      state: "working", rank: 4, state_since: now - 511, last_activity: now - 2,
+      model: "gpt-5.6-codex", git_branch: "feature/maps", title: "Build Offline Maps",
+      blurb: "Implementing tile caching and testing interrupted downloads.",
+      tokens: 237000, shells: 1, subagents: { running: 1, done: 4 } },
+    { ...base, key: "demo:claude-ember", source: "claude", session_id: "ember",
+      cwd: "/Users/demo/Projects/ember", name: "ember-d033", entrypoint: "cli",
+      state: "error", rank: 2, attention: true, state_since: now - 129,
+      last_activity: now - 129, model: "claude-opus-4-8", git_branch: "fix/ci",
+      title: "Repair Release Build", blurb: "Build failed in the Windows packaging job.",
+      tokens: 128000 },
+    { ...base, key: "demo:codex-sonata", source: "codex", session_id: "sonata",
+      cwd: "/Users/demo/Projects/sonata", name: "sonata-e510", entrypoint: "cli",
+      state: "done", rank: 3, state_since: now - 92, last_activity: now - 92,
+      model: "gpt-5.6-codex", title: "Polish Audio Timeline",
+      blurb: "Timeline snapping and keyboard navigation are complete.", tokens: 74000 },
+    { ...base, key: "demo:claude-harbor", source: "claude", session_id: "harbor",
+      cwd: "/Users/demo/Projects/harbor", name: "harbor-66be", entrypoint: "cli",
+      state: "idle", rank: 5, state_since: now - 846, last_activity: now - 846,
+      model: "claude-sonnet-4-6", title: "Audit API Contracts",
+      blurb: "Waiting after documenting compatibility gaps.", tokens: 43000 },
+    { ...base, key: "demo:claude-app", source: "claude-desktop", session_id: "desktop",
+      cwd: "", name: "Claude.app", entrypoint: "desktop", state: "active", rank: 7,
+      state_since: now - 19, last_activity: now - 19, model: "",
+      title: "", title_origin: null, blurb: "" },
+    { ...base, key: "demo:chatgpt-app", source: "chatgpt-desktop", session_id: "desktop",
+      cwd: "", name: "ChatGPT.app", entrypoint: "desktop", state: "idle", rank: 5,
+      state_since: now - 307, last_activity: now - 307, model: "",
+      title: "", title_origin: null, blurb: "" },
+  ];
+}
+
+const DEMO_TRANSCRIPTS = {
+  "demo:claude-atlas": [
+    "user: Split the indexer so interrupted runs can resume safely.",
+    "assistant: I’ll map the current checkpoint boundaries first.",
+    "assistant to=functions.exec_command: rg -n checkpoint src tests",
+    "tool: Process exited with code 0",
+    "assistant: The write phase is already idempotent; parsing needs a durable cursor.",
+    "assistant to=functions.exec_command: pytest -q tests/test_indexer.py",
+    "tool: 28 passed in 1.14s",
+    "assistant: Delegating crash-recovery coverage while I extract the stages.",
+    "assistant: Two subagents running; refactor in progress.",
+  ],
+  "demo:codex-lantern": [
+    "user: Prepare the production database migration.",
+    "assistant: Migration is generated and the rollback path is verified.",
+    "assistant to=functions.exec_command: uv run alembic upgrade head",
+    "tool: You have 1,284 weighted tokens left",
+    "assistant: This command changes the shared database and requires approval.",
+    "assistant: Waiting for permission to apply revision 9f31_add_delivery_state.",
+  ],
+  "demo:claude-orbit": [
+    "user: Design the customer import workflow.",
+    "assistant: Both approaches preserve validation errors and resumability.",
+    "assistant: Streaming minimizes memory; batch mode makes review and rollback simpler.",
+    "assistant to=request_user_input: Choose streaming or batch imports",
+    "tool: Waiting for user response",
+  ],
+  "demo:codex-canopy": [
+    "user: Make map downloads work reliably offline.",
+    "assistant: I’m adding a content-addressed tile cache and resumable manifests.",
+    "assistant to=functions.exec_command: cargo test tile_cache --all-features",
+    "tool: running 41 tests",
+    "assistant: One worker is fuzzing interrupted downloads; four earlier tasks are done.",
+    "assistant to=functions.exec_command: cargo test interrupted_download",
+    "tool: test interrupted_download ... ok",
+    "assistant: Integrating eviction metrics now.",
+  ],
+  "demo:claude-ember": [
+    "user: Find out why the release build fails on Windows.",
+    "assistant: The wheel builds locally; inspecting the CI-only packaging step.",
+    "assistant to=functions.exec_command: gh run view 8841 --log-failed",
+    "tool: error MSB3073: command exited with code 1",
+    "assistant: The generated path exceeds the legacy Windows path limit.",
+    "assistant: Release build stopped; needs a shorter staging directory.",
+  ],
+  "demo:codex-sonata": [
+    "user: Polish snapping and keyboard navigation in the audio timeline.",
+    "assistant: Added beat, marker, and clip-edge snapping with visible guides.",
+    "assistant to=functions.exec_command: npm test -- timeline",
+    "tool: 67 passed, 0 failed",
+    "assistant: Keyboard navigation and screen-reader announcements are covered.",
+    "assistant: Done. No remaining changes.",
+  ],
+  "demo:claude-harbor": [
+    "user: Audit our public API contracts before the partner launch.",
+    "assistant: Compared OpenAPI output against the three supported SDKs.",
+    "assistant: Found two nullable-field mismatches and documented both.",
+    "assistant to=functions.exec_command: uv run pytest -q tests/contracts",
+    "tool: 112 passed in 3.82s",
+    "assistant: Audit is complete; waiting for the next task.",
+  ],
+};
+
+function demoMention(question) {
+  const match = question.match(/@([^\s]+)/);
+  if (!match) return null;
+  const needle = match[1].toLowerCase();
+  return [...sessions.values()].find((s) => s.name.toLowerCase() === needle
+    || s.name.toLowerCase().startsWith(needle)) || null;
+}
+
+function demoAnswer(question) {
+  const q = question.toLowerCase();
+  const mentioned = demoMention(question);
+  if (/hide.*(apps|desktop)|(apps|desktop).*off/.test(q)) {
+    desktopVisible = false; document.getElementById("desktop-toggle").checked = false; reorder();
+    return "Desktop presence is hidden for this demo.";
+  }
+  if (/show.*(apps|desktop)|(apps|desktop).*on/.test(q)) {
+    desktopVisible = true; document.getElementById("desktop-toggle").checked = true; reorder();
+    return "Desktop presence is visible for this demo.";
+  }
+  const titleMatch = question.match(/(?:set|change)\s+@([^\s]+).*?title\s+(?:to\s+)?[“\"]?(.+?)[”\"]?$/i);
+  if (titleMatch) {
+    const target = demoMention(`@${titleMatch[1]}`);
+    if (!target) return `I can’t find @${titleMatch[1]} in the demo roster.`;
+    target.title = titleMatch[2].trim(); target.title_origin = "manual"; upsertCard(target);
+    return `Set @${target.name}’s title to “${target.title}”.`;
+  }
+  if (mentioned) {
+    const work = fmtWork(mentioned);
+    return `@${mentioned.name} is ${mentioned.state.replaceAll("_", " ")}. `
+      + `${mentioned.blurb || mentioned.last_prompt || "No recent summary."}${work ? ` ${work}.` : ""}`;
+  }
+  if (/need|attention|waiting|block/.test(q)) {
+    const names = [...sessions.values()].filter((s) => s.attention).map((s) => `@${s.name}`);
+    return `${names.length} sessions need you: ${names.join(", ")}. One needs permission, one needs input, and one hit an error.`;
+  }
+  if (/working|busy|running/.test(q)) {
+    const active = [...sessions.values()].filter((s) => s.state === "working");
+    return `${active.length} agents are working: ${active.map((s) => `@${s.name} — ${s.title}`).join("; ")}.`;
+  }
+  return "This fictional roster has 7 terminal agents: 2 working, 3 needing attention, 1 done, and 1 idle. Try asking “what needs me?”, mentioning @canopy-91ad, or telling me to hide desktop apps.";
+}
+
+function startDemoTour() {
+  openChat(true);
+  const log = document.getElementById("chat-log");
+  log.replaceChildren();
+  const steps = [
+    "Welcome to Huginn. This is a completely fictional roster, so it’s safe to explore.",
+    "Each card is a live coding-agent session. State and color show what is working, finished, or needs you; titles and blurbs explain the task at a glance.",
+    "Try Peek on any terminal card for its recent transcript, Jump for focus feedback, or the pencil to rename it. The view, sort, blurbs, and apps controls are live too.",
+    "I can reason over the whole roster. Ask “what needs me?”, “who is working?”, mention @canopy-91ad, or tell me to hide desktop apps.",
+  ];
+  steps.forEach((message, index) => {
+    setTimeout(() => addMsg("a", message), index * 450);
+  });
+  setTimeout(() => document.getElementById("chat-input").focus(), steps.length * 450);
 }
 
 // ---------------------------------------------------------------- rendering
@@ -159,6 +342,12 @@ async function editTitle(key) {
     finished = true;
     input.remove(); label.hidden = false; button.hidden = false;
     if (!save) return;
+    if (DEMO_MODE) {
+      s.title = input.value.trim() || null;
+      s.title_origin = s.title ? "manual" : null;
+      upsertCard(s);
+      return;
+    }
     const r = await apiFetch(`/api/sessions/${encodeURIComponent(key)}/title`, {
       method: "PUT", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title: input.value }),
@@ -246,6 +435,16 @@ function setAttention(n) {
 // ------------------------------------------------------------------- actions
 
 async function jump(key) {
+  if (DEMO_MODE) {
+    const card = cards.get(key);
+    const button = card.querySelector(".jump");
+    card.classList.remove("demo-focused");
+    void card.offsetWidth;
+    card.classList.add("demo-focused");
+    button.textContent = "focused";
+    setTimeout(() => { button.textContent = "jump"; card.classList.remove("demo-focused"); }, 1200);
+    return;
+  }
   const r = await apiFetch(`/api/sessions/${encodeURIComponent(key)}/focus`, { method: "POST" });
   if (r.status === 404) {
     // The browser can miss a removal event while EventSource reconnects.
@@ -260,6 +459,11 @@ async function peek(key) {
   const card = cards.get(key);
   const pre = card.querySelector(".peek");
   if (!pre.hidden) { pre.hidden = true; return; }
+  if (DEMO_MODE) {
+    pre.textContent = (DEMO_TRANSCRIPTS[key] || ["(desktop presence has no transcript)"]).join("\n");
+    pre.hidden = false;
+    return;
+  }
   const r = await apiFetch(`/api/sessions/${encodeURIComponent(key)}/tail?n=15`);
   const data = await r.json();
   pre.textContent = (data.lines || []).join("\n") || "(no transcript yet)";
@@ -285,6 +489,7 @@ const CHAT_SIZE_KEYS = {
   horizontal: "huginn.chat.height",
 };
 async function saveSettings(body) {
+  if (DEMO_MODE) return { ok: true };
   return apiFetch("/api/settings", {
     method: "PUT", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -297,8 +502,16 @@ function openChat(open, persist = false) {
   if (persist) saveSettings({ ui: { chat_open: chatOpen } });
 }
 document.getElementById("chat-toggle").onclick = () => openChat(undefined, true);
+document.getElementById("help").onclick = () => {
+  if (DEMO_MODE) {
+    startDemoTour();
+  } else {
+    window.open("/?demo=1&tour=1", "huginn-demo");
+  }
+};
 
 function storedChatSize(span) {
+  if (DEMO_MODE) return null;
   try { return Number.parseInt(localStorage.getItem(CHAT_SIZE_KEYS[span]), 10) || null; }
   catch (_) { return null; }
 }
@@ -341,7 +554,9 @@ document.getElementById("chat-resize").addEventListener("pointerdown", (e) => {
     handle.removeEventListener("pointercancel", end);
     document.body.classList.remove("chat-resizing");
     const size = Math.round(horizontal ? chatPanel.getBoundingClientRect().height : chatPanel.getBoundingClientRect().width);
-    try { localStorage.setItem(CHAT_SIZE_KEYS[chatSpan], String(size)); } catch (_) { /* optional */ }
+    if (!DEMO_MODE) {
+      try { localStorage.setItem(CHAT_SIZE_KEYS[chatSpan], String(size)); } catch (_) { /* optional */ }
+    }
   };
   handle.addEventListener("pointermove", move);
   handle.addEventListener("pointerup", end);
@@ -374,6 +589,13 @@ document.getElementById("chat-form").onsubmit = async (e) => {
   currentAnswer.classList.add("thinking");
   setChatBusy(true);
   currentRequestId = null;
+  if (DEMO_MODE) {
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    currentAnswer.textContent = demoAnswer(q);
+    setChatBusy(false);
+    currentAnswer = null;
+    return;
+  }
   const provider = document.getElementById("provider").value;
   let r;
   try {
@@ -662,7 +884,17 @@ function connect() {
   };
 }
 
-bootstrapSession().then(() => {
+if (DEMO_MODE) {
+  rosterLoading = false;
+  applySettings({
+    llm: { enabled: true, provider: "codex" },
+    ui: { show_desktop: true, view: "cards", sort: "state", chat_span: "vertical", chat_open: true },
+  });
+  for (const session of demoSessions()) upsertCard(session);
+  if (DEMO_TOUR) startDemoTour();
+  else addMsg("a", "Demo roster loaded. Try Peek, Jump, editing a title, or ask what needs your attention.");
+  setAttention(3);
+} else bootstrapSession().then(() => {
   renderEmpty();
   loadSettings();
   connect();

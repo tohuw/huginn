@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import io
 import json
+import tempfile
 import unittest
 from argparse import Namespace
 from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 from unittest.mock import patch
 
 from huginn import cli
@@ -20,6 +22,15 @@ SESSION = {
 
 
 class AgentCliTests(unittest.TestCase):
+    def test_demo_opens_privacy_safe_roster_without_token(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp)
+            (state / "port").write_text("47123")
+            with patch("huginn.cli.config.STATE_DIR", state), \
+                 patch("webbrowser.open") as opened:
+                self.assertEqual(cli.cmd_demo(Namespace()), 0)
+            opened.assert_called_once_with("http://127.0.0.1:47123/?demo=1")
+
     def test_roster_attention_filters_and_formats_names(self):
         quiet = {**SESSION, "key": "codex:def", "name": "quiet", "attention": False}
         out = io.StringIO()

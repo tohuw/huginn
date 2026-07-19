@@ -5,6 +5,8 @@ import datetime
 import tempfile
 from pathlib import Path
 
+from huginn.config import Config
+from huginn.daemon import Daemon
 from huginn.sources.claude_code import child_shell_count, parse_session_file, pid_matches_start
 
 
@@ -38,3 +40,18 @@ def test_owned_internal_pid_is_filtered_independently_of_entrypoint() -> None:
         }))
         with patch("huginn.llm.providers.is_internal_pid", return_value=True):
             assert parse_session_file(path) is None
+
+
+def test_idle_cli_is_not_aged_out_while_its_process_is_alive() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "10.json"
+        path.write_text(json.dumps({
+            "pid": 10, "sessionId": "open", "kind": "interactive",
+            "entrypoint": "cli", "cwd": "/tmp", "status": "idle",
+            "statusUpdatedAt": 1,
+        }))
+        daemon = Daemon(Config({"ui": {"idle_ttl_s": 1}}))
+        with patch("huginn.daemon.claude_code.pid_alive", return_value=True), \
+             patch("huginn.daemon.claude_code.pid_matches_start", return_value=True):
+            daemon._emit_claude_file(path)
+        assert daemon.bus.events.get_nowait().kind == "claude.file"

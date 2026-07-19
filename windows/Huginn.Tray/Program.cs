@@ -99,6 +99,7 @@ internal sealed class TrayContext : ApplicationContext
 
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Open Console", null, (_, _) => OpenConsole());
+        menu.Items.Add("Open Demo Console", null, (_, _) => OpenDemo());
         menu.Items.Add("Refresh", null, async (_, _) => await RefreshAsync());
         var startup = new ToolStripMenuItem("Start at login") { Checked = StartsAtLogin(), CheckOnClick = true };
         startup.CheckedChanged += (_, _) =>
@@ -255,6 +256,17 @@ internal sealed class TrayContext : ApplicationContext
         {
             var (port, token) = ReadConnection();
             Process.Start(new ProcessStartInfo($"http://127.0.0.1:{port}/#t={Uri.EscapeDataString(token)}")
+                { UseShellExecute = true });
+        }
+        catch { }
+    }
+
+    private static void OpenDemo()
+    {
+        try
+        {
+            var (port, _) = ReadConnection();
+            Process.Start(new ProcessStartInfo($"http://127.0.0.1:{port}/?demo=1")
                 { UseShellExecute = true });
         }
         catch { }

@@ -21,6 +21,17 @@ def _warn(label: str, detail: str = "") -> None:
     print(f" \033[33m!\033[0m {label}" + (f" — {detail}" if detail else ""))
 
 
+def _daemon_session_count(port: int) -> int:
+    """Query the authenticated daemon health endpoint."""
+    token = config.TOKEN_PATH.read_text().strip()
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{port}/api/sessions",
+        headers={"X-Huginn-Token": token},
+    )
+    with urllib.request.urlopen(request, timeout=2) as response:
+        return len(json.load(response)["sessions"])
+
+
 def run_doctor() -> int:
     ok = True
     cfg = config.load()
@@ -73,9 +84,7 @@ def run_doctor() -> int:
     if daemon_json.exists():
         try:
             info = json.loads(daemon_json.read_text())
-            with urllib.request.urlopen(
-                    f"http://127.0.0.1:{info['port']}/api/sessions", timeout=2) as r:
-                n = len(json.load(r)["sessions"])
+            n = _daemon_session_count(info["port"])
             _check("daemon running", True, f"port {info['port']}, {n} sessions")
         except Exception:
             _warn("daemon state file present but daemon unreachable",

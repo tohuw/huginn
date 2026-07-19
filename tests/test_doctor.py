@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from huginn import config
-from huginn.doctor import _daemon_session_count
+from huginn.doctor import TESTED_CLAUDE, TESTED_CODEX, _check_version_coverage, _daemon_session_count
 
 
 class _Response(io.BytesIO):
@@ -18,6 +18,41 @@ class _Response(io.BytesIO):
 
     def __exit__(self, *args):
         self.close()
+
+
+class _Sess:
+    def __init__(self, version):
+        self.version = version
+
+
+class VersionCoverageTests(unittest.TestCase):
+    """issue #22: TESTED_CODEX was declared but never actually checked."""
+
+    def test_warns_when_newer_than_tested(self):
+        newer = f"{TESTED_CLAUDE[0]}.{TESTED_CLAUDE[1] + 1}.0"
+        with _capture_stdout() as out:
+            _check_version_coverage("claude", [_Sess(newer)], TESTED_CLAUDE)
+        self.assertIn("newer than tested", out.getvalue())
+
+    def test_no_warning_at_or_below_tested(self):
+        same = f"{TESTED_CODEX[0]}.{TESTED_CODEX[1]}.9"
+        with _capture_stdout() as out:
+            _check_version_coverage("codex", [_Sess(same)], TESTED_CODEX)
+        self.assertEqual(out.getvalue(), "")
+
+    def test_only_checks_the_first_versioned_session(self):
+        newer = f"{TESTED_CODEX[0]}.{TESTED_CODEX[1] + 1}.0"
+        with _capture_stdout() as out:
+            _check_version_coverage("codex", [_Sess(None), _Sess(newer), _Sess("99.99.0")],
+                                    TESTED_CODEX)
+        # exactly one warning, for the first *versioned* session
+        self.assertEqual(out.getvalue().count("newer than tested"), 1)
+        self.assertIn(newer, out.getvalue())
+
+
+def _capture_stdout():
+    import contextlib
+    return contextlib.redirect_stdout(io.StringIO())
 
 
 class DoctorTests(unittest.TestCase):

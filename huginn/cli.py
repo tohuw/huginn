@@ -71,8 +71,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
 def cmd_open(args: argparse.Namespace) -> int:
     """Reopen the dashboard with a fresh auth bootstrap, without restarting
     the daemon -- the token rides in a URL fragment, never sent to the
-    server (see issue #23), so a previously-opened tab can't self-recover
-    after a restart and needs this instead."""
+    server (see issue #23). This remains useful for a new browser profile or
+    after browser cookies have been cleared."""
     import webbrowser
     if not (config.STATE_DIR / "daemon.json").exists():
         print("huginn: daemon not running (try `huginn serve`)")

@@ -146,7 +146,7 @@ def load() -> Config:
     data = copy.deepcopy(DEFAULTS)
     if CONFIG_PATH.exists():
         try:
-            file_data = tomllib.loads(CONFIG_PATH.read_text())
+            file_data = tomllib.loads(CONFIG_PATH.read_text(encoding="utf-8"))
             for section, values in file_data.items():
                 if isinstance(values, dict):
                     data.setdefault(section, {}).update(values)
@@ -205,7 +205,7 @@ def save(cfg: Config) -> None:
             lines.append(f"{key} = {_toml_value(cfg.get(section, key))}")
         lines.append("")
     tmp = CONFIG_PATH.with_suffix(".toml.tmp")
-    tmp.write_text("\n".join(lines))
+    tmp.write_text("\n".join(lines), encoding="utf-8")
     tmp.chmod(0o600)
     os.replace(tmp, CONFIG_PATH)
 

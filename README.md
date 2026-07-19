@@ -1,9 +1,32 @@
-# huginn
+# Huginn: A Local AI Agent Activity Console
 
 _Developed with AI assistance. See the git history for which agents contributed._
 
-Local monitor for AI coding-agent sessions. One pinned browser tab instead of
-furiously tabbing through iTerm2 to find out which agent needs you.
+## What Is This?
+
+I got tired of furiously tabbing through terminals and apps to see what my
+agents were doing. I tend to build things in parallel, use git worktrees to put
+different workers on different project parts, and so on. I didn't like
+forgetting what I was working on, and it's annoying that there aren't really
+good ways to see what needs my attention (stacks of toast notifications aren't
+that helpful). So I directed the construction of Huginn.
+
+It tracks Claude and Codex terminal sessions, plus app-level presence and
+activity for their desktop apps. It includes a well-tested macOS version and a
+Windows version covered by automated CI but never once tested on a real Windows
+machine (Codex seemed pretty sure it did a good job — I hope someone finds out
+if that's true at some point).
+
+Huginn provides deterministic tools and interfaces, including a skill your
+agents can use, plus the agentic Ask interface in the console. Agents using the
+skill see the same live evidence Ask receives, so which one you use is your
+choice. The options in the console are deliberately few and (I hope) obvious.
+You can also change most of them by asking Ask to do it for you. Note that Ask
+uses **your** Claude or Codex to think, which means your usage/tokens get
+consumed. It is deliberately very lightweight, though.
+
+If you have questions, open an issue. If you and/or your best agentic pal want
+to improve Huginn, please submit a PR and I'll review it in detail.
 
 Watches **Claude Code** (first-class), **Codex** across CLI/IDE/ChatGPT Desktop
 (first-class local threads), plus **ChatGPT Desktop** and **Claude Desktop**
@@ -11,7 +34,10 @@ Watches **Claude Code** (first-class), **Codex** across CLI/IDE/ChatGPT Desktop
 runs locally; no data leaves the machine except your own `claude -p` /
 `codex exec` calls, which use your existing auth.
 
-## Use
+## How Do I Use This?
+
+**TL;DR: point your agent at this repo and it will figure it out. Then you can
+just ask it how this works. :)**
 
 ```sh
 uv run huginn serve          # daemon + dashboard at http://127.0.0.1:47100

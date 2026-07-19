@@ -1,11 +1,14 @@
 """Auth-token gate on the localhost API (issue #5)."""
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
+from huginn import config as config_module
 from huginn.config import Config
 from huginn.daemon import Daemon
 from huginn.server.app import create_app
@@ -103,6 +106,47 @@ class AuthTests(unittest.TestCase):
         c = make_client()
         r = c.get("/static/app.js")
         self.assertEqual(r.status_code, 200)
+
+    def _isolated_config_dir(self):
+        """PUT /api/settings calls config.save(), which writes to the real
+        ~/.config/huginn/config.toml unless redirected -- isolate it."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        patcher1 = patch.object(config_module, "CONFIG_DIR", Path(tmp.name))
+        patcher2 = patch.object(config_module, "CONFIG_PATH", Path(tmp.name) / "config.toml")
+        patcher1.start(); patcher2.start()
+        self.addCleanup(patcher1.stop)
+        self.addCleanup(patcher2.stop)
+
+    def test_settings_put_accepts_valid_update(self):
+        self._isolated_config_dir()
+        c = make_client()
+        headers = {"X-Huginn-Token": "secret-token"}
+        r = c.put("/api/settings", json={"ui": {"ended_ttl_s": 600}}, headers=headers)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["ui"]["ended_ttl_s"], 600)
+
+    def test_settings_put_rejects_invalid_value_with_422(self):
+        self._isolated_config_dir()
+        c = make_client()
+        headers = {"X-Huginn-Token": "secret-token"}
+        r = c.put("/api/settings", json={"ui": {"ended_ttl_s": -5}}, headers=headers)
+        self.assertEqual(r.status_code, 422)
+        # rejected value must not have been applied
+        got = c.get("/api/settings", headers=headers).json()
+        self.assertNotEqual(got["ui"]["ended_ttl_s"], -5)
+
+    def test_settings_put_rejects_whole_batch_if_any_key_invalid(self):
+        self._isolated_config_dir()
+        c = make_client()
+        headers = {"X-Huginn-Token": "secret-token"}
+        r = c.put("/api/settings", json={
+            "ui": {"ended_ttl_s": 900},          # valid on its own
+            "server": {"port": 999999},           # invalid
+        }, headers=headers)
+        self.assertEqual(r.status_code, 422)
+        got = c.get("/api/settings", headers=headers).json()
+        self.assertNotEqual(got["ui"]["ended_ttl_s"], 900, "valid key leaked through a rejected batch")
 
     def test_hook_stats_counts_by_source_and_event(self):
         c = make_client()

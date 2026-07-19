@@ -40,6 +40,61 @@ DEFAULTS: dict[str, dict[str, Any]] = {
 }
 
 
+# Numeric settings that must be > 0 -- a zero/negative poll interval or
+# timeout doesn't fail loudly, it just wedges a background task forever.
+_POSITIVE_NUMERIC_KEYS = {
+    ("llm", "blurb_debounce_s"), ("llm", "blurb_max_per_min"), ("llm", "blurb_timeout_s"),
+    ("ui", "ended_ttl_s"), ("claude", "sweep_s"), ("claude", "pending_tool_timeout_s"),
+    ("codex", "poll_s"), ("codex", "active_window_h"), ("claude_desktop", "poll_s"),
+}
+_ENUM_KEYS: dict[tuple[str, str], set[str]] = {
+    ("llm", "provider"): {"claude", "codex"},
+}
+
+
+def validate_setting(section: str, key: str, value: Any) -> str | None:
+    """Type/range/enum-check one (section, key, value) against DEFAULTS'
+    shape. Returns an error message, or None if the value is acceptable --
+    issue #18: PUT /api/settings must reject bad values before writing them
+    to runtime config or disk, not let them fail later in a background task."""
+    if section not in DEFAULTS or key not in DEFAULTS[section]:
+        return f"unknown setting: {section}.{key}"
+    default = DEFAULTS[section][key]
+
+    enum = _ENUM_KEYS.get((section, key))
+    if enum is not None:
+        if value not in enum:
+            return f"{section}.{key} must be one of {sorted(enum)}"
+        return None
+    if isinstance(default, bool):
+        if not isinstance(value, bool):
+            return f"{section}.{key} must be a boolean"
+        return None
+    if isinstance(default, int):   # after the bool check -- bool is an int subclass
+        if isinstance(value, bool) or not isinstance(value, int):
+            return f"{section}.{key} must be an integer"
+        if section == "server" and key == "port" and not (1 <= value <= 65535):
+            return f"{section}.{key} must be between 1 and 65535"
+        if (section, key) in _POSITIVE_NUMERIC_KEYS and value <= 0:
+            return f"{section}.{key} must be greater than 0"
+        return None
+    if isinstance(default, float):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return f"{section}.{key} must be a number"
+        if (section, key) in _POSITIVE_NUMERIC_KEYS and value <= 0:
+            return f"{section}.{key} must be greater than 0"
+        return None
+    if isinstance(default, str):
+        if not isinstance(value, str):
+            return f"{section}.{key} must be a string"
+        return None
+    if isinstance(default, list):
+        if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
+            return f"{section}.{key} must be a list of strings"
+        return None
+    return f"{section}.{key}: no validator for this setting"   # pragma: no cover
+
+
 class Config:
     def __init__(self, data: dict[str, Any]):
         self.data = data
@@ -72,13 +127,32 @@ def load() -> Config:
     return Config(data)
 
 
+_TOML_ESCAPES = {"\\": "\\\\", '"': '\\"', "\b": "\\b", "\t": "\\t",
+                 "\n": "\\n", "\f": "\\f", "\r": "\\r"}
+
+
+def _toml_string(s: str) -> str:
+    """A raw control character (bare newline, tab, ...) inside a TOML basic
+    string is invalid syntax, not just ugly -- issue #18. Escape every
+    control character, not just backslash/quote."""
+    out = []
+    for ch in s:
+        if ch in _TOML_ESCAPES:
+            out.append(_TOML_ESCAPES[ch])
+        elif ord(ch) < 0x20 or ord(ch) == 0x7f:
+            out.append(f"\\u{ord(ch):04x}")
+        else:
+            out.append(ch)
+    return '"' + "".join(out) + '"'
+
+
 def _toml_value(v: Any) -> str:
     if isinstance(v, bool):
         return "true" if v else "false"
     if isinstance(v, (int, float)):
         return str(v)
     if isinstance(v, str):
-        return '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'
+        return _toml_string(v)
     if isinstance(v, list):
         return "[" + ", ".join(_toml_value(x) for x in v) + "]"
     raise TypeError(f"unsupported config value type: {type(v)}")

@@ -37,6 +37,22 @@ const cards = new Map();      // key -> card element
 const grid = document.getElementById("grid");
 const tpl = document.getElementById("card-tpl");
 let llmEnabled = true;
+const PROVIDER_KEY = "huginn.provider";
+const providerSelect = document.getElementById("provider");
+function getRememberedProvider() {
+  try { return localStorage.getItem(PROVIDER_KEY); }
+  catch (_) { return null; }
+}
+function rememberProvider(value) {
+  try {
+    if (value) localStorage.setItem(PROVIDER_KEY, value);
+    else localStorage.removeItem(PROVIDER_KEY);
+  } catch (_) { /* server config remains the fallback */ }
+}
+const rememberedProvider = getRememberedProvider();
+if ([...providerSelect.options].some((o) => o.value === rememberedProvider)) {
+  providerSelect.value = rememberedProvider;
+}
 
 // ---------------------------------------------------------------- rendering
 
@@ -52,6 +68,14 @@ function fmtSubagents(subagents) {
   const total = Object.values(subagents).reduce((a, b) => a + b, 0);
   const parts = Object.entries(subagents).map(([status, n]) => `${n} ${status}`);
   return `${total} subagent${total === 1 ? "" : "s"}: ${parts.join(", ")}`;
+}
+
+function fmtWork(s) {
+  const parts = [];
+  const subagents = fmtSubagents(s.subagents);
+  if (subagents) parts.push(subagents);
+  if (s.shells) parts.push(`${s.shells} shell${s.shells === 1 ? "" : "s"} running`);
+  return parts.join(" · ");
 }
 
 const BADGES = {
@@ -85,7 +109,7 @@ function upsertCard(s) {
   const usingBlurb = llmEnabled && Boolean(s.blurb);
   summary.textContent = usingBlurb ? s.blurb : (s.last_prompt || "");
   summary.dataset.kind = usingBlurb ? "blurb" : (s.last_prompt ? "prompt" : "");
-  card.querySelector(".subagents").textContent = fmtSubagents(s.subagents);
+  card.querySelector(".subagents").textContent = fmtWork(s);
   card.querySelector(".tokens").textContent = s.tokens ? `${(s.tokens / 1000).toFixed(0)}k tok` : "";
   reorder();
 }
@@ -155,7 +179,7 @@ async function peek(key) {
 
 function askAbout(key) {
   const s = sessions.get(key);
-  openChat(true);
+  openChat(true, true);
   const input = document.getElementById("chat-input");
   input.value = `@${s.name} `;
   input.focus();
@@ -164,12 +188,19 @@ function askAbout(key) {
 // ---------------------------------------------------------------------- chat
 
 let chatOpen = true;
-function openChat(open) {
+async function saveSettings(body) {
+  return apiFetch("/api/settings", {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+function openChat(open, persist = false) {
   chatOpen = open === undefined ? !chatOpen : open;
   document.getElementById("chat").hidden = !chatOpen;
   document.getElementById("chat-toggle").textContent = chatOpen ? "ask ▾" : "ask ▸";
+  if (persist) saveSettings({ ui: { chat_open: chatOpen } });
 }
-document.getElementById("chat-toggle").onclick = () => openChat();
+document.getElementById("chat-toggle").onclick = () => openChat(undefined, true);
 
 // Chat concurrency is per-daemon (one subprocess in flight at a time), but
 // every open tab shares the same SSE stream -- request_id is how a tab
@@ -178,20 +209,39 @@ document.getElementById("chat-toggle").onclick = () => openChat();
 // event for an older question can't append to a newer one either.
 let currentAnswer = null;
 let currentRequestId = null;
+let chatBusy = false;
+function setChatBusy(busy) {
+  chatBusy = busy;
+  document.querySelector("#chat-form button[type=submit]").disabled = busy;
+  document.getElementById("chat-log").setAttribute("aria-busy", String(busy));
+  if (!busy) currentAnswer?.classList.remove("thinking");
+}
 document.getElementById("chat-form").onsubmit = async (e) => {
   e.preventDefault();
+  if (chatBusy) return;
   const input = document.getElementById("chat-input");
   const q = input.value.trim();
   if (!q) return;
   input.value = "";
   addMsg("q", q);
   currentAnswer = addMsg("a", "");
+  currentAnswer.classList.add("thinking");
+  setChatBusy(true);
   currentRequestId = null;
   const provider = document.getElementById("provider").value;
-  const r = await apiFetch("/api/chat", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question: q, provider }),
-  });
+  let r;
+  try {
+    r = await apiFetch("/api/chat", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: q, provider }),
+    });
+  } catch (err) {
+    currentAnswer.classList.add("err");
+    currentAnswer.textContent = `chat unavailable (${err.message})`;
+    setChatBusy(false);
+    currentAnswer = null;
+    return;
+  }
   const body = await r.json().catch(() => ({}));
   if (!r.ok) {
     if (currentAnswer) {
@@ -199,8 +249,10 @@ document.getElementById("chat-form").onsubmit = async (e) => {
       currentAnswer.textContent = body.detail || `chat unavailable (${r.status})`;
     }
     currentAnswer = null;
+    setChatBusy(false);
   } else {
     currentRequestId = body.request_id || null;
+    if (body.settings) applySettings(body.settings);
   }
 };
 
@@ -298,10 +350,7 @@ async function loadSettings() {
   ]);
   const cfg = await settingsResponse.json();
   const availability = (await providersResponse.json()).providers;
-  llmEnabled = cfg.llm.enabled;
-  document.getElementById("llm-toggle").checked = llmEnabled;
-  const providerSelect = document.getElementById("provider");
-  providerSelect.value = cfg.llm.provider;
+  applySettings(cfg);
   for (const option of providerSelect.options) {
     const status = availability[option.value];
     option.disabled = status && !status.available;
@@ -310,25 +359,45 @@ async function loadSettings() {
   const selectedStatus = availability[providerSelect.value];
   providerSelect.title = selectedStatus?.reason || "Q&A provider";
 }
+function applySettings(cfg) {
+  llmEnabled = cfg.llm.enabled;
+  document.getElementById("llm-toggle").checked = llmEnabled;
+  providerSelect.value = cfg.llm.provider;
+  rememberProvider(cfg.llm.provider);
+  const view = cfg.ui.view || "cards";
+  document.getElementById("view").value = view;
+  grid.dataset.view = view;
+  openChat(cfg.ui.chat_open !== false);
+  for (const s of sessions.values()) upsertCard(s);
+}
 document.getElementById("llm-toggle").onchange = async (e) => {
   llmEnabled = e.target.checked;
   for (const s of sessions.values()) upsertCard(s);
-  const r = await apiFetch("/api/settings", {
-    method: "PUT", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ llm: { enabled: e.target.checked } }),
-  });
+  const r = await saveSettings({ llm: { enabled: e.target.checked } });
   if (!r.ok) {
     llmEnabled = !llmEnabled;
     e.target.checked = llmEnabled;
     for (const s of sessions.values()) upsertCard(s);
   }
 };
-document.getElementById("provider").onchange = (e) => {
+providerSelect.onchange = async (e) => {
+  const previous = getRememberedProvider();
+  rememberProvider(e.target.value);
   e.target.title = "Q&A provider";
-  return apiFetch("/api/settings", {
-    method: "PUT", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ llm: { provider: e.target.value } }),
-  });
+  const r = await saveSettings({ llm: { provider: e.target.value } });
+  if (!r.ok) {
+    rememberProvider(previous);
+    e.target.value = previous || "claude";
+  }
+};
+document.getElementById("view").onchange = async (e) => {
+  const previous = grid.dataset.view || "cards";
+  grid.dataset.view = e.target.value;
+  const r = await saveSettings({ ui: { view: e.target.value } });
+  if (!r.ok) {
+    grid.dataset.view = previous;
+    e.target.value = previous;
+  }
 };
 
 // -------------------------------------------------------------------- wiring
@@ -349,6 +418,7 @@ function connect() {
   es.addEventListener("session.upsert", (e) => upsertCard(JSON.parse(e.data)));
   es.addEventListener("session.remove", (e) => removeCard(JSON.parse(e.data).key));
   es.addEventListener("attention.count", (e) => setAttention(JSON.parse(e.data).count));
+  es.addEventListener("settings.changed", (e) => applySettings(JSON.parse(e.data)));
   es.addEventListener("chat.delta", (e) => {
     const data = JSON.parse(e.data);
     if (currentAnswer && data.request_id === currentRequestId) {
@@ -358,13 +428,17 @@ function connect() {
     }
   });
   es.addEventListener("chat.done", (e) => {
-    if (JSON.parse(e.data).request_id === currentRequestId) currentAnswer = null;
+    if (JSON.parse(e.data).request_id === currentRequestId) {
+      setChatBusy(false);
+      currentAnswer = null;
+    }
   });
   es.addEventListener("chat.error", (e) => {
     const data = JSON.parse(e.data);
     if (currentAnswer && data.request_id === currentRequestId) {
       currentAnswer.classList.add("err");
       currentAnswer.textContent += `\n[${data.error}]`;
+      setChatBusy(false);
       currentAnswer = null;
     }
   });

@@ -33,11 +33,22 @@ class ReducerTests(unittest.TestCase):
 
     def test_busy_overrides_stale_waiting(self):
         s = claude_session(state=SessionState.WAITING_INPUT,
-                           state_origin="hook", state_since=NOW - 60)
+                           state_origin="hook", state_since=NOW - 60,
+                           blurb="Needs permission to push", blurb_ts=NOW - 59)
         self.r.sessions[s.key] = s
         self.feed("claude.file", s.key,
                   {"session": claude_session(state=SessionState.WORKING)})
         self.assertEqual(s.state, SessionState.WORKING)
+        self.assertIsNone(s.blurb)
+
+    def test_restored_stale_blurb_is_cleared_without_state_change(self):
+        s = claude_session(state=SessionState.WORKING,
+                           blurb="Needs permission", blurb_ts=NOW - 60,
+                           state_since=NOW - 30)
+        self.r.sessions[s.key] = s
+        self.feed("claude.file", s.key,
+                  {"session": claude_session(state=SessionState.WORKING)})
+        self.assertIsNone(s.blurb)
 
     def test_hook_grace_blocks_statusfile(self):
         s = claude_session(state=SessionState.WAITING_PERMISSION,
@@ -46,6 +57,16 @@ class ReducerTests(unittest.TestCase):
         self.feed("claude.file", s.key,
                   {"session": claude_session(state=SessionState.WORKING)})
         self.assertEqual(s.state, SessionState.WAITING_PERMISSION)
+
+    def test_background_shell_does_not_override_completed_turn(self):
+        s = claude_session(state=SessionState.WORKING, shells=2)
+        self.r.sessions[s.key] = s
+        self.feed("claude.file", s.key, {
+            "session": claude_session(state=SessionState.WORKING, shells=2),
+            "recent_turn_end": True,
+        })
+        self.assertEqual(s.state, SessionState.DONE)
+        self.assertEqual(s.shells, 2)
 
     def test_notification_classification(self):
         s = claude_session(state=SessionState.WORKING)

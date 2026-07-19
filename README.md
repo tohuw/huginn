@@ -55,12 +55,15 @@ huginn focus @session-name
 ```
 
 Dashboard: cards sorted needs-you-first (permission → input → error → done →
-working → idle). Tab title + favicon carry the attention count. Per card:
+working → idle), with a persistent compact list view available from the top
+bar. Tab title + favicon carry the attention count. Per session:
 **jump** focuses the exact iTerm2 tab (hotkey windows included; VS Code
 sessions open the workspace), **peek** shows a distilled transcript tail,
 **ask** feeds the chat panel — a Q&A agent (Claude or Codex, switchable
-top-right) that reads per-session digests and answers questions about what's
-going on.
+top-right) that reads current per-session digests and answers questions about
+what's going on. Ask stays in that monitoring scope; it can also toggle blurbs,
+switch its provider, change cards/list view, and hide its own panel. Dashboard
+settings persist across reloads and synchronize across open tabs.
 
 ## States
 
@@ -74,9 +77,10 @@ going on.
 | `idle` / `ended` | nothing happening / process gone | status file, pid liveness |
 
 Rule-based states are always on and cost nothing. One-line LLM **blurbs** are
-generated only when a session hits a decision point (haiku-class via
-`claude -p`, debounced, rate-capped) — toggle "blurbs" in the top bar to turn
-all LLM polling off; chat stays available on demand.
+generated only when a session hits a decision point (debounced and rate-capped)
+— toggle "blurbs" in the top bar to turn all LLM polling off; chat stays
+available on demand. Blurbs are cleared on state changes and are deliberately
+excluded from Ask's evidence so an old summary cannot invent a current blocker.
 
 The live roster expires non-actionable records: idle sessions and completed
 interactive Codex turns remain for 5 minutes, while completed `codex exec`
@@ -87,7 +91,8 @@ probes therefore leave the live view without hiding attention states.
 
 - `~/.claude/sessions/<PID>.json` — live per-process status (fsevents watch +
   pid liveness sweep; PID-reuse guarded via procStart, which is UTC vs ps's
-  local time — handled).
+  local time — handled). Direct child shells are counted separately; a
+  completed assistant turn remains done even when background shells survive.
 - `~/.claude/projects/*/<sessionId>.jsonl` — transcripts, tailed seek-from-end
   (64KB attach window, incremental offsets; never read front-to-back).
 - `~/.codex/state_5.sqlite` — thread index, polled read-only (copy-to-cache

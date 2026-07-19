@@ -34,6 +34,7 @@ label.ctl { display: flex; gap: 6px; align-items: center; }
 
 main { grid-area: main; overflow-y: auto; padding: 14px; }
 #grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
+#grid[data-view="list"] { grid-template-columns: 1fr; gap: 5px; }
 #empty { color: var(--dim); text-align: center; margin-top: 40vh; }
 
 .card {
@@ -80,6 +81,19 @@ main { grid-area: main; overflow-y: auto; padding: 14px; }
 .actions button:hover { color: var(--fg); border-color: var(--accent); }
 .tokens { margin-left: auto; color: var(--idle); font-size: 11px; }
 
+#grid[data-view="list"] .card {
+  display: grid; grid-template-columns: minmax(210px, .8fr) minmax(180px, 1fr)
+    minmax(240px, 2fr) auto; align-items: center; column-gap: 14px;
+  padding: 6px 10px; border-radius: 4px;
+}
+#grid[data-view="list"] .row1, #grid[data-view="list"] .row2 { min-width: 0; }
+#grid[data-view="list"] .blurb { margin: 0; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+#grid[data-view="list"] .subagents { grid-column: 3; margin: 0; }
+#grid[data-view="list"] .actions { grid-column: 4; grid-row: 1 / span 2; margin: 0; }
+#grid[data-view="list"] .peek { grid-column: 1 / -1; }
+#grid[data-view="list"] .tokens { display: none; }
+
 aside#chat {
   grid-area: chat; width: 420px; display: flex; flex-direction: column;
   background: var(--panel); border-left: 1px solid var(--edge);
@@ -91,6 +105,10 @@ aside#chat[hidden] { display: none; }
 .msg { border-radius: 8px; padding: 8px 10px; white-space: pre-wrap; }
 .msg.q { background: var(--card); border: 1px solid var(--edge); }
 .msg.a { background: transparent; border-left: 2px solid var(--accent); border-radius: 0; }
+.msg.a.thinking::after { content: ""; display: inline-block; width: 10px; height: 10px;
+  margin-left: 8px; border: 2px solid var(--dim); border-top-color: var(--accent);
+  border-radius: 50%; animation: throb 700ms linear infinite; vertical-align: -1px; }
+@keyframes throb { to { transform: rotate(360deg); } }
 .msg.err { color: var(--error); }
 #chat-form { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--edge); }
 .chat-input-wrap { position: relative; flex: 1; min-width: 0; }
@@ -108,3 +126,4 @@ aside#chat[hidden] { display: none; }
 #mention-menu small { color: var(--dim); }
 #chat-form button { background: var(--accent); border: none; border-radius: 6px;
   padding: 0 14px; font: inherit; font-weight: 700; cursor: pointer; }
+#chat-form button:disabled { opacity: .4; cursor: default; }

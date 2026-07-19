@@ -36,6 +36,35 @@ def pid_alive(pid: int) -> bool:
         return True
 
 
+def child_shell_count(pid: int) -> int:
+    """Count direct shell children launched by an interactive Claude process.
+
+    Claude's Bash tool and background tasks are direct zsh/bash/sh children.
+    Counting only direct children avoids including the commands those shells
+    launch (sleep, gh, python, and so on).
+    """
+    try:
+        out = subprocess.run(
+            ["ps", "-axo", "ppid=,comm="],
+            capture_output=True, text=True, timeout=5,
+        ).stdout
+    except (subprocess.SubprocessError, OSError):
+        return 0
+    shells = {"sh", "bash", "zsh", "dash", "ksh", "fish"}
+    count = 0
+    for line in out.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) != 2:
+            continue
+        try:
+            parent = int(parts[0])
+        except ValueError:
+            continue
+        if parent == pid and Path(parts[1]).name in shells:
+            count += 1
+    return count
+
+
 def _ps_lstart(pid: int) -> datetime.datetime | None:
     try:
         out = subprocess.run(
@@ -110,6 +139,7 @@ def parse_session_file(path: Path) -> Session | None:
         transcript_path=find_transcript(session_id),
         last_activity=ts,
         version=raw.get("version"),
+        shells=child_shell_count(pid),
     )
 
 

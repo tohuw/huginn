@@ -219,6 +219,7 @@ def create_app(daemon: "Daemon") -> FastAPI:
         new_llm_enabled = cfg.get("llm", "enabled")
         if new_llm_enabled != old_llm_enabled:
             daemon.blurbs.set_enabled(new_llm_enabled)
+        bus.broadcast("settings.changed", cfg.to_dict())
         return cfg.to_dict()
 
     @api.post("/chat")

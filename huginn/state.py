@@ -40,6 +40,10 @@ class Reducer:
         s.state = state
         s.state_origin = origin
         s.state_since = now
+        # A blurb summarizes the previous state. Carrying it across a state
+        # transition turns a once-correct blocker into false current context.
+        s.blurb = None
+        s.blurb_ts = None
         return True
 
     def find_by_session_id(self, session_id: str) -> Session | None:
@@ -90,15 +94,26 @@ class Reducer:
             self.sessions[incoming.key] = incoming
             return [incoming]
         changed = False
+        if s.blurb and (not s.blurb_ts or s.blurb_ts < s.state_since):
+            s.blurb = None; s.blurb_ts = None; changed = True
         for attr in ("name", "version", "entrypoint", "cwd"):
             v = getattr(incoming, attr)
             if v and v != getattr(s, attr):
                 setattr(s, attr, v); changed = True
+        if incoming.shells != s.shells:
+            s.shells = incoming.shells; changed = True
         if incoming.transcript_path and not s.transcript_path:
             s.transcript_path = incoming.transcript_path; changed = True
         s.last_activity = max(s.last_activity, incoming.last_activity)
         if incoming.state == SessionState.WORKING:
-            changed |= self._set_state(s, SessionState.WORKING, "statusfile", now)
+            # Claude leaves its coarse status at `shell` while background
+            # Bash tasks survive a completed turn. A later, clean assistant
+            # turn-end is stronger evidence about agent activity; the shells
+            # remain visible separately on the card.
+            if ev.payload.get("recent_turn_end") and incoming.shells:
+                changed |= self._set_state(s, SessionState.DONE, "transcript", now)
+            else:
+                changed |= self._set_state(s, SessionState.WORKING, "statusfile", now)
         elif incoming.state == SessionState.IDLE and s.state == SessionState.WORKING:
             # busy->idle flip: if a turn just ended in the transcript, that's DONE
             recent_end = ev.payload.get("recent_turn_end", False)
@@ -144,6 +159,8 @@ class Reducer:
             self.sessions[incoming.key] = incoming
             return [incoming]
         changed = False
+        if s.blurb and (not s.blurb_ts or s.blurb_ts < s.state_since):
+            s.blurb = None; s.blurb_ts = None; changed = True
         for attr in ("name", "model", "git_branch", "tokens", "cwd", "transcript_path",
                     "last_prompt", "subagents"):
             v = getattr(incoming, attr)

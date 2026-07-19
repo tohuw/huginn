@@ -9,7 +9,8 @@ from unittest.mock import patch
 
 from huginn.config import Config
 from huginn.daemon import Daemon
-from huginn.llm.chat import start_chat
+from huginn.llm.chat import _control_actions, start_chat
+from huginn.model import Session
 
 
 class _AvailableProvider:
@@ -23,6 +24,15 @@ class _AvailableProvider:
 class _UnavailableProvider:
     def available(self):
         return "not configured"
+
+
+class _CapturingProvider(_AvailableProvider):
+    def __init__(self):
+        self.prompt = ""
+
+    async def stream(self, prompt, **kwargs):
+        self.prompt = prompt
+        yield "redirect"
 
 
 class ChatCorrelationTests(unittest.IsolatedAsyncioTestCase):
@@ -90,6 +100,48 @@ class ChatCorrelationTests(unittest.IsolatedAsyncioTestCase):
             result = await start_chat(daemon, {"question": "hi"})
         self.assertFalse(result["ok"])
         self.assertNotIn("request_id", result)
+
+    async def test_prompt_restricts_ask_agent_to_session_questions(self):
+        daemon = Daemon(Config({}))
+        daemon.bus.broadcast = lambda *a, **k: None
+        daemon.reducer.sessions["codex:test"] = Session(
+            key="codex:test", source="codex", session_id="test",
+            cwd="/tmp", name="test-agent")
+        provider = _CapturingProvider()
+        with patch("huginn.llm.chat.get_provider", return_value=provider):
+            result = await start_chat(daemon, {"question": "How do I make lasagna?"})
+        self.assertTrue(result["ok"])
+        await daemon.active_chat
+        self.assertIn("scope is exclusively the agent sessions", provider.prompt)
+        self.assertIn("Do not provide a recipe", provider.prompt)
+        self.assertIn("Question: How do I make lasagna?", provider.prompt)
+
+    def test_dashboard_control_commands_are_recognized(self):
+        cases = {
+            "disable blurbs": ("llm", "enabled", False),
+            "switch the agent preference to codex": ("llm", "provider", "codex"),
+            "show list view": ("ui", "view", "list"),
+            "switch back to cards": ("ui", "view", "cards"),
+            "hide the ask panel": ("ui", "chat_open", False),
+        }
+        for question, expected in cases.items():
+            actions = _control_actions(question)
+            self.assertIn(expected, [a[:3] for a in actions], msg=question)
+
+    async def test_dashboard_control_updates_settings_and_broadcasts(self):
+        daemon = Daemon(Config({}))
+        events = []
+        daemon.bus.broadcast = lambda event, data: events.append((event, data))
+        with patch("huginn.llm.chat.config.save"):
+            result = await start_chat(
+                daemon, {"question": "switch to list view and hide the ask panel"})
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["settings"]["ui"]["view"], "list")
+            self.assertFalse(result["settings"]["ui"]["chat_open"])
+            await daemon.active_chat
+        self.assertEqual(daemon.cfg.get("ui", "view"), "list")
+        self.assertFalse(daemon.cfg.get("ui", "chat_open"))
+        self.assertTrue(any(event == "settings.changed" for event, _ in events))
 
 
 if __name__ == "__main__":

@@ -42,13 +42,13 @@ class BlurbWorker:
 
     def request(self, s: Session) -> None:
         cfg = self.daemon.cfg
+        old = self._pending.pop(s.key, None)
+        if old and not old.done():
+            old.cancel()
         if not cfg.get("llm", "enabled") or s.state not in BLURB_STATES:
             return
         if s.blurb_ts and s.blurb_ts > s.state_since:
             return  # already blurbed this state; metadata churn shouldn't re-spend
-        old = self._pending.pop(s.key, None)
-        if old and not old.done():
-            old.cancel()
         self._pending[s.key] = asyncio.create_task(self._debounced(s.key, s.state))
 
     async def _debounced(self, key: str, state: SessionState) -> None:
@@ -77,7 +77,7 @@ class BlurbWorker:
         if not first_line:
             return
         s = self.daemon.reducer.sessions.get(key)
-        if s is None:
+        if s is None or s.state != state:
             return
         s.blurb = first_line[:120]
         s.blurb_ts = time.time()

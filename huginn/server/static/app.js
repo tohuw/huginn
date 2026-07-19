@@ -34,6 +34,7 @@ const sessions = new Map();   // key -> session object
 const cards = new Map();      // key -> card element
 const grid = document.getElementById("grid");
 const tpl = document.getElementById("card-tpl");
+let llmEnabled = true;
 
 // ---------------------------------------------------------------- rendering
 
@@ -78,7 +79,10 @@ function upsertCard(s) {
   card.querySelector(".cwd").textContent = s.cwd ? s.cwd.replace(/^\/Users\/[^/]+/, "~") : "";
   card.querySelector(".branch").textContent = s.git_branch ? `⎇ ${s.git_branch}` : "";
   card.querySelector(".model").textContent = s.model || "";
-  card.querySelector(".blurb").textContent = s.blurb || s.last_prompt || "";
+  const summary = card.querySelector(".blurb");
+  const usingBlurb = llmEnabled && Boolean(s.blurb);
+  summary.textContent = usingBlurb ? s.blurb : (s.last_prompt || "");
+  summary.dataset.kind = usingBlurb ? "blurb" : (s.last_prompt ? "prompt" : "");
   card.querySelector(".subagents").textContent = fmtSubagents(s.subagents);
   card.querySelector(".tokens").textContent = s.tokens ? `${(s.tokens / 1000).toFixed(0)}k tok` : "";
   reorder();
@@ -117,13 +121,15 @@ function setAttention(n) {
   const c = document.createElement("canvas");
   c.width = c.height = 32;
   const g = c.getContext("2d");
-  g.fillStyle = n ? "#e0af68" : "#565f74";
-  g.beginPath(); g.arc(16, 16, 14, 0, 7); g.fill();
+  g.fillStyle = n ? "#e0af68" : "#cdd3e0";
+  const bird = new Path2D("M160.8 96.5c14 17 31 30.9 49.5 42.2c25.9 15.8 53.7 25.9 77.7 31.6V138.8C265.8 108.5 250 71.5 248.6 28c-.4-11.3-7.5-21.5-18.4-24.4c-7.6-2-15.8-.2-21 5.8c-13.3 15.4-32.7 44.6-48.4 87.2zM320 144v64c-60.8-5.1-185-43.8-219.3-157.2C97.4 40 87.9 32 76.6 32c-7.9 0-15.3 3.9-18.8 11C46.8 65.9 32 112.1 32 176c0 116.9 80.1 180.5 118.4 202.8L11.8 416.6C6.7 418 2.6 421.8.9 426.8s-.8 10.6 2.3 14.8C21.7 466.2 77.3 512 160 512c3.6 0 7.2-1.2 10-3.5L245.6 448H320c88.4 0 160-71.6 160-160V128l29.9-44.9c1.3-2 2.1-4.4 2.1-6.8c0-6.8-5.5-12.3-12.3-12.3H400c-44.2 0-80 35.8-80 80zm80-16a16 16 0 1 1 0 32 16 16 0 1 1 0-32z");
+  g.save(); g.scale(0.058, 0.058); g.translate(18, 18); g.fill(bird); g.restore();
   if (n) {
     g.fillStyle = "#14161b";
-    g.font = "bold 18px sans-serif";
+    g.beginPath(); g.arc(24, 9, 8, 0, Math.PI * 2); g.fill();
+    g.fillStyle = "#e0af68"; g.font = "bold 9px sans-serif";
     g.textAlign = "center"; g.textBaseline = "middle";
-    g.fillText(n > 9 ? "9+" : String(n), 16, 17);
+    g.fillText(n > 9 ? "9+" : String(n), 24, 9.5);
   }
   document.getElementById("favicon").href = c.toDataURL("image/png");
 }
@@ -206,7 +212,76 @@ function addMsg(kind, text) {
   return div;
 }
 
-document.getElementById("chat-input").addEventListener("keydown", (e) => {
+// ------------------------------------------------------- @name autocomplete
+
+const chatInput = document.getElementById("chat-input");
+const mentionMenu = document.getElementById("mention-menu");
+let mentionMatches = [];
+let mentionIndex = 0;
+let mentionRange = null;
+
+function updateMentions() {
+  const before = chatInput.value.slice(0, chatInput.selectionStart);
+  const match = before.match(/(^|\s)@([^\s@]*)$/);
+  if (!match) { closeMentions(); return; }
+  const query = match[2].toLowerCase();
+  mentionRange = [before.length - query.length - 1, before.length];
+  mentionMatches = [...sessions.values()]
+    .filter((s) => s.name.toLowerCase().includes(query))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .slice(0, 8);
+  if (!mentionMatches.length) { closeMentions(); return; }
+  mentionIndex = Math.min(mentionIndex, mentionMatches.length - 1);
+  mentionMenu.replaceChildren(...mentionMatches.map((s, i) => {
+    const option = document.createElement("button");
+    option.type = "button";
+    option.setAttribute("role", "option");
+    option.className = i === mentionIndex ? "selected" : "";
+    option.innerHTML = `<span>@${escapeHtml(s.name)}</span><small>${escapeHtml(s.state)}</small>`;
+    option.onmousedown = (e) => { e.preventDefault(); chooseMention(i); };
+    return option;
+  }));
+  mentionMenu.hidden = false;
+}
+
+function escapeHtml(text) {
+  const node = document.createElement("span");
+  node.textContent = text;
+  return node.innerHTML;
+}
+
+function closeMentions() {
+  mentionMenu.hidden = true;
+  mentionMatches = [];
+  mentionRange = null;
+  mentionIndex = 0;
+}
+
+function chooseMention(index = mentionIndex) {
+  if (!mentionRange || !mentionMatches[index]) return;
+  const [start, end] = mentionRange;
+  const insertion = `@${mentionMatches[index].name} `;
+  chatInput.setRangeText(insertion, start, end, "end");
+  closeMentions();
+  chatInput.focus();
+}
+
+chatInput.addEventListener("input", updateMentions);
+chatInput.addEventListener("click", updateMentions);
+chatInput.addEventListener("keydown", (e) => {
+  if (!mentionMenu.hidden) {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      mentionIndex = (mentionIndex + (e.key === "ArrowDown" ? 1 : -1) + mentionMatches.length)
+        % mentionMatches.length;
+      updateMentions();
+      return;
+    }
+    if (e.key === "Tab" || e.key === "Enter") {
+      e.preventDefault(); chooseMention(); return;
+    }
+    if (e.key === "Escape") { e.preventDefault(); closeMentions(); return; }
+  }
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
     document.getElementById("chat-form").requestSubmit();
@@ -218,14 +293,23 @@ document.getElementById("chat-input").addEventListener("keydown", (e) => {
 async function loadSettings() {
   const r = await apiFetch("/api/settings");
   const cfg = await r.json();
-  document.getElementById("llm-toggle").checked = cfg.llm.enabled;
+  llmEnabled = cfg.llm.enabled;
+  document.getElementById("llm-toggle").checked = llmEnabled;
   document.getElementById("provider").value = cfg.llm.provider;
 }
-document.getElementById("llm-toggle").onchange = (e) =>
-  apiFetch("/api/settings", {
+document.getElementById("llm-toggle").onchange = async (e) => {
+  llmEnabled = e.target.checked;
+  for (const s of sessions.values()) upsertCard(s);
+  const r = await apiFetch("/api/settings", {
     method: "PUT", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ llm: { enabled: e.target.checked } }),
   });
+  if (!r.ok) {
+    llmEnabled = !llmEnabled;
+    e.target.checked = llmEnabled;
+    for (const s of sessions.values()) upsertCard(s);
+  }
+};
 document.getElementById("provider").onchange = (e) =>
   apiFetch("/api/settings", {
     method: "PUT", headers: { "Content-Type": "application/json" },

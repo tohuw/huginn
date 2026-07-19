@@ -18,6 +18,21 @@ uv run huginn install-hooks  # sub-second state changes (recommended, once)
 uv run huginn doctor         # environment/hook/daemon health check
 ```
 
+### macOS menu-bar app
+
+Build the native menu-bar app into `~/Applications`:
+
+```sh
+macos/build-app.sh
+open ~/Applications/Huginn.app
+```
+
+The app owns the daemon lifecycle, shows an attention count in the menu bar,
+opens the web console, and focuses an agent when you select its permission,
+input, or error entry. **Quit Huginn** stops the daemon. Remove the launchd
+version first with `uv run huginn uninstall-agent`; its `KeepAlive` policy is
+intentionally incompatible with app-owned shutdown.
+
 Dashboard: cards sorted needs-you-first (permission → input → error → done →
 working → idle). Tab title + favicon carry the attention count. Per card:
 **jump** focuses the exact iTerm2 tab (hotkey windows included; VS Code
@@ -41,6 +56,11 @@ Rule-based states are always on and cost nothing. One-line LLM **blurbs** are
 generated only when a session hits a decision point (haiku-class via
 `claude -p`, debounced, rate-capped) — toggle "blurbs" in the top bar to turn
 all LLM polling off; chat stays available on demand.
+
+The live roster expires non-actionable records: idle sessions and completed
+interactive Codex turns remain for 5 minutes, while completed `codex exec`
+jobs remain for 30 seconds. Persistent editor backends and one-off scratchpad
+probes therefore leave the live view without hiding attention states.
 
 ## How it watches
 

@@ -189,10 +189,14 @@ def create_app(daemon: "Daemon") -> FastAPI:
                     errors.append(err)
         if errors:
             raise HTTPException(422, {"errors": errors})
+        old_llm_enabled = cfg.get("llm", "enabled")
         for section, values in body.items():
             for key, value in values.items():
                 cfg.update(section, key, value)
         config.save(cfg)
+        new_llm_enabled = cfg.get("llm", "enabled")
+        if new_llm_enabled != old_llm_enabled:
+            daemon.blurbs.set_enabled(new_llm_enabled)
         return cfg.to_dict()
 
     @api.post("/chat")

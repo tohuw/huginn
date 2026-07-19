@@ -299,8 +299,34 @@ class CodexWaitingReducerTests(unittest.TestCase):
         s = codex_session(state=SessionState.DONE)
         self.r.sessions[s.key] = s
         changed = self.feed("codex.missing", s.key, {})
-        self.assertEqual(changed, [s])
-        self.assertEqual(s.state, SessionState.ENDED)
+        self.assertEqual(changed, [])
+        self.assertNotIn(s.key, self.r.sessions)
+        self.assertEqual(self.r.removed, [s.key])
+
+    def test_poll_corrects_stale_transcript_working_state(self):
+        s = codex_session(state=SessionState.WORKING, state_origin="transcript",
+                          state_since=NOW - 120, last_activity=NOW - 120)
+        self.r.sessions[s.key] = s
+        incoming = codex_session(state=SessionState.DONE, state_origin="poll",
+                                 state_since=NOW - 60, last_activity=NOW - 60)
+        self.feed("codex.thread", s.key, {"session": incoming})
+        self.assertEqual(s.state, SessionState.DONE)
+        self.assertEqual(s.state_origin, "poll")
+
+    def test_poll_does_not_override_fresh_hook_state(self):
+        s = codex_session(state=SessionState.WORKING, state_origin="hook",
+                          state_since=NOW)
+        self.r.sessions[s.key] = s
+        incoming = codex_session(state=SessionState.DONE, state_origin="poll")
+        self.feed("codex.thread", s.key, {"session": incoming}, ts=NOW + 1)
+        self.assertEqual(s.state, SessionState.WORKING)
+
+    def test_session_hide_removes_idle_source_record(self):
+        s = codex_session(state=SessionState.IDLE)
+        self.r.sessions[s.key] = s
+        self.feed("session.hide", s.key, {})
+        self.assertNotIn(s.key, self.r.sessions)
+        self.assertEqual(self.r.removed, [s.key])
 
 
 class CodexHookReconciliationTests(unittest.TestCase):

@@ -150,9 +150,11 @@ class Reducer:
             if v and v != getattr(s, attr):
                 setattr(s, attr, v); changed = True
         s.last_activity = max(s.last_activity, incoming.last_activity)
-        # poll-derived state only ever refreshes low-confidence states
-        if s.state_origin in ("poll", "init", "timeout"):
-            changed |= self._set_state(s, incoming.state, "poll", now)
+        # Poll evidence is allowed to correct stale hook/transcript states;
+        # _set_state preserves the 3s hook grace and 30s origin-priority
+        # window. The old origin gate made a missed task_complete capable of
+        # pinning a Codex card in WORKING forever.
+        changed |= self._set_state(s, incoming.state, "poll", now)
         return [s] if changed else []
 
     def _on_codex_activity(self, ev: Event, now: float) -> list[Session]:
@@ -179,14 +181,20 @@ class Reducer:
         return [s] if changed else []
 
     def _on_codex_missing(self, ev: Event, now: float) -> list[Session]:
-        """A complete DB scan no longer includes this archived/expired thread."""
+        """A complete live-roster scan no longer includes this thread."""
         s = self.sessions.get(ev.session_key or "")
-        if s is None or s.state == SessionState.ENDED:
+        if s is None:
             return []
-        s.state = SessionState.ENDED
-        s.state_origin = "poll"
-        s.state_since = now
-        return [s]
+        del self.sessions[s.key]
+        self.removed.append(s.key)
+        return []
+
+    def _on_session_hide(self, ev: Event, now: float) -> list[Session]:
+        """Remove a source record that still exists but aged out of the roster."""
+        s = self.sessions.pop(ev.session_key or "", None)
+        if s is not None:
+            self.removed.append(s.key)
+        return []
 
     # Claude Desktop tile updates share the codex upsert semantics
     def _on_desktop_tile(self, ev: Event, now: float) -> list[Session]:

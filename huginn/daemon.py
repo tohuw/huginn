@@ -136,6 +136,15 @@ class Daemon:
         sess = claude_code.parse_session_file(path)
         if sess is None:
             return
+        # VS Code keeps one Claude backend alive for days. Once an idle
+        # session has aged out it is real, but no longer useful in a live
+        # attention roster. Remove an already-known card and suppress re-adds
+        # until the status file reports fresh activity.
+        if (sess.state == SessionState.IDLE
+                and time.time() - sess.last_activity >= self.cfg.get("ui", "idle_ttl_s")):
+            if sess.key in self.reducer.sessions:
+                self.bus.emit(Event("session.hide", sess.key, time.time(), "timeout"))
+            return
         if not (claude_code.pid_alive(sess.pid)
                 and claude_code.pid_matches_start(sess.pid, raw.get("procStart"))):
             if sess.key in self.reducer.sessions:
@@ -260,8 +269,9 @@ class Daemon:
                 continue
             for s in changed:
                 self.ensure_tail(s)
-                self.bus.broadcast("session.upsert", s.to_dict())
-                self.blurbs.request(s)
+                if s.key in self.reducer.sessions:
+                    self.bus.broadcast("session.upsert", s.to_dict())
+                    self.blurbs.request(s)
             for key in self.reducer.removed:
                 self.tails.pop(key, None)
                 self.bus.broadcast("session.remove", {"key": key})

@@ -51,9 +51,12 @@ class Daemon:
         self.hook_hits = data.get("hook_hits", {})
 
     def _write_snapshot(self) -> None:
+        # Contains prompt/blurb text -- 0600 regardless of umask (issue #24).
+        config.ensure_state_dirs()
         data = json.dumps({"sessions": self.reducer.snapshot(), "hook_hits": self.hook_hits})
         tmp = self.SNAPSHOT_PATH.with_suffix(".json.tmp")
         tmp.write_text(data)
+        tmp.chmod(0o600)
         os.replace(tmp, self.SNAPSHOT_PATH)
 
     def _flush_snapshot_if_dirty(self) -> bool:

@@ -55,18 +55,24 @@ async def start_chat(daemon: "Daemon", body: dict) -> dict:
 
 async def _run_chat(daemon: "Daemon", provider, question: str) -> None:
     bus = daemon.bus
+    # Digest files carry distilled transcript content -- private dir/files
+    # regardless of umask, and removed unconditionally below (issue #24):
+    # success, provider failure, or task cancellation must all clean up.
+    chat_dir = config.CACHE_DIR / "chat"
     try:
         mentioned = {m.lower() for m in re.findall(r"@([\w-]+)", question)}
-        chat_dir = config.CACHE_DIR / "chat"
+        config.ensure_state_dirs()
         shutil.rmtree(chat_dir, ignore_errors=True)
         chat_dir.mkdir(parents=True)
+        chat_dir.chmod(0o700)
 
         roster_lines = []
         for s in daemon.reducer.sessions.values():
             focus = s.name.lower() in mentioned
             fname = _safe_name(s.name) + ".md"
-            (chat_dir / fname).write_text(
-                digest_for_session(s, max_lines=80 if focus else 30))
+            digest_path = chat_dir / fname
+            digest_path.write_text(digest_for_session(s, max_lines=80 if focus else 30))
+            digest_path.chmod(0o600)
             age = int(time.time() - s.state_since)
             roster_lines.append(
                 f"- {s.name} [{s.source}] state={s.state.value} ({age}s) "
@@ -88,3 +94,5 @@ async def _run_chat(daemon: "Daemon", provider, question: str) -> None:
         bus.broadcast("chat.done", {})
     except Exception as e:
         bus.broadcast("chat.error", {"error": str(e)[:300]})
+    finally:
+        shutil.rmtree(chat_dir, ignore_errors=True)

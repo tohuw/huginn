@@ -20,7 +20,21 @@ if TYPE_CHECKING:
 
 STATIC_DIR = Path(__file__).parent / "static"
 NOTIFICATIONS_LOG = config.STATE_DIR / "notifications.log"
+NOTIFICATIONS_LOG_MAX_BYTES = 2 * 1024 * 1024
+NOTIFICATIONS_LOG_KEEP_LINES = 2000
 SESSION_COOKIE = "huginn_token"
+
+
+def _rotate_notifications_log() -> None:
+    """Bound retention: an opt-in debug log left on for weeks shouldn't grow
+    forever (issue #24). Keeps the newest lines, drops the rest."""
+    try:
+        if NOTIFICATIONS_LOG.stat().st_size <= NOTIFICATIONS_LOG_MAX_BYTES:
+            return
+    except OSError:
+        return
+    lines = NOTIFICATIONS_LOG.read_text().splitlines()[-NOTIFICATIONS_LOG_KEEP_LINES:]
+    NOTIFICATIONS_LOG.write_text("\n".join(lines) + ("\n" if lines else ""))
 
 
 def _log_notification(source: str, message: str) -> None:
@@ -30,8 +44,10 @@ def _log_notification(source: str, message: str) -> None:
         return
     try:
         config.ensure_state_dirs()
+        _rotate_notifications_log()
         with NOTIFICATIONS_LOG.open("a") as f:
             f.write(json.dumps({"ts": time.time(), "source": source, "message": message}) + "\n")
+        NOTIFICATIONS_LOG.chmod(0o600)   # regardless of umask
     except OSError:
         pass
 

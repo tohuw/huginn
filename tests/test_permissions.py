@@ -123,7 +123,7 @@ class ChatDigestCleanupTests(PermissiveUmaskTestCase):
         daemon = Daemon(Config({}))
         s = _session()
         daemon.reducer.sessions[s.key] = s
-        await _run_chat(daemon, provider, "how's it going?")
+        await _run_chat(daemon, provider, "how's it going?", "test-request-id")
 
     def test_chat_dir_removed_after_success(self):
         asyncio.run(self._run(_StreamProvider(chunks=["hi"])))

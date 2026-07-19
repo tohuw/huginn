@@ -10,6 +10,7 @@ import asyncio
 import re
 import shutil
 import time
+import uuid
 from typing import TYPE_CHECKING
 
 from .. import config
@@ -31,30 +32,38 @@ Roster:
 Question: {question}
 """
 
-_active_chat: asyncio.Task | None = None
-
 
 def _safe_name(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]", "_", name)
 
 
 async def start_chat(daemon: "Daemon", body: dict) -> dict:
-    global _active_chat
+    # Concurrency is per-daemon, not per-client (issue #17): one chat
+    # subprocess in flight at a time, whole-daemon-wide, so a second tab
+    # asking a question while one is already running gets rejected rather
+    # than spawning a competing LLM process. request_id lets multiple
+    # *browser tabs* subscribed to the same SSE stream tell "my answer"
+    # apart from "someone else's" -- see app.js's currentRequestId check.
     question = (body.get("question") or "").strip()
     if not question:
         return {"ok": False, "error": "empty question"}
-    if _active_chat and not _active_chat.done():
+    if daemon.active_chat and not daemon.active_chat.done():
         return {"ok": False, "error": "a chat is already running"}
     provider = get_provider(body.get("provider") or daemon.cfg.get("llm", "provider"))
     unavailable = provider.available()
     if unavailable:
         return {"ok": False, "error": unavailable}
-    _active_chat = asyncio.create_task(_run_chat(daemon, provider, question))
-    return {"ok": True}
+    request_id = uuid.uuid4().hex[:12]
+    daemon.active_chat = asyncio.create_task(_run_chat(daemon, provider, question, request_id))
+    return {"ok": True, "request_id": request_id}
 
 
-async def _run_chat(daemon: "Daemon", provider, question: str) -> None:
+async def _run_chat(daemon: "Daemon", provider, question: str, request_id: str) -> None:
     bus = daemon.bus
+
+    def broadcast(event: str, data: dict) -> None:
+        bus.broadcast(event, {**data, "request_id": request_id})
+
     # Digest files carry distilled transcript content -- private dir/files
     # regardless of umask, and removed unconditionally below (issue #24):
     # success, provider failure, or task cancellation must all clean up.
@@ -78,8 +87,8 @@ async def _run_chat(daemon: "Daemon", provider, question: str) -> None:
                 f"- {s.name} [{s.source}] state={s.state.value} ({age}s) "
                 f"cwd={s.cwd} -> {fname}")
         if not roster_lines:
-            bus.broadcast("chat.delta", {"text": "No sessions to ask about."})
-            bus.broadcast("chat.done", {})
+            broadcast("chat.delta", {"text": "No sessions to ask about."})
+            broadcast("chat.done", {})
             return
 
         prompt = SYSTEM.format(roster="\n".join(roster_lines), question=question)
@@ -88,11 +97,11 @@ async def _run_chat(daemon: "Daemon", provider, question: str) -> None:
         async for chunk in provider.stream(
                 prompt, model=model, cwd=str(chat_dir), allowed_tools="Read,Grep"):
             got_any = True
-            bus.broadcast("chat.delta", {"text": chunk})
+            broadcast("chat.delta", {"text": chunk})
         if not got_any:
-            bus.broadcast("chat.delta", {"text": "(no answer produced)"})
-        bus.broadcast("chat.done", {})
+            broadcast("chat.delta", {"text": "(no answer produced)"})
+        broadcast("chat.done", {})
     except Exception as e:
-        bus.broadcast("chat.error", {"error": str(e)[:300]})
+        broadcast("chat.error", {"error": str(e)[:300]})
     finally:
         shutil.rmtree(chat_dir, ignore_errors=True)

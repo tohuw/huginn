@@ -1,4 +1,4 @@
-# Huginn: A Local AI Agent Activity Console
+# Huginn: An AI Agent Activity Console
 
 _Developed with AI assistance. See the git history for which agents contributed._
 

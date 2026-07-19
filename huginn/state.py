@@ -242,7 +242,10 @@ class Reducer:
     def _on_tick(self, ev: Event, now: float) -> list[Session]:
         changed: list[Session] = []
         pending_timeout = self.cfg.get("claude", "pending_tool_timeout_s")
-        ended_ttl = self.cfg.get("ui", "ended_ttl_s")
+        # show_ended=False means don't show them at all, not just "for a
+        # while" -- reuse the same TTL-removal path with a 0 grace period
+        # rather than a separate client-side filter (issue #19).
+        ended_ttl = self.cfg.get("ui", "ended_ttl_s") if self.cfg.get("ui", "show_ended") else 0
         for key, s in list(self.sessions.items()):
             # a tool_use stuck without result while not busy = permission prompt
             age = ev.payload.get("pending_ages", {}).get(key)
@@ -250,7 +253,7 @@ class Reducer:
                     and s.state in (SessionState.IDLE, SessionState.WORKING)):
                 if self._set_state(s, SessionState.WAITING_PERMISSION, "transcript", now):
                     changed.append(s)
-            if s.state == SessionState.ENDED and now - s.state_since > ended_ttl:
+            if s.state == SessionState.ENDED and now - s.state_since >= ended_ttl:
                 del self.sessions[key]
                 self.removed.append(key)
         return changed

@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from huginn.config import Config
-from huginn.sources.codex import _subagent_counts, scan_with_status
+from huginn.sources.codex import _subagent_counts, activity_heartbeat, scan_with_status
 
 DDL = """
 CREATE TABLE thread_spawn_edges (
@@ -56,6 +56,26 @@ class CodexScanStatusTests(unittest.TestCase):
                 sessions, complete = scan_with_status(Config({}))
         self.assertEqual(sessions, [])
         self.assertFalse(complete)
+
+
+class ActivityHeartbeatTests(unittest.TestCase):
+    """issue #19: was defined but never called from anywhere -- now wired
+    into `huginn doctor`'s codex section."""
+
+    def test_returns_mtime_when_wal_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wal = Path(tmp) / "logs_2.sqlite-wal"
+            wal.write_text("x")
+            expected = wal.stat().st_mtime
+            with patch("huginn.sources.codex.LOGS_WAL", wal):
+                hb = activity_heartbeat()
+        self.assertEqual(hb, expected)
+
+    def test_none_when_wal_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "logs_2.sqlite-wal"
+            with patch("huginn.sources.codex.LOGS_WAL", missing):
+                self.assertIsNone(activity_heartbeat())
 
 
 if __name__ == "__main__":

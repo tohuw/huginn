@@ -163,7 +163,13 @@ function openChat(open) {
 }
 document.getElementById("chat-toggle").onclick = () => openChat();
 
+// Chat concurrency is per-daemon (one subprocess in flight at a time), but
+// every open tab shares the same SSE stream -- request_id is how a tab
+// tells "my answer" apart from another tab's, and drops anything else
+// (issue #17). Only one currentRequestId lives per tab, so a late/stale
+// event for an older question can't append to a newer one either.
 let currentAnswer = null;
+let currentRequestId = null;
 document.getElementById("chat-form").onsubmit = async (e) => {
   e.preventDefault();
   const input = document.getElementById("chat-input");
@@ -172,22 +178,21 @@ document.getElementById("chat-form").onsubmit = async (e) => {
   input.value = "";
   addMsg("q", q);
   currentAnswer = addMsg("a", "");
+  currentRequestId = null;
   const provider = document.getElementById("provider").value;
   const r = await apiFetch("/api/chat", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ question: q, provider }),
   });
+  const body = await r.json().catch(() => ({}));
   if (!r.ok) {
-    let detail = `chat unavailable (${r.status})`;
-    try {
-      const body = await r.json();
-      if (body.detail) detail = body.detail;
-    } catch (_) {}
     if (currentAnswer) {
       currentAnswer.classList.add("err");
-      currentAnswer.textContent = detail;
+      currentAnswer.textContent = body.detail || `chat unavailable (${r.status})`;
     }
     currentAnswer = null;
+  } else {
+    currentRequestId = body.request_id || null;
   }
 };
 
@@ -246,17 +251,21 @@ function connect() {
   es.addEventListener("session.remove", (e) => removeCard(JSON.parse(e.data).key));
   es.addEventListener("attention.count", (e) => setAttention(JSON.parse(e.data).count));
   es.addEventListener("chat.delta", (e) => {
-    if (currentAnswer) {
-      currentAnswer.textContent += JSON.parse(e.data).text;
+    const data = JSON.parse(e.data);
+    if (currentAnswer && data.request_id === currentRequestId) {
+      currentAnswer.textContent += data.text;
       const log = document.getElementById("chat-log");
       log.scrollTop = log.scrollHeight;
     }
   });
-  es.addEventListener("chat.done", () => { currentAnswer = null; });
+  es.addEventListener("chat.done", (e) => {
+    if (JSON.parse(e.data).request_id === currentRequestId) currentAnswer = null;
+  });
   es.addEventListener("chat.error", (e) => {
-    if (currentAnswer) {
+    const data = JSON.parse(e.data);
+    if (currentAnswer && data.request_id === currentRequestId) {
       currentAnswer.classList.add("err");
-      currentAnswer.textContent += `\n[${JSON.parse(e.data).error}]`;
+      currentAnswer.textContent += `\n[${data.error}]`;
       currentAnswer = null;
     }
   });

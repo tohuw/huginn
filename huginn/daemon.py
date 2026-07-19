@@ -28,6 +28,9 @@ class Daemon:
         self._dirty = False   # sessions/hook_hits changed since the last snapshot write
         self.token = ""   # set for real in run(); tests may set it directly
         self.hook_hits: dict[str, int] = {}   # "{source}.{event}" -> count, issue #2
+        # Owned here (not a chat.py module global) so multiple Daemon
+        # instances in one process never share chat state -- issue #17.
+        self.active_chat: asyncio.Task | None = None
         from .llm.blurb import BlurbWorker
         self.blurbs = BlurbWorker(self)
 
@@ -299,9 +302,8 @@ class Daemon:
             # detail, and it happens before the snapshot write below.
             for t in list(self.blurbs._pending.values()):
                 t.cancel()
-            from .llm import chat as _chat
-            if _chat._active_chat and not _chat._active_chat.done():
-                _chat._active_chat.cancel()
+            if self.active_chat and not self.active_chat.done():
+                self.active_chat.cancel()
             with contextlib.suppress(Exception):
                 self._write_snapshot()   # best-effort: survive a graceful restart
             with contextlib.suppress(Exception):

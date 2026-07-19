@@ -1,0 +1,96 @@
+"""Chat request-ID correlation across SSE subscribers, and per-daemon (not
+module-global) chat state -- issue #17."""
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import unittest
+from unittest.mock import patch
+
+from huginn.config import Config
+from huginn.daemon import Daemon
+from huginn.llm.chat import start_chat
+
+
+class _AvailableProvider:
+    def available(self):
+        return None
+
+    async def stream(self, *args, **kwargs):
+        yield "answer"
+
+
+class _UnavailableProvider:
+    def available(self):
+        return "not configured"
+
+
+class ChatCorrelationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_request_id_is_returned_and_tags_every_broadcast(self):
+        daemon = Daemon(Config({}))
+        events = []
+        daemon.bus.broadcast = lambda event, data: events.append((event, data))
+
+        with patch("huginn.llm.chat.get_provider", return_value=_AvailableProvider()):
+            result = await start_chat(daemon, {"question": "how's it going?"})
+        self.assertTrue(result["ok"])
+        request_id = result["request_id"]
+        self.assertTrue(request_id)
+
+        await daemon.active_chat
+        self.assertTrue(events)
+        for _event, data in events:
+            self.assertEqual(data["request_id"], request_id)
+
+    async def test_second_request_rejected_while_one_is_running(self):
+        daemon = Daemon(Config({}))
+        daemon.bus.broadcast = lambda *a, **k: None
+
+        class _SlowProvider(_AvailableProvider):
+            async def stream(self, *args, **kwargs):
+                await asyncio.sleep(10)
+                yield "never"   # pragma: no cover
+
+        with patch("huginn.llm.chat.get_provider", return_value=_SlowProvider()):
+            first = await start_chat(daemon, {"question": "first?"})
+            second = await start_chat(daemon, {"question": "second?"})
+        self.assertTrue(first["ok"])
+        self.assertFalse(second["ok"])
+        self.assertIn("already running", second["error"])
+        daemon.active_chat.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await daemon.active_chat
+
+    async def test_two_daemon_instances_do_not_share_active_chat(self):
+        d1, d2 = Daemon(Config({})), Daemon(Config({}))
+        d1.bus.broadcast = lambda *a, **k: None
+        d2.bus.broadcast = lambda *a, **k: None
+
+        class _SlowProvider(_AvailableProvider):
+            async def stream(self, *args, **kwargs):
+                await asyncio.sleep(10)
+                yield "never"   # pragma: no cover
+
+        with patch("huginn.llm.chat.get_provider", return_value=_SlowProvider()):
+            r1 = await start_chat(d1, {"question": "d1 question"})
+            r2 = await start_chat(d2, {"question": "d2 question"})
+        self.assertTrue(r1["ok"])
+        self.assertTrue(r2["ok"], "second daemon's chat was rejected -- state is shared")
+        self.assertIsNot(d1.active_chat, d2.active_chat)
+        d1.active_chat.cancel()
+        d2.active_chat.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await d1.active_chat
+        with contextlib.suppress(asyncio.CancelledError):
+            await d2.active_chat
+
+    async def test_unavailable_provider_rejected_without_request_id(self):
+        daemon = Daemon(Config({}))
+        with patch("huginn.llm.chat.get_provider", return_value=_UnavailableProvider()):
+            result = await start_chat(daemon, {"question": "hi"})
+        self.assertFalse(result["ok"])
+        self.assertNotIn("request_id", result)
+
+
+if __name__ == "__main__":
+    unittest.main()

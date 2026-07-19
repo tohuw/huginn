@@ -61,6 +61,25 @@ class ReducerTests(unittest.TestCase):
                      "message": "Claude is waiting for your input"}})
         self.assertEqual(s.state, SessionState.WAITING_INPUT)
 
+    def test_notification_classification_more_patterns(self):
+        # More representative messages, pinning the rest of the default
+        # [patterns] lists (issue #1 -- no real-traffic corpus exists yet to
+        # tune these against, so this is a regression net, not tuned data).
+        cases = [
+            ("Do you approve this action?", SessionState.WAITING_PERMISSION),
+            ("This requires authorization before continuing", SessionState.WAITING_PERMISSION),
+            ("Bash command not allowed without approval", SessionState.WAITING_PERMISSION),
+            ("Session is idle", SessionState.WAITING_INPUT),
+        ]
+        for message, expected in cases:
+            r = Reducer(Config({}))
+            s = claude_session(state=SessionState.WORKING)
+            r.sessions[s.key] = s
+            r.apply(Event("hook.claude", None, time.time(), "test",
+                          {"event": "Notification",
+                           "data": {"session_id": "sid-100", "message": message}}))
+            self.assertEqual(s.state, expected, msg=message)
+
     def test_stop_done_vs_question(self):
         s = claude_session(state=SessionState.WORKING)
         self.r.sessions[s.key] = s

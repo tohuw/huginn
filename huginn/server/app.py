@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hmac
+import json
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -18,6 +19,20 @@ if TYPE_CHECKING:
     from ..daemon import Daemon
 
 STATIC_DIR = Path(__file__).parent / "static"
+NOTIFICATIONS_LOG = config.STATE_DIR / "notifications.log"
+
+
+def _log_notification(source: str, message: str) -> None:
+    """Opt-in (patterns.debug_log) raw-message capture for tuning the
+    permission/waiting pattern lists against real traffic -- issue #1."""
+    if not message:
+        return
+    try:
+        config.ensure_state_dirs()
+        with NOTIFICATIONS_LOG.open("a") as f:
+            f.write(json.dumps({"ts": time.time(), "source": source, "message": message}) + "\n")
+    except OSError:
+        pass
 
 
 def create_app(daemon: "Daemon") -> FastAPI:
@@ -81,6 +96,8 @@ def create_app(daemon: "Daemon") -> FastAPI:
         except Exception:
             data = {}
         payload = {"event": event, "data": data}
+        if event == "Notification" and cfg.section("patterns").get("debug_log"):
+            _log_notification(source, data.get("message") or "")
         if source == "claude" and event == "Stop":
             # Disambiguate DONE vs WAITING_INPUT from the transcript tail.
             sid = data.get("session_id", "")

@@ -28,6 +28,10 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "patterns": {
         "permission": ["permission", "approve", "authoriz", "allowed"],
         "waiting": ["waiting for", "your input", "idle"],
+        # opt-in: append raw Notification message text (message only, no other
+        # hook fields) to ~/.local/state/huginn/notifications.log -- issue #1,
+        # for tuning the two pattern lists above against real traffic.
+        "debug_log": False,
     },
     "ui": {"show_ended": True, "ended_ttl_s": 300},
     "claude": {"sweep_s": 10.0, "pending_tool_timeout_s": 20.0},

@@ -2,8 +2,12 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 
 from . import config
 from .model import STATE_RANK, Session
@@ -79,6 +83,112 @@ def cmd_open(args: argparse.Namespace) -> int:
     return 0
 
 
+def _daemon_api(path: str, method: str = "GET") -> dict:
+    """Call the local authenticated daemon without exposing token mechanics."""
+    if not (config.STATE_DIR / "daemon.json").exists():
+        raise RuntimeError("daemon not running (open Huginn.app or run `huginn serve`)")
+    try:
+        port = (config.STATE_DIR / "port").read_text().strip()
+        token = config.TOKEN_PATH.read_text().strip()
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}{path}", method=method,
+            headers={"X-Huginn-Token": token})
+        with urllib.request.urlopen(request, timeout=3) as response:
+            return json.load(response)
+    except (OSError, urllib.error.URLError, json.JSONDecodeError) as e:
+        raise RuntimeError(f"cannot reach Huginn daemon: {type(e).__name__}") from e
+
+
+def _live_sessions(attention_only: bool = False) -> list[dict]:
+    sessions = _daemon_api("/api/sessions")["sessions"]
+    if attention_only:
+        sessions = [s for s in sessions if s.get("attention")]
+    return sessions
+
+
+def _resolve_session(target: str, sessions: list[dict]) -> dict:
+    needle = target.removeprefix("@").lower()
+    exact = [s for s in sessions if s["name"].lower() == needle or s["key"].lower() == needle]
+    if len(exact) == 1:
+        return exact[0]
+    partial = [s for s in sessions if s["name"].lower().startswith(needle)]
+    if len(partial) == 1:
+        return partial[0]
+    if not exact and not partial:
+        raise RuntimeError(f"no live session matches {target!r}")
+    names = ", ".join(s["name"] for s in (exact or partial))
+    raise RuntimeError(f"ambiguous session {target!r}: {names}")
+
+
+def cmd_roster(args: argparse.Namespace) -> int:
+    try:
+        sessions = _live_sessions(args.attention)
+    except RuntimeError as e:
+        print(f"huginn: {e}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps({"sessions": sessions}, indent=2))
+        return 0
+    if not sessions:
+        print("no sessions need attention" if args.attention else "no live sessions")
+        return 0
+    for s in sessions:
+        summary = (s.get("blurb") or s.get("last_prompt") or "").replace("\n", " ")[:100]
+        print(f"@{s['name']}\t{s['state']}\t{_age(s['state_since'])}\t"
+              f"{s['source']}\t{summary}\t{s.get('cwd') or '-'}")
+    return 0
+
+
+def cmd_inspect(args: argparse.Namespace) -> int:
+    if not args.attention and not args.target:
+        print("huginn: inspect requires @name or --attention", file=sys.stderr)
+        return 2
+    try:
+        sessions = _live_sessions(args.attention)
+        selected = sessions if args.attention else [_resolve_session(args.target, sessions)]
+        details = []
+        for s in selected:
+            key = urllib.parse.quote(s["key"], safe="")
+            tail = _daemon_api(f"/api/sessions/{key}/tail?n={args.lines}").get("lines", [])
+            details.append({**s, "tail": tail})
+    except RuntimeError as e:
+        print(f"huginn: {e}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps({"sessions": details}, indent=2))
+        return 0
+    if not details:
+        print("no sessions need attention")
+        return 0
+    for i, s in enumerate(details):
+        if i:
+            print("\n---\n")
+        print(f"@{s['name']} [{s['source']}] {s['state']} ({_age(s['state_since'])})")
+        print(f"cwd: {s.get('cwd') or '-'}")
+        if s.get("blurb"):
+            print(f"summary: {s['blurb']}")
+        elif s.get("last_prompt"):
+            print(f"prompt: {s['last_prompt']}")
+        print("\nRecent activity:")
+        print("\n".join(s["tail"]) or "(no transcript yet)")
+    return 0
+
+
+def cmd_focus(args: argparse.Namespace) -> int:
+    try:
+        session = _resolve_session(args.target, _live_sessions())
+        key = urllib.parse.quote(session["key"], safe="")
+        result = _daemon_api(f"/api/sessions/{key}/focus", method="POST")
+    except RuntimeError as e:
+        print(f"huginn: {e}", file=sys.stderr)
+        return 1
+    if not result.get("ok", True):
+        print(f"huginn: focus failed: {result.get('error') or result}", file=sys.stderr)
+        return 1
+    print(f"focused @{session['name']}")
+    return 0
+
+
 def cmd_install_hooks(args: argparse.Namespace) -> int:
     from .hooks.install import install
     return install()
@@ -117,6 +227,22 @@ def main(argv: list[str] | None = None) -> int:
     sp.set_defaults(fn=cmd_serve)
 
     sub.add_parser("open", help="reopen the dashboard with a fresh auth bootstrap").set_defaults(fn=cmd_open)
+
+    sp = sub.add_parser("roster", help="compact live roster for agents and scripts")
+    sp.add_argument("--attention", action="store_true", help="only sessions needing user attention")
+    sp.add_argument("--json", action="store_true", help="emit structured JSON")
+    sp.set_defaults(fn=cmd_roster)
+
+    sp = sub.add_parser("inspect", help="read a distilled live-session digest")
+    sp.add_argument("target", nargs="?", help="session name, @name, or canonical key")
+    sp.add_argument("--attention", action="store_true", help="inspect every session needing attention")
+    sp.add_argument("--lines", type=int, default=30, choices=range(1, 201), metavar="N")
+    sp.add_argument("--json", action="store_true", help="emit structured JSON")
+    sp.set_defaults(fn=cmd_inspect)
+
+    sp = sub.add_parser("focus", help="focus a live session by name")
+    sp.add_argument("target", help="session name, @name, or canonical key")
+    sp.set_defaults(fn=cmd_focus)
 
     sub.add_parser("install-hooks", help="install Claude Code + Codex hooks").set_defaults(fn=cmd_install_hooks)
     sub.add_parser("uninstall-hooks", help="remove huginn hooks").set_defaults(fn=cmd_uninstall_hooks)

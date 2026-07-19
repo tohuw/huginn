@@ -1,4 +1,7 @@
-.claude/
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/huginn
 __pycache__/
 *.pyc
 .venv/

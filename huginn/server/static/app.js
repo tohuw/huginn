@@ -22,7 +22,7 @@ function apiFetch(url, opts = {}) {
       if (!authExpired) {
         authExpired = true;
         document.querySelector(".brand").textContent =
-          "⛬ huginn — session expired, run `huginn open`";
+          "Huginn — session expired, run `huginn open`";
       }
       throw new Error("unauthorized");
     }
@@ -121,13 +121,13 @@ function setAttention(n) {
   const c = document.createElement("canvas");
   c.width = c.height = 32;
   const g = c.getContext("2d");
-  g.fillStyle = n ? "#e0af68" : "#cdd3e0";
-  const bird = new Path2D("M160.8 96.5c14 17 31 30.9 49.5 42.2c25.9 15.8 53.7 25.9 77.7 31.6V138.8C265.8 108.5 250 71.5 248.6 28c-.4-11.3-7.5-21.5-18.4-24.4c-7.6-2-15.8-.2-21 5.8c-13.3 15.4-32.7 44.6-48.4 87.2zM320 144v64c-60.8-5.1-185-43.8-219.3-157.2C97.4 40 87.9 32 76.6 32c-7.9 0-15.3 3.9-18.8 11C46.8 65.9 32 112.1 32 176c0 116.9 80.1 180.5 118.4 202.8L11.8 416.6C6.7 418 2.6 421.8.9 426.8s-.8 10.6 2.3 14.8C21.7 466.2 77.3 512 160 512c3.6 0 7.2-1.2 10-3.5L245.6 448H320c88.4 0 160-71.6 160-160V128l29.9-44.9c1.3-2 2.1-4.4 2.1-6.8c0-6.8-5.5-12.3-12.3-12.3H400c-44.2 0-80 35.8-80 80zm80-16a16 16 0 1 1 0 32 16 16 0 1 1 0-32z");
+  g.fillStyle = n ? "#b7a0da" : "#9b87d1";
+  const bird = new Path2D("M343.313 22.22c-57.33 0-61.26 36.153-91.125 54.874C154.782 42.52 133.115 221.496 169.844 330c-15.396 31.924-30.736 75.9-43.813 134.906 56.828 30.66 119.124 38.655 182.22 9.906-6.2-37.715-14.18-68.858-21.97-95.375 25.025-12.63 59.594-14.573 86.5 14.407.24-28.626-19.022-40.956-40.53-42.25l-22.03-47.313c42.606-45.056 74.38-100.18 57.905-157.06-10.303-38.45 58.203-62.225 122.344-53.75-24.523-21.164-55.99-30.482-85.845-33.876-8.843-21.763-32.616-37.375-61.313-37.375zm10.968 21.936c9.808 0 17.783 7.944 17.783 17.75 0 9.807-7.974 17.75-17.782 17.75-9.807 0-17.75-7.943-17.75-17.75 0-9.806 7.945-17.75 17.75-17.75zm-58.092 274.25 16.28 34.938c-11.62 2.698-22.325 8.217-29.312 15.687-3.298-10.84-6.498-20.903-9.47-30.28a499.965 499.965 0 0 0 22.502-20.344z");
   g.save(); g.scale(0.058, 0.058); g.translate(18, 18); g.fill(bird); g.restore();
   if (n) {
-    g.fillStyle = "#14161b";
+    g.fillStyle = "#100e16";
     g.beginPath(); g.arc(24, 9, 8, 0, Math.PI * 2); g.fill();
-    g.fillStyle = "#e0af68"; g.font = "bold 9px sans-serif";
+    g.fillStyle = "#b7a0da"; g.font = "bold 9px sans-serif";
     g.textAlign = "center"; g.textBaseline = "middle";
     g.fillText(n > 9 ? "9+" : String(n), 24, 9.5);
   }
@@ -161,7 +161,7 @@ function askAbout(key) {
 
 // ---------------------------------------------------------------------- chat
 
-let chatOpen = false;
+let chatOpen = true;
 function openChat(open) {
   chatOpen = open === undefined ? !chatOpen : open;
   document.getElementById("chat").hidden = !chatOpen;
@@ -291,11 +291,22 @@ chatInput.addEventListener("keydown", (e) => {
 // ------------------------------------------------------------------ settings
 
 async function loadSettings() {
-  const r = await apiFetch("/api/settings");
-  const cfg = await r.json();
+  const [settingsResponse, providersResponse] = await Promise.all([
+    apiFetch("/api/settings"), apiFetch("/api/providers"),
+  ]);
+  const cfg = await settingsResponse.json();
+  const availability = (await providersResponse.json()).providers;
   llmEnabled = cfg.llm.enabled;
   document.getElementById("llm-toggle").checked = llmEnabled;
-  document.getElementById("provider").value = cfg.llm.provider;
+  const providerSelect = document.getElementById("provider");
+  providerSelect.value = cfg.llm.provider;
+  for (const option of providerSelect.options) {
+    const status = availability[option.value];
+    option.disabled = status && !status.available;
+    option.title = status?.reason || "installed";
+  }
+  const selectedStatus = availability[providerSelect.value];
+  providerSelect.title = selectedStatus?.reason || "Q&A provider";
 }
 document.getElementById("llm-toggle").onchange = async (e) => {
   llmEnabled = e.target.checked;
@@ -310,11 +321,13 @@ document.getElementById("llm-toggle").onchange = async (e) => {
     for (const s of sessions.values()) upsertCard(s);
   }
 };
-document.getElementById("provider").onchange = (e) =>
-  apiFetch("/api/settings", {
+document.getElementById("provider").onchange = (e) => {
+  e.target.title = "Q&A provider";
+  return apiFetch("/api/settings", {
     method: "PUT", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ llm: { provider: e.target.value } }),
   });
+};
 
 // -------------------------------------------------------------------- wiring
 

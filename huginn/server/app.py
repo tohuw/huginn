@@ -173,6 +173,15 @@ def create_app(daemon: "Daemon") -> FastAPI:
     def get_settings():
         return cfg.to_dict()
 
+    @api.get("/providers")
+    def providers():
+        from ..llm.providers import get_provider
+        result = {}
+        for name in ("claude", "codex"):
+            reason = get_provider(name).available()
+            result[name] = {"available": reason is None, "reason": reason}
+        return {"providers": result}
+
     @api.put("/settings")
     async def put_settings(request: Request):
         body = await request.json()

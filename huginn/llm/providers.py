@@ -173,6 +173,7 @@ class CodexCLI:
             *cmd, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE, cwd=cwd)
         stderr_task = asyncio.create_task(_drain_stderr(proc.stderr))
+        emitted_message = False
         try:
             assert proc.stdout is not None
             async for raw in proc.stdout:
@@ -185,9 +186,15 @@ class CodexCLI:
                 if t in ("item.completed", "item.updated"):
                     item = obj.get("item") or {}
                     if item.get("type") == "agent_message" and item.get("text"):
+                        if emitted_message and not item["text"].startswith("\n"):
+                            yield "\n"
                         yield item["text"]
+                        emitted_message = True
                 elif t == "agent_message" and obj.get("message"):
+                    if emitted_message and not obj["message"].startswith("\n"):
+                        yield "\n"
                     yield obj["message"]
+                    emitted_message = True
                 elif t == "agent_message_delta" and obj.get("delta"):
                     yield obj["delta"]
             await proc.wait()

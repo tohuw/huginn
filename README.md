@@ -33,6 +33,27 @@ input, or error entry. **Quit Huginn** stops the daemon. Remove the launchd
 version first with `uv run huginn uninstall-agent`; its `KeepAlive` policy is
 intentionally incompatible with app-owned shutdown.
 
+### Agent access
+
+Install the CLI on `PATH` from this checkout:
+
+```sh
+uv tool install --editable .
+```
+
+Huginn includes one canonical cross-agent skill at
+`.agents/skills/huginn/SKILL.md`; `.claude/skills/huginn` links to it for
+Claude Code. Install or link that directory into `~/.agents/skills/huginn`
+and `~/.claude/skills/huginn` to make it available from every repository.
+The skill uses the stable, authenticated CLI instead of teaching agents to
+read daemon internals:
+
+```sh
+huginn roster --attention
+huginn inspect @session-name
+huginn focus @session-name
+```
+
 Dashboard: cards sorted needs-you-first (permission → input → error → done →
 working → idle). Tab title + favicon carry the attention count. Per card:
 **jump** focuses the exact iTerm2 tab (hotkey windows included; VS Code

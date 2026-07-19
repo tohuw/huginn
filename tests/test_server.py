@@ -21,6 +21,7 @@ def make_client(token: str = "secret-token") -> TestClient:
 def make_client_with_daemon(token: str = "secret-token") -> tuple[TestClient, Daemon]:
     daemon = Daemon(Config({}))
     daemon.token = token
+    daemon.refresh_token = "persistent-refresh-token"
     app = create_app(daemon)
     # base_url controls the Host header TestClient sends; require_local_origin
     # rejects anything but 127.0.0.1/localhost, so this must match.
@@ -75,6 +76,7 @@ class AuthTests(unittest.TestCase):
         self.assertIn("huginn_token=secret-token", set_cookie)
         self.assertIn("HttpOnly", set_cookie)
         self.assertIn("samesite=strict", set_cookie.lower())
+        self.assertIn("huginn_refresh=persistent-refresh-token", set_cookie)
         # No header this time -- the cookie the client just stored should carry it.
         r2 = c.get("/api/sessions")
         self.assertEqual(r2.status_code, 200)
@@ -82,6 +84,19 @@ class AuthTests(unittest.TestCase):
     def test_session_requires_token(self):
         c = make_client()
         self.assertEqual(c.post("/api/session").status_code, 401)
+
+    def test_refresh_rotates_expired_browser_cookie(self):
+        c, daemon = make_client_with_daemon("old-token")
+        self.assertEqual(c.post("/api/session", headers={
+            "X-Huginn-Token": "old-token"}).status_code, 200)
+        daemon.token = "new-token"
+        self.assertEqual(c.get("/api/sessions").status_code, 401)
+        self.assertEqual(c.post("/api/session/refresh").status_code, 200)
+        self.assertEqual(c.get("/api/sessions").status_code, 200)
+
+    def test_refresh_requires_refresh_cookie(self):
+        c = make_client()
+        self.assertEqual(c.post("/api/session/refresh").status_code, 401)
 
     def test_query_param_token_no_longer_accepted(self):
         c = make_client()

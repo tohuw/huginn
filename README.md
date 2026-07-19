@@ -120,18 +120,21 @@ probes therefore leave the live view without hiding attention states.
 
 ## Security
 
-The daemon binds `127.0.0.1` only and every `/api/*` route requires a
-per-restart token (`~/.local/state/huginn/token`, mode 0600). What this does
-and doesn't protect against:
+The daemon binds `127.0.0.1` only. API routes require a per-restart token
+(`~/.local/state/huginn/token`, mode 0600), except the session-refresh route,
+which requires a separate persistent credential stored as an HttpOnly,
+path-scoped cookie (`~/.local/state/huginn/refresh-token`, mode 0600). What
+this does and doesn't protect against:
 
 - **Protects against:** another process on your machine — a script, a
   compromised dependency, a stray webpage your browser has open — making
   requests to the daemon's API without your consent. The token bootstraps
   into the browser via a URL fragment (`#t=...`, never sent to the server or
   logged) traded for an HttpOnly, `SameSite=Strict` session cookie; `GET /`
-  itself carries no secret, so it's safe for any local process to fetch.
-  `Origin`/`Host` header checks reject cross-origin and DNS-rebinding
-  requests on top of that.
+  itself carries no secret, so it's safe for any local process to fetch. The
+  refresh credential can only mint a new session cookie; it is never accepted
+  by other API routes. `Origin`/`Host` header checks reject cross-origin and
+  DNS-rebinding requests on top of that.
 - **Does not protect against:** another process running *as you* that can
   read your files — it can read `~/.local/state/huginn/token` directly (same
   permission boundary as reading your Claude transcripts), so this isn't
@@ -139,9 +142,9 @@ and doesn't protect against:
   your threat model, huginn isn't the layer defending against it; your OS
   user/process sandboxing is.
 
-If the daemon restarts, the token rotates and any open tab 401s — run
-`huginn open` to reopen the dashboard with a fresh bootstrap rather than
-reloading the stale tab.
+If the daemon restarts, the API token rotates. An open, previously authorized
+tab silently refreshes its HttpOnly session cookie; `huginn open` remains the
+bootstrap path for a new browser profile or a cleared-cookie session.
 
 ## Config
 

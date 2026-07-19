@@ -199,10 +199,11 @@ def ensure_state_dirs() -> None:
 
 
 TOKEN_PATH = STATE_DIR / "token"
+REFRESH_TOKEN_PATH = STATE_DIR / "refresh-token"
 
 
 def write_token() -> str:
-    """Fresh per-daemon-start auth token; any open dashboard tab hard-reloads on 401."""
+    """Fresh per-daemon-start API token."""
     import secrets
     ensure_state_dirs()
     token = secrets.token_urlsafe(32)
@@ -210,4 +211,22 @@ def write_token() -> str:
     tmp.write_text(token)
     tmp.chmod(0o600)
     os.replace(tmp, TOKEN_PATH)
+    return token
+
+
+def get_or_create_refresh_token() -> str:
+    """Persistent browser credential used only to recover after API-token rotation."""
+    import secrets
+    ensure_state_dirs()
+    try:
+        token = REFRESH_TOKEN_PATH.read_text().strip()
+        if token:
+            return token
+    except OSError:
+        pass
+    token = secrets.token_urlsafe(32)
+    tmp = REFRESH_TOKEN_PATH.with_suffix(".tmp")
+    tmp.write_text(token)
+    tmp.chmod(0o600)
+    os.replace(tmp, REFRESH_TOKEN_PATH)
     return token

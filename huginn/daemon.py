@@ -28,6 +28,7 @@ class Daemon:
         self._last_attention = -1
         self._dirty = False   # sessions/hook_hits changed since the last snapshot write
         self.token = ""   # set for real in run(); tests may set it directly
+        self.refresh_token = ""  # persistent; lets authorized browser tabs recover
         self.hook_hits: dict[str, int] = {}   # "{source}.{event}" -> count, issue #2
         # Owned here (not a chat.py module global) so multiple Daemon
         # instances in one process never share chat state -- issue #17.
@@ -290,6 +291,7 @@ class Daemon:
         config.ensure_state_dirs()
         self._restore_snapshot()
         self.token = config.write_token()
+        self.refresh_token = config.get_or_create_refresh_token()
         host = self.cfg.get("server", "host")
         port = self.cfg.get("server", "port")
         app = create_app(self)

@@ -36,6 +36,7 @@ class PermissiveUmaskTestCase(unittest.TestCase):
             "STATE_DIR": config.STATE_DIR, "CACHE_DIR": config.CACHE_DIR,
             "CONFIG_DIR": config.CONFIG_DIR, "CONFIG_PATH": config.CONFIG_PATH,
             "TOKEN_PATH": config.TOKEN_PATH,
+            "REFRESH_TOKEN_PATH": config.REFRESH_TOKEN_PATH,
         }
         base = Path(self.tmp.name)
         config.STATE_DIR = base / "state"
@@ -43,6 +44,7 @@ class PermissiveUmaskTestCase(unittest.TestCase):
         config.CONFIG_DIR = base / "config"
         config.CONFIG_PATH = config.CONFIG_DIR / "config.toml"
         config.TOKEN_PATH = config.STATE_DIR / "token"
+        config.REFRESH_TOKEN_PATH = config.STATE_DIR / "refresh-token"
         # NOTIFICATIONS_LOG is computed once at import time from
         # config.STATE_DIR, so patching config.STATE_DIR alone doesn't
         # retarget it -- patch the module constant directly too.
@@ -66,6 +68,12 @@ class DirPermissionTests(PermissiveUmaskTestCase):
     def test_write_token_is_0600(self):
         config.write_token()
         self.assertEqual(_mode(config.TOKEN_PATH), 0o600)
+
+    def test_refresh_token_is_persistent_and_0600(self):
+        first = config.get_or_create_refresh_token()
+        second = config.get_or_create_refresh_token()
+        self.assertEqual(first, second)
+        self.assertEqual(_mode(config.REFRESH_TOKEN_PATH), 0o600)
 
     def test_save_config_is_0600_in_0700_dir(self):
         config.save(Config({}))

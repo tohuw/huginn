@@ -24,6 +24,7 @@ NOTIFICATIONS_LOG = config.STATE_DIR / "notifications.log"
 NOTIFICATIONS_LOG_MAX_BYTES = 2 * 1024 * 1024
 NOTIFICATIONS_LOG_KEEP_LINES = 2000
 SESSION_COOKIE = "huginn_token"
+REFRESH_COOKIE = "huginn_refresh"
 
 
 def _rotate_notifications_log() -> None:
@@ -99,6 +100,18 @@ def create_app(daemon: "Daemon") -> FastAPI:
         # fragment. Establishes an HttpOnly cookie so subsequent requests
         # (including EventSource, which can't set custom headers) never need
         # to put the token in a URL or JS-readable storage again.
+        response.set_cookie(SESSION_COOKIE, daemon.token, httponly=True,
+                            samesite="strict", path="/")
+        response.set_cookie(REFRESH_COOKIE, daemon.refresh_token, httponly=True,
+                            samesite="strict", path="/api/session/refresh")
+        return {"ok": True}
+
+    @app.post("/api/session/refresh", dependencies=[Depends(require_local_origin)])
+    def refresh_session(request: Request, response: Response):
+        """Rotate an already-authorized browser tab onto this daemon's token."""
+        supplied = request.cookies.get(REFRESH_COOKIE) or ""
+        if not daemon.refresh_token or not hmac.compare_digest(supplied, daemon.refresh_token):
+            raise HTTPException(401, "bad or missing refresh token")
         response.set_cookie(SESSION_COOKIE, daemon.token, httponly=True,
                             samesite="strict", path="/")
         return {"ok": True}

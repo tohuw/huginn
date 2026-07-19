@@ -6,7 +6,7 @@
 // to every same-origin request (including EventSource, which can't set
 // custom headers), so the token never needs to touch a URL or JS-readable
 // storage again.
-let authExpired = false;
+let refreshInFlight = null;
 
 async function bootstrapSession() {
   const params = new URLSearchParams(location.hash.slice(1));
@@ -16,18 +16,20 @@ async function bootstrapSession() {
   await fetch("/api/session", { method: "POST", headers: { "X-Huginn-Token": token } });
 }
 
-function apiFetch(url, opts = {}) {
-  return fetch(url, opts).then((r) => {
-    if (r.status === 401) {
-      if (!authExpired) {
-        authExpired = true;
-        document.querySelector(".brand").textContent =
-          "Huginn — session expired, run `huginn open`";
-      }
-      throw new Error("unauthorized");
-    }
-    return r;
-  });
+async function refreshSession() {
+  if (!refreshInFlight) {
+    refreshInFlight = fetch("/api/session/refresh", { method: "POST" })
+      .then((r) => r.ok)
+      .finally(() => { refreshInFlight = null; });
+  }
+  return refreshInFlight;
+}
+
+async function apiFetch(url, opts = {}) {
+  let r = await fetch(url, opts);
+  if (r.status === 401 && await refreshSession()) r = await fetch(url, opts);
+  if (r.status === 401) throw new Error("unauthorized");
+  return r;
 }
 
 const sessions = new Map();   // key -> session object

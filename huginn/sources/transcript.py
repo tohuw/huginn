@@ -9,7 +9,7 @@ import json
 import re
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 ATTACH_WINDOW = 64 * 1024
 MAX_READ = 256 * 1024
@@ -57,6 +57,26 @@ class Tail:
         data = self._partial + data
         self._partial = b""
         return _parse_lines(data, keep_partial=self)
+
+    def read_available(self) -> Iterator[list[dict]]:
+        """Yield parsed chunks until all bytes currently on disk are consumed.
+
+        A watcher may coalesce a multi-megabyte append into one notification;
+        MAX_READ limits each I/O operation, not the total handled for that
+        notification.
+        """
+        while True:
+            before = self.offset
+            entries = self.read_new()
+            if entries:
+                yield entries
+            if self.offset == before:
+                return
+            try:
+                if self.offset >= self.path.stat().st_size:
+                    return
+            except OSError:
+                return
 
 
 def _parse_lines(data: bytes, keep_partial: Tail | None = None) -> list[dict]:

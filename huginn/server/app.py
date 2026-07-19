@@ -107,7 +107,8 @@ def create_app(daemon: "Daemon") -> FastAPI:
                 pair = daemon.tails.get(s.key)
                 if pair:
                     tail_obj, analyzer = pair
-                    analyzer.feed(tail_obj.read_new())
+                    for entries in tail_obj.read_available():
+                        analyzer.feed(entries)
                     payload["asked_question"] = getattr(analyzer, "asked_user_question", False)
         bus.emit(Event(f"hook.{source}", None, time.time(), "hook", payload))
         return {"ok": True}

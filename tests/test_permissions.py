@@ -14,6 +14,7 @@ from pathlib import Path
 from huginn import config
 from huginn.config import Config
 from huginn.daemon import Daemon
+from huginn.diagnostics import Diagnostics
 from huginn.model import Session, SessionState
 from huginn.server import app as app_module
 from huginn.server.app import NOTIFICATIONS_LOG_MAX_BYTES, _log_notification
@@ -81,7 +82,7 @@ class SnapshotPermissionTests(PermissiveUmaskTestCase):
 
 class NotificationLogTests(PermissiveUmaskTestCase):
     def test_log_is_0600(self):
-        _log_notification("claude", "hello")
+        _log_notification("claude", "hello", Diagnostics())
         self.assertEqual(_mode(config.STATE_DIR / "notifications.log"), 0o600)
 
     def test_rotation_bounds_growth(self):
@@ -89,7 +90,7 @@ class NotificationLogTests(PermissiveUmaskTestCase):
         config.ensure_state_dirs()
         path.write_text(("x" * 200 + "\n") * ((NOTIFICATIONS_LOG_MAX_BYTES // 200) + 100))
         self.assertGreater(path.stat().st_size, NOTIFICATIONS_LOG_MAX_BYTES)
-        _log_notification("claude", "trigger rotation")
+        _log_notification("claude", "trigger rotation", Diagnostics())
         self.assertLess(path.stat().st_size, NOTIFICATIONS_LOG_MAX_BYTES)
 
 

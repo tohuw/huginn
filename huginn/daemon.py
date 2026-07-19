@@ -11,6 +11,7 @@ from pathlib import Path
 
 from . import config
 from .bus import Bus
+from .diagnostics import Diagnostics
 from .model import Event, Session, SessionState
 from .sources import claude_code, codex
 from .sources.transcript import ClaudeAnalyzer, CodexAnalyzer, Tail
@@ -31,6 +32,7 @@ class Daemon:
         # Owned here (not a chat.py module global) so multiple Daemon
         # instances in one process never share chat state -- issue #17.
         self.active_chat: asyncio.Task | None = None
+        self.diagnostics = Diagnostics()   # issue #15
         from .llm.blurb import BlurbWorker
         self.blurbs = BlurbWorker(self)
 
@@ -68,7 +70,9 @@ class Daemon:
             return True
         try:
             self._write_snapshot()
-        except OSError:
+            self.diagnostics.ok("snapshot")
+        except OSError as e:
+            self.diagnostics.error("snapshot", e)
             return False
         self._dirty = False
         return True
@@ -188,8 +192,9 @@ class Daemon:
         while True:
             try:
                 self._poll_codex_once()
-            except Exception:
-                pass
+                self.diagnostics.ok("codex_poller")
+            except Exception as e:
+                self.diagnostics.error("codex_poller", e)
             await asyncio.sleep(self.cfg.get("codex", "poll_s"))
 
     def _poll_codex_once(self) -> None:
@@ -225,8 +230,9 @@ class Daemon:
                 elif "claude-desktop" in self.reducer.sessions:
                     self.bus.emit(Event("claude.dead", "claude-desktop",
                                         time.time(), "poll"))
-            except Exception:
-                pass
+                self.diagnostics.ok("desktop_poller")
+            except Exception as e:
+                self.diagnostics.error("desktop_poller", e)
             await asyncio.sleep(self.cfg.get("claude_desktop", "poll_s"))
 
     async def ticker(self) -> None:
@@ -248,7 +254,9 @@ class Daemon:
             ev = await self.bus.events.get()
             try:
                 changed = self.reducer.apply(ev)
-            except Exception:
+                self.diagnostics.ok("reducer")
+            except Exception as e:
+                self.diagnostics.error("reducer", e)
                 continue
             for s in changed:
                 self.ensure_tail(s)

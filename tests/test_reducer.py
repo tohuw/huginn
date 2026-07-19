@@ -93,6 +93,26 @@ class ReducerTests(unittest.TestCase):
         self.assertNotIn(s.key, self.r.sessions)
         self.assertEqual(self.r.removed, [s.key])
 
+    def test_snapshot_restore_round_trip(self):
+        live = claude_session(state=SessionState.WAITING_INPUT, blurb="doing a thing")
+        ended = claude_session(key="claude:200", state=SessionState.ENDED)
+        self.r.sessions = {live.key: live, ended.key: ended}
+        data = self.r.snapshot()
+        self.assertIn(live.key, data)
+        self.assertNotIn(ended.key, data)   # ENDED sessions aren't worth persisting
+
+        r2 = Reducer(Config({}))
+        r2.restore(data)
+        restored = r2.sessions[live.key]
+        self.assertEqual(restored.state, SessionState.WAITING_INPUT)
+        self.assertEqual(restored.blurb, "doing a thing")
+        self.assertEqual(restored.pid, live.pid)
+
+    def test_restore_tolerates_garbage(self):
+        r2 = Reducer(Config({}))
+        r2.restore({"claude:1": {"key": "claude:1"}})   # missing required fields
+        self.assertNotIn("claude:1", r2.sessions)
+
 
 class ClaudeAnalyzerTests(unittest.TestCase):
     def test_pending_tools_and_question(self):

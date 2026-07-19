@@ -25,9 +25,29 @@ class Daemon:
         # session key -> (Tail, analyzer)
         self.tails: dict[str, tuple[Tail, ClaudeAnalyzer | CodexAnalyzer]] = {}
         self._last_attention = -1
+        self._dirty = False   # sessions changed since the last snapshot write
         self.token = ""   # set for real in run(); tests may set it directly
         from .llm.blurb import BlurbWorker
         self.blurbs = BlurbWorker(self)
+
+    def mark_dirty(self) -> None:
+        self._dirty = True
+
+    # ---------------------------------------------------------- persistence
+    SNAPSHOT_PATH = property(lambda self: config.STATE_DIR / "sessions.json")
+
+    def _restore_snapshot(self) -> None:
+        try:
+            data = json.loads(self.SNAPSHOT_PATH.read_text())
+        except (OSError, json.JSONDecodeError):
+            return
+        self.reducer.restore(data)
+
+    def _write_snapshot(self) -> None:
+        data = json.dumps(self.reducer.snapshot())
+        tmp = self.SNAPSHOT_PATH.with_suffix(".json.tmp")
+        tmp.write_text(data)
+        os.replace(tmp, self.SNAPSHOT_PATH)
 
     # ------------------------------------------------------------ tail mgmt
     def ensure_tail(self, s: Session) -> None:
@@ -184,6 +204,12 @@ class Daemon:
                         ages[key] = age
             self.bus.emit(Event("tick", None, time.time(), "timeout",
                                 {"pending_ages": ages}))
+            if self._dirty:
+                try:
+                    self._write_snapshot()
+                except OSError:
+                    pass
+                self._dirty = False
 
     # --------------------------------------------------------- reducer loop
     async def reducer_loop(self) -> None:
@@ -200,6 +226,8 @@ class Daemon:
             for key in self.reducer.removed:
                 self.tails.pop(key, None)
                 self.bus.broadcast("session.remove", {"key": key})
+            if changed or self.reducer.removed:
+                self.mark_dirty()
             att = self.reducer.attention_count()
             if att != self._last_attention:
                 self._last_attention = att
@@ -211,6 +239,7 @@ class Daemon:
         from .server.app import create_app
 
         config.ensure_state_dirs()
+        self._restore_snapshot()
         self.token = config.write_token()
         host = self.cfg.get("server", "host")
         port = self.cfg.get("server", "port")
@@ -232,6 +261,8 @@ class Daemon:
         finally:
             for t in tasks:
                 t.cancel()
+            with contextlib.suppress(Exception):
+                self._write_snapshot()   # best-effort: survive a graceful restart
             with contextlib.suppress(Exception):
                 (config.STATE_DIR / "daemon.json").unlink()
             with contextlib.suppress(Exception):

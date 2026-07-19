@@ -81,4 +81,5 @@ class BlurbWorker:
             return
         s.blurb = first_line[:120]
         s.blurb_ts = time.time()
+        self.daemon.mark_dirty()
         self.daemon.bus.broadcast("session.upsert", s.to_dict())

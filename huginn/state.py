@@ -58,6 +58,21 @@ class Reducer:
     def attention_count(self) -> int:
         return sum(1 for s in self.sessions.values() if s.state in ATTENTION_STATES)
 
+    # ------------------------------------------------------------- persistence
+    def snapshot(self) -> dict:
+        """Non-ENDED sessions, for surviving a daemon restart. Callers re-scan
+        live sources right after restore(); origin-priority rules in
+        _set_state naturally correct anything stale within a few seconds."""
+        return {k: s.to_dict() for k, s in self.sessions.items()
+                if s.state != SessionState.ENDED}
+
+    def restore(self, data: dict) -> None:
+        for key, d in data.items():
+            try:
+                self.sessions[key] = Session.from_dict(d)
+            except (KeyError, ValueError, TypeError):
+                continue
+
     # ----------------------------------------------------------------- apply
     def apply(self, ev: Event) -> list[Session]:
         """Returns sessions whose visible state changed."""

@@ -68,6 +68,14 @@ class Session:
         d["attention"] = self.attention
         return d
 
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "Session":
+        """Inverse of to_dict(), for restoring a persisted snapshot."""
+        fields = {f.name for f in dataclasses.fields(cls)}
+        kwargs = {k: v for k, v in d.items() if k in fields}
+        kwargs["state"] = SessionState(kwargs["state"])
+        return cls(**kwargs)
+
 
 @dataclasses.dataclass
 class Event:

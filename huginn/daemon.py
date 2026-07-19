@@ -56,6 +56,17 @@ class Daemon:
         tmp.write_text(data)
         os.replace(tmp, self.SNAPSHOT_PATH)
 
+    def _flush_snapshot_if_dirty(self) -> bool:
+        """Persist pending state, retaining the dirty bit for a later retry."""
+        if not self._dirty:
+            return True
+        try:
+            self._write_snapshot()
+        except OSError:
+            return False
+        self._dirty = False
+        return True
+
     # ------------------------------------------------------------ tail mgmt
     def ensure_tail(self, s: Session) -> None:
         if not s.transcript_path or s.key in self.tails:
@@ -211,12 +222,7 @@ class Daemon:
                         ages[key] = age
             self.bus.emit(Event("tick", None, time.time(), "timeout",
                                 {"pending_ages": ages}))
-            if self._dirty:
-                try:
-                    self._write_snapshot()
-                except OSError:
-                    pass
-                self._dirty = False
+            self._flush_snapshot_if_dirty()
 
     # --------------------------------------------------------- reducer loop
     async def reducer_loop(self) -> None:

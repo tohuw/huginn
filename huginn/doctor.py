@@ -8,8 +8,11 @@ from pathlib import Path
 
 from . import config
 
+# Fixture provenance in tests/fixtures/PROVENANCE.md -- bump these (and the
+# fixtures) together when upgrading, per issue #22's "surface versions newer
+# than fixture coverage" ask.
 TESTED_CLAUDE = (2, 1)
-TESTED_CODEX = (0, 145)
+TESTED_CODEX = (0, 144)
 
 
 def _check(label: str, ok: bool, detail: str = "") -> bool:
@@ -34,6 +37,18 @@ def _authed_get(port: int, path: str) -> dict:
 
 def _daemon_session_count(port: int) -> int:
     return len(_authed_get(port, "/api/sessions")["sessions"])
+
+
+def _check_version_coverage(label: str, sessions, tested: tuple[int, int]) -> None:
+    """issue #22: surface a source running a newer version than the checked-in
+    fixtures were captured from -- fixtures don't update themselves."""
+    for s in sessions:
+        if s.version:
+            parts = tuple(int(x) for x in s.version.split(".")[:2])
+            if parts > tested:
+                _warn(f"{label} {s.version} newer than tested {tested}",
+                      "parsers are tolerant, but verify states look right")
+            break
 
 
 def _report_source_health(port: int) -> None:
@@ -93,13 +108,8 @@ def run_doctor() -> int:
             _warn(f"{path} unreadable")
 
     print("versions:")
-    for s in claude_code.scan():
-        if s.version:
-            parts = tuple(int(x) for x in s.version.split(".")[:2])
-            if parts > TESTED_CLAUDE:
-                _warn(f"claude {s.version} newer than tested {TESTED_CLAUDE}",
-                      "parsers are tolerant, but verify states look right")
-            break
+    _check_version_coverage("claude", claude_code.scan(), TESTED_CLAUDE)
+    _check_version_coverage("codex", codex_src.scan(), TESTED_CODEX)
 
     print("daemon:")
     daemon_json = config.STATE_DIR / "daemon.json"

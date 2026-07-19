@@ -1,6 +1,12 @@
-# huginn
+# Huginn: A Local AI Agent Activity Console
 
 _Developed with AI assistance. See the git history for which agents contributed._
+
+## What Is This?
+
+I got tired of furiously tabbing through terminals and apps to see what my agents were doing. I tend to build things in parallel, use git worktrees to put different workers on different project parts, and so on. I didn't like forgetting what I was working on, and it's annoying there's not really good ways to see what needs my attention (stacks of toast notifications aren't that helpful). So I directed the construction of Huginn. It currently tracks Claude and Codex, both in app and terminal forms. It includes a well-tested macOS version and a never once tested Windows version (Codex seemed pretty sure it did a good job — I hope someone finds out if that's true at some point.) It includes a deterministic set of tools and interfaces, and an agentic interface in the console and skill for your agents. Your agents will know just as much as the "Ask" agent inside the console does, so which you use is your choice. The options in the console are deliberately few and (I hope) obvious. You can also change most of them by just asking the "Ask" agent to do it for you. Note the Ask agent uses **your** Claude or Codex to think, which means your usage/tokens get consumed. It is deliberately very lightweight, though.
+
+If you have questions, open an issue. If you and/or your best agentic pal want to improve Huginn, please do submit a PR and I'll review it in detail.
 
 Local monitor for AI coding-agent sessions. One pinned browser tab instead of
 furiously tabbing through iTerm2 to find out which agent needs you.
@@ -11,7 +17,9 @@ Watches **Claude Code** (first-class), **Codex** across CLI/IDE/ChatGPT Desktop
 runs locally; no data leaves the machine except your own `claude -p` /
 `codex exec` calls, which use your existing auth.
 
-## Use
+## How do I Use This?
+
+**TLDR: point your agent at this repo and it will figure it out. Then you can just ask it how this works. :)**
 
 ```sh
 uv run huginn serve          # daemon + dashboard at http://127.0.0.1:47100

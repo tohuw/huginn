@@ -167,12 +167,21 @@ class Daemon:
     async def codex_poller(self) -> None:
         while True:
             try:
-                for sess in codex.scan(self.cfg):
-                    self.bus.emit(Event("codex.thread", sess.key, time.time(), "poll",
-                                        {"session": sess}))
+                self._poll_codex_once()
             except Exception:
                 pass
             await asyncio.sleep(self.cfg.get("codex", "poll_s"))
+
+    def _poll_codex_once(self) -> None:
+        sessions, complete = codex.scan_with_status(self.cfg)
+        seen = {s.key for s in sessions}
+        for sess in sessions:
+            self.bus.emit(Event("codex.thread", sess.key, time.time(), "poll",
+                                {"session": sess}))
+        if complete:
+            for key, existing in list(self.reducer.sessions.items()):
+                if existing.source == "codex" and key not in seen:
+                    self.bus.emit(Event("codex.missing", key, time.time(), "poll"))
 
     async def codex_rollout_watcher(self) -> None:
         from watchfiles import awatch

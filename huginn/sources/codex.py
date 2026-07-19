@@ -80,28 +80,35 @@ def _subagent_counts(conn: sqlite3.Connection, thread_id: str) -> dict[str, int]
     return {status: count for status, count in rows} or None
 
 
-def scan(cfg: config.Config | None = None) -> list[Session]:
-    """One-shot scan of recent, unarchived Codex threads."""
+def scan_with_status(cfg: config.Config | None = None) -> tuple[list[Session], bool]:
+    """Scan recent threads and report whether the result is complete.
+
+    ``complete`` is false on database errors and when the 50-card display cap
+    truncates the query.  Callers may only reconcile missing sessions after a
+    complete scan; an empty failed scan must never erase live state.
+    """
     cfg = cfg or config.load()
     if not STATE_DB.exists():
-        return []
+        return [], False
     conn = _connect_with_fallback()
     if conn is None:
-        return []
+        return [], False
     sessions: list[Session] = []
     try:
         cols = _available_cols(conn)
         if "id" not in cols:
-            return []
+            return [], False
         cutoff_ms = int((time.time() - cfg.get("codex", "active_window_h") * 3600) * 1000)
         where = "archived=0 AND COALESCE(updated_at_ms, recency_at_ms, 0) > ?"
         if not cfg.get("codex", "include_subagents") and "thread_source" in cols:
             where += " AND COALESCE(thread_source,'') NOT IN ('subagent')"
         rows = conn.execute(
             f"SELECT {', '.join(cols)} FROM threads WHERE {where} "
-            "ORDER BY COALESCE(updated_at_ms, recency_at_ms, 0) DESC LIMIT 50",
+            "ORDER BY COALESCE(updated_at_ms, recency_at_ms, 0) DESC LIMIT 51",
             (cutoff_ms,),
         ).fetchall()
+        complete = len(rows) <= 50
+        rows = rows[:50]
         huginn_dir = str(config.STATE_DIR)
         for row in rows:
             t = dict(zip(cols, row))
@@ -111,9 +118,15 @@ def scan(cfg: config.Config | None = None) -> list[Session]:
                 continue
             sessions.append(_thread_to_session(t, subagents=_subagent_counts(conn, t["id"])))
     except sqlite3.Error:
-        return sessions
+        return [], False
     finally:
         conn.close()
+    return sessions, complete
+
+
+def scan(cfg: config.Config | None = None) -> list[Session]:
+    """One-shot scan of recent, unarchived Codex threads."""
+    sessions, _ = scan_with_status(cfg)
     return sessions
 
 

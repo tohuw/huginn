@@ -179,6 +179,16 @@ class Reducer:
             changed |= self._set_state(s, phase_state, "transcript", now)
         return [s] if changed else []
 
+    def _on_codex_missing(self, ev: Event, now: float) -> list[Session]:
+        """A complete DB scan no longer includes this archived/expired thread."""
+        s = self.sessions.get(ev.session_key or "")
+        if s is None or s.state == SessionState.ENDED:
+            return []
+        s.state = SessionState.ENDED
+        s.state_origin = "poll"
+        s.state_since = now
+        return [s]
+
     # Claude Desktop tile updates share the codex upsert semantics
     def _on_desktop_tile(self, ev: Event, now: float) -> list[Session]:
         return self._on_codex_thread(ev, now)

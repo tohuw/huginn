@@ -18,7 +18,9 @@ HOOK_BIN = Path.home() / ".local" / "bin" / "huginn-hook"
 HOOK_SRC = Path(__file__).parent / "huginn-hook"
 
 CLAUDE_EVENTS = ["SessionStart", "UserPromptSubmit", "Notification", "Stop", "SessionEnd"]
-CODEX_EVENTS = ["SessionStart", "UserPromptSubmit", "Notification", "Stop", "SessionEnd"]
+# Codex 0.144.6's hook event enum has no Notification or SessionEnd.  These
+# three are both supported by the binary and observed in real hook traffic.
+CODEX_EVENTS = ["SessionStart", "UserPromptSubmit", "Stop"]
 
 
 def _install_hook_bin() -> None:
@@ -67,6 +69,35 @@ def _merge_events(data: dict, events: list[str], source: str) -> int:
     return added
 
 
+def _remove_stale_huginn_events(data: dict, supported_events: list[str]) -> int:
+    """Remove our entries for events the target no longer/never supported.
+
+    Entries and handlers belonging to the user or another tool are preserved.
+    """
+    removed = 0
+    hooks = data.get("hooks", {})
+    supported = set(supported_events)
+    for event in list(hooks):
+        if event in supported:
+            continue
+        kept = []
+        for entry in hooks[event]:
+            inner = entry.get("hooks", [])
+            remaining = [h for h in inner
+                         if "huginn-hook" not in h.get("command", "")]
+            removed += len(inner) - len(remaining)
+            if remaining:
+                entry["hooks"] = remaining
+                kept.append(entry)
+            elif not inner:
+                kept.append(entry)
+        if kept:
+            hooks[event] = kept
+        else:
+            del hooks[event]
+    return removed
+
+
 def _strip_events(data: dict) -> int:
     removed = 0
     hooks = data.get("hooks", {})
@@ -97,11 +128,15 @@ def install() -> int:
         except (json.JSONDecodeError, OSError) as e:
             print(f"skip {path}: unreadable ({e})")
             continue
+        removed = _remove_stale_huginn_events(data, events) if source == "codex" else 0
         added = _merge_events(data, events, source)
-        if added:
+        if added or removed:
             _write_json(path, data)
         total += added
-        print(f"{path}: {added} hook(s) added" + (" (backup written)" if added else ""))
+        detail = f"{added} hook(s) added"
+        if removed:
+            detail += f", {removed} stale hook(s) removed"
+        print(f"{path}: {detail}" + (" (backup written)" if added or removed else ""))
     print(f"hook forwarder: {HOOK_BIN}")
     return 0 if total >= 0 else 1
 

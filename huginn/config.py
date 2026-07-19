@@ -23,8 +23,8 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "blurb_max_per_min": 12,
         "blurb_timeout_s": 30.0,
     },
-    # Notification-message classification. Deliberately config, not code:
-    # these strings drift across Claude Code versions.
+    # Compatibility fallback for Notification payloads that predate Claude
+    # Code's structured notification_type field.
     "patterns": {
         "permission": ["permission", "approve", "authoriz", "allowed"],
         "waiting": ["waiting for", "your input", "idle"],

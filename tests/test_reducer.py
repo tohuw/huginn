@@ -80,6 +80,37 @@ class ReducerTests(unittest.TestCase):
                            "data": {"session_id": "sid-100", "message": message}}))
             self.assertEqual(s.state, expected, msg=message)
 
+    def test_notification_type_takes_priority_over_message(self):
+        cases = [
+            ("permission_prompt", "Claude is idle", SessionState.WAITING_PERMISSION),
+            ("idle_prompt", "permission granted", SessionState.WAITING_INPUT),
+            ("elicitation_dialog", "", SessionState.WAITING_INPUT),
+        ]
+        for notification_type, message, expected in cases:
+            r = Reducer(Config({}))
+            s = claude_session(state=SessionState.WORKING)
+            r.sessions[s.key] = s
+            r.apply(Event("hook.claude", None, time.time(), "test", {
+                "event": "Notification",
+                "data": {"session_id": "sid-100", "message": message,
+                         "notification_type": notification_type},
+            }))
+            self.assertEqual(s.state, expected, msg=notification_type)
+
+    def test_non_attention_notification_types_do_not_change_state(self):
+        for notification_type in (
+                "auth_success", "elicitation_complete", "elicitation_response"):
+            r = Reducer(Config({}))
+            s = claude_session(state=SessionState.WORKING)
+            r.sessions[s.key] = s
+            changed = r.apply(Event("hook.claude", None, time.time(), "test", {
+                "event": "Notification",
+                "data": {"session_id": "sid-100",
+                         "notification_type": notification_type},
+            }))
+            self.assertEqual(changed, [], msg=notification_type)
+            self.assertEqual(s.state, SessionState.WORKING, msg=notification_type)
+
     def test_stop_done_vs_question(self):
         s = claude_session(state=SessionState.WORKING)
         self.r.sessions[s.key] = s

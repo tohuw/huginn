@@ -64,9 +64,8 @@ all LLM polling off; chat stays available on demand.
   session start). Watcher-derived state covers older sessions at ~1–5s latency.
 - Headless `claude -p` runs (including huginn's own blurb/chat calls) register
   session files with entrypoint `sdk-cli` — filtered out.
-- Notification-message classification is string matching and will drift with
-  Claude Code versions; patterns live in `~/.config/huginn/config.toml`
-  (`[patterns]`), not code.
+- Claude Code notifications use the structured `notification_type` field;
+  configurable message patterns remain as a fallback for older payloads.
 - "ChatGPT.app" *is* the Codex desktop app (`com.openai.codex`); the embedded
   CLI at `Contents/Resources/codex` powers the codex chat provider.
 

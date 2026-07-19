@@ -202,7 +202,19 @@ class Reducer:
         elif event == "Notification":
             msg = (data.get("message") or "").lower()
             pats = self.cfg.section("patterns")
-            if any(p in msg for p in pats["permission"]):
+            # Claude Code 2.x supplies a stable notification_type.  Keep the
+            # configurable message match as a compatibility fallback for old
+            # payloads and third-party hook forwarders.
+            notification_type = data.get("notification_type")
+            if notification_type == "permission_prompt":
+                target = SessionState.WAITING_PERMISSION
+            elif notification_type in {"idle_prompt", "elicitation_dialog"}:
+                target = SessionState.WAITING_INPUT
+            elif notification_type in {
+                "auth_success", "elicitation_complete", "elicitation_response",
+            }:
+                return []
+            elif any(p in msg for p in pats["permission"]):
                 target = SessionState.WAITING_PERMISSION
             else:
                 target = SessionState.WAITING_INPUT

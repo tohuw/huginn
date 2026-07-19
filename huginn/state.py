@@ -239,6 +239,37 @@ class Reducer:
             s.last_activity = now
         return [s] if changed else []
 
+    def _on_hook_codex(self, ev: Event, now: float) -> list[Session]:
+        """Codex only fires SessionStart/UserPromptSubmit/Stop (issue #20 --
+        Notification/SessionEnd aren't in its hook-event enum, so installing
+        them was pure overhead; install.py stopped registering them).
+
+        This is a lower-latency nudge layered on top of the poll/rollout
+        source, not a replacement for it: origin priority (hook=3 outranks
+        poll=1/transcript=2) and the existing hook grace window already
+        handle a hook and a poll/rollout update disagreeing, exactly as they
+        do for Claude. If the thread hasn't been discovered by a poll yet,
+        this is a safe no-op -- discovery stays poll's job, same as Claude's
+        hook handler does for unknown sessions.
+        """
+        data = ev.payload.get("data", {})
+        event = ev.payload.get("event", "")
+        s = self.find_by_session_id(data.get("session_id", ""))
+        if s is None:
+            return []
+        changed = False
+        if event == "UserPromptSubmit":
+            changed = self._set_state(s, SessionState.WORKING, "hook", now)
+        elif event == "Stop":
+            # No transcript-tail disambiguation available at hook-fire-time
+            # the way Claude's Stop handler gets one -- DONE is the safe
+            # default; a wrong guess self-corrects via the next poll/rollout
+            # update, same as any other hook/poll disagreement.
+            changed = self._set_state(s, SessionState.DONE, "hook", now)
+        elif event == "SessionStart":
+            s.last_activity = now
+        return [s] if changed else []
+
     def _on_tick(self, ev: Event, now: float) -> list[Session]:
         changed: list[Session] = []
         pending_timeout = self.cfg.get("claude", "pending_tool_timeout_s")

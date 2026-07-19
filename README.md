@@ -58,6 +58,13 @@ all LLM polling off; chat stays available on demand.
   installed sync (its `async` hooks are skipped as of 0.145). Installation is
   append-only + idempotent into `~/.claude/settings.json` / `~/.codex/hooks.json`
   (backups written; `uninstall-hooks` removes exactly ours).
+- Codex's hook-event enum only has `SessionStart`/`UserPromptSubmit`/`Stop`
+  (no `Notification`/`SessionEnd` — `install-hooks` only registers the three
+  that exist). Explicit choice (issue #20): these are kept and do feed the
+  reducer for lower-latency working/done transitions, layered on top of the
+  poll/rollout source via the same origin-priority rules as Claude's hooks —
+  not a replacement for it, and a safe no-op for a thread the poller hasn't
+  discovered yet. `GET /api/hook-stats` (issue #2) shows real fire counts.
 
 ## Gotchas
 

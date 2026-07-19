@@ -303,5 +303,56 @@ class CodexWaitingReducerTests(unittest.TestCase):
         self.assertEqual(s.state, SessionState.ENDED)
 
 
+class CodexHookReconciliationTests(unittest.TestCase):
+    """issue #20: Codex hooks were installed and counted (issue #2) but had
+    no reducer handler at all -- they never affected state. Payload shapes
+    below (session_id/turn_id/cwd) match field names found in the real
+    Codex binary's embedded hook-construction strings."""
+
+    def setUp(self):
+        self.r = Reducer(Config({}))
+
+    def feed(self, kind, key, payload, ts=None):
+        return self.r.apply(Event(kind, key, ts or time.time(), "test", payload))
+
+    def test_unknown_thread_is_a_safe_noop(self):
+        # a thread the poller hasn't discovered yet -- must not crash or
+        # fabricate a session; discovery stays poll's job.
+        changed = self.feed("hook.codex", None, {
+            "event": "UserPromptSubmit",
+            "data": {"session_id": "not-yet-polled", "turn_id": "t1", "cwd": "/tmp/proj"},
+        })
+        self.assertEqual(changed, [])
+        self.assertEqual(self.r.sessions, {})
+
+    def test_user_prompt_submit_flips_to_working_immediately(self):
+        # the latency win this issue is about: no waiting for the next poll.
+        s = codex_session(state=SessionState.DONE, state_origin="poll", state_since=NOW - 100)
+        self.r.sessions[s.key] = s
+        self.feed("hook.codex", None, {
+            "event": "UserPromptSubmit",
+            "data": {"session_id": s.session_id, "turn_id": "t2", "cwd": s.cwd},
+        })
+        self.assertEqual(s.state, SessionState.WORKING)
+        self.assertEqual(s.state_origin, "hook")
+
+    def test_stop_flips_to_done(self):
+        s = codex_session(state=SessionState.WORKING, state_origin="hook", state_since=NOW - 10)
+        self.r.sessions[s.key] = s
+        self.feed("hook.codex", None, {
+            "event": "Stop", "data": {"session_id": s.session_id, "turn_id": "t3"},
+        })
+        self.assertEqual(s.state, SessionState.DONE)
+
+    def test_session_start_touches_activity_without_forcing_a_state(self):
+        s = codex_session(state=SessionState.IDLE, state_origin="poll")
+        self.r.sessions[s.key] = s
+        changed = self.feed("hook.codex", None, {
+            "event": "SessionStart", "data": {"session_id": s.session_id},
+        })
+        self.assertEqual(changed, [])
+        self.assertEqual(s.state, SessionState.IDLE)
+
+
 if __name__ == "__main__":
     unittest.main()

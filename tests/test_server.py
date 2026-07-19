@@ -38,6 +38,14 @@ class AuthTests(unittest.TestCase):
         r = c.get("/api/sessions", headers={"X-Huginn-Token": "secret-token"})
         self.assertEqual(r.status_code, 200)
 
+    def test_activity_probes_sources_when_roster_is_empty(self):
+        c = make_client()
+        with patch("huginn.sources.claude_code.scan", return_value=[]), \
+             patch("huginn.sources.codex.scan_with_status", return_value=([object()], True)):
+            r = c.get("/api/activity", headers={"X-Huginn-Token": "secret-token"})
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.json()["agents_running"])
+
     def test_sessions_rejects_wrong_token(self):
         c = make_client()
         r = c.get("/api/sessions", headers={"X-Huginn-Token": "wrong"})

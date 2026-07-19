@@ -123,6 +123,30 @@ def create_app(daemon: "Daemon") -> FastAPI:
         return {"sessions": [s.to_dict() for s in items],
                 "attention": reducer.attention_count()}
 
+    @api.get("/activity")
+    def activity():
+        """Probe live sources during the browser's empty-roster startup gap."""
+        if reducer.sessions:
+            return {"agents_running": True}
+        from ..sources import chatgpt_desktop, claude_code, codex
+        try:
+            if chatgpt_desktop.scan():
+                return {"agents_running": True}
+        except Exception as e:
+            daemon.diagnostics.error("activity_chatgpt_desktop", e)
+        try:
+            if claude_code.scan():
+                return {"agents_running": True}
+        except Exception as e:
+            daemon.diagnostics.error("activity_claude", e)
+        try:
+            codex_sessions, _ = codex.scan_with_status(cfg)
+            if codex_sessions:
+                return {"agents_running": True}
+        except Exception as e:
+            daemon.diagnostics.error("activity_codex", e)
+        return {"agents_running": False}
+
     @api.get("/events")
     async def events():
         return StreamingResponse(event_stream(bus), media_type="text/event-stream",

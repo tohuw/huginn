@@ -42,6 +42,16 @@ class ValidateSettingTests(unittest.TestCase):
         self.assertIsNone(validate_setting("llm", "provider", "codex"))
         self.assertIsNotNone(validate_setting("llm", "provider", "gpt5"))
 
+    def test_chat_span_enum_enforced(self):
+        self.assertIsNone(validate_setting("ui", "chat_span", "horizontal"))
+        self.assertIsNone(validate_setting("ui", "chat_span", "vertical"))
+        self.assertIsNotNone(validate_setting("ui", "chat_span", "diagonal"))
+
+    def test_sort_enum_enforced(self):
+        for value in ("state", "alpha", "newest", "oldest"):
+            self.assertIsNone(validate_setting("ui", "sort", value))
+        self.assertIsNotNone(validate_setting("ui", "sort", "random"))
+
     def test_string_list_type_enforced(self):
         self.assertIsNone(validate_setting("patterns", "permission", ["a", "b"]))
         self.assertIsNotNone(validate_setting("patterns", "permission", "not-a-list"))

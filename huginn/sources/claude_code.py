@@ -8,11 +8,10 @@ from __future__ import annotations
 
 import datetime
 import json
-import os
-import subprocess
 from pathlib import Path
 
 from ..model import Session, SessionState
+from ..platform import platform as _platform
 
 CLAUDE_DIR = Path.home() / ".claude"
 SESSIONS_DIR = CLAUDE_DIR / "sessions"
@@ -27,13 +26,7 @@ _STATUS_MAP = {
 
 
 def pid_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
+    return _platform.pid_alive(pid)
 
 
 def child_shell_count(pid: int) -> int:
@@ -43,37 +36,14 @@ def child_shell_count(pid: int) -> int:
     Counting only direct children avoids including the commands those shells
     launch (sleep, gh, python, and so on).
     """
-    try:
-        out = subprocess.run(
-            ["ps", "-axo", "ppid=,comm="],
-            capture_output=True, text=True, timeout=5,
-        ).stdout
-    except (subprocess.SubprocessError, OSError):
-        return 0
-    shells = {"sh", "bash", "zsh", "dash", "ksh", "fish"}
-    count = 0
-    for line in out.splitlines():
-        parts = line.strip().split(None, 1)
-        if len(parts) != 2:
-            continue
-        try:
-            parent = int(parts[0])
-        except ValueError:
-            continue
-        if parent == pid and Path(parts[1]).name in shells:
-            count += 1
-    return count
+    shells = {"sh", "bash", "zsh", "dash", "ksh", "fish", "cmd.exe", "powershell.exe", "pwsh.exe"}
+    return sum(1 for child in _platform.children(pid)
+               if (_platform.process_name(child) or "").lower() in shells)
 
 
 def _ps_lstart(pid: int) -> datetime.datetime | None:
-    try:
-        out = subprocess.run(
-            ["ps", "-o", "lstart=", "-p", str(pid)],
-            capture_output=True, text=True, timeout=5,
-        ).stdout.strip()
-        return datetime.datetime.strptime(out, "%a %b %d %H:%M:%S %Y") if out else None
-    except (subprocess.SubprocessError, ValueError, OSError):
-        return None
+    started = _platform.process_start_time(pid)
+    return datetime.datetime.fromtimestamp(started) if started is not None else None
 
 
 def pid_matches_start(pid: int, proc_start: str | None) -> bool:

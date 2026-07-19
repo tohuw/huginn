@@ -37,6 +37,10 @@ const cards = new Map();      // key -> card element
 const grid = document.getElementById("grid");
 const tpl = document.getElementById("card-tpl");
 let llmEnabled = true;
+// Startup and daemon restarts are indeterminate until both the roster and the
+// cheap activity probe answer.  Begin with the honest state instead of briefly
+// claiming there are no sessions.
+let rosterLoading = true;
 const PROVIDER_KEY = "huginn.provider";
 const providerSelect = document.getElementById("provider");
 function getRememberedProvider() {
@@ -78,13 +82,23 @@ function fmtWork(s) {
   return parts.join(" · ");
 }
 
+function compactPath(path) {
+  return path.replace(/^\/Users\/[^/]+/, "~").replace(/^[A-Z]:\\Users\\[^\\]+/i, "~");
+}
+
 const BADGES = {
   working: "working", waiting_input: "input?", waiting_permission: "permit?",
   error: "error", done: "done", idle: "idle", ended: "ended",
 };
-const SRC_ICON = { claude: "◆", codex: "▲", "claude-desktop": "◇" };
+const SOURCE_META = {
+  claude: { label: "claude", family: "claude" },
+  "claude-desktop": { label: "claude app", family: "claude" },
+  codex: { label: "codex", family: "openai" },
+  "chatgpt-desktop": { label: "chatgpt", family: "openai" },
+};
 
 function upsertCard(s) {
+  rosterLoading = false;
   sessions.set(s.key, s);
   let card = cards.get(s.key);
   if (!card) {
@@ -97,12 +111,14 @@ function upsertCard(s) {
   }
   card.dataset.state = s.state;
   card.dataset.since = s.state_since;
-  card.querySelector(".src").textContent = SRC_ICON[s.source] || "?";
+  const source = SOURCE_META[s.source] || { label: s.source || "unknown", family: "other" };
+  card.dataset.sourceFamily = source.family;
+  card.querySelector(".src").textContent = source.label;
   card.querySelector(".name").textContent = s.name;
   card.querySelector(".name").title = s.session_id;
   card.querySelector(".badge").textContent = BADGES[s.state] || s.state;
   card.querySelector(".dur").textContent = fmtAge(s.state_since);
-  card.querySelector(".cwd").textContent = s.cwd ? s.cwd.replace(/^\/Users\/[^/]+/, "~") : "";
+  card.querySelector(".cwd").textContent = s.cwd ? compactPath(s.cwd) : "";
   card.querySelector(".branch").textContent = s.git_branch ? `⎇ ${s.git_branch}` : "";
   card.querySelector(".model").textContent = s.model || "";
   const summary = card.querySelector(".blurb");
@@ -115,12 +131,26 @@ function upsertCard(s) {
 }
 
 function reorder() {
-  const sorted = [...sessions.values()].sort(
-    (a, b) => a.rank - b.rank || a.state_since - b.state_since);
+  const mode = document.getElementById("sort").value || "state";
+  const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+  const compare = {
+    state: (a, b) => a.rank - b.rank || a.state_since - b.state_since || byName(a, b),
+    alpha: byName,
+    newest: (a, b) => b.last_activity - a.last_activity || byName(a, b),
+    oldest: (a, b) => a.last_activity - b.last_activity || byName(a, b),
+  }[mode];
+  const sorted = [...sessions.values()].sort(compare);
   const frag = document.createDocumentFragment();
   for (const s of sorted) frag.appendChild(cards.get(s.key));
   grid.replaceChildren(frag);
-  document.getElementById("empty").hidden = sessions.size > 0;
+  renderEmpty();
+}
+
+function renderEmpty() {
+  const empty = document.getElementById("empty");
+  empty.hidden = sessions.size > 0;
+  document.getElementById("roster-throbber").hidden = !rosterLoading;
+  document.getElementById("empty-label").textContent = rosterLoading ? "finding agents" : "no sessions";
 }
 
 function removeCard(key) {
@@ -188,6 +218,13 @@ function askAbout(key) {
 // ---------------------------------------------------------------------- chat
 
 let chatOpen = true;
+let chatSpan = "vertical";
+const chatPanel = document.getElementById("chat");
+const chatSpanButton = document.getElementById("chat-span");
+const CHAT_SIZE_KEYS = {
+  vertical: "huginn.chat.width",
+  horizontal: "huginn.chat.height",
+};
 async function saveSettings(body) {
   return apiFetch("/api/settings", {
     method: "PUT", headers: { "Content-Type": "application/json" },
@@ -201,6 +238,56 @@ function openChat(open, persist = false) {
   if (persist) saveSettings({ ui: { chat_open: chatOpen } });
 }
 document.getElementById("chat-toggle").onclick = () => openChat(undefined, true);
+
+function storedChatSize(span) {
+  try { return Number.parseInt(localStorage.getItem(CHAT_SIZE_KEYS[span]), 10) || null; }
+  catch (_) { return null; }
+}
+function applyChatSpan(span) {
+  chatSpan = span === "horizontal" ? "horizontal" : "vertical";
+  document.body.dataset.chatSpan = chatSpan;
+  const horizontal = chatSpan === "horizontal";
+  const label = horizontal ? "Dock Ask on the right" : "Span Ask across the bottom";
+  chatSpanButton.title = label;
+  chatSpanButton.setAttribute("aria-label", label);
+  const size = storedChatSize(chatSpan);
+  if (size) chatPanel.style.setProperty(horizontal ? "--chat-height" : "--chat-width", `${size}px`);
+}
+chatSpanButton.onclick = async () => {
+  const previous = chatSpan;
+  const next = chatSpan === "vertical" ? "horizontal" : "vertical";
+  applyChatSpan(next);
+  const r = await saveSettings({ ui: { chat_span: next } });
+  if (!r.ok) applyChatSpan(previous);
+};
+
+document.getElementById("chat-resize").addEventListener("pointerdown", (e) => {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  const horizontal = chatSpan === "horizontal";
+  const start = horizontal ? e.clientY : e.clientX;
+  const initial = horizontal ? chatPanel.getBoundingClientRect().height : chatPanel.getBoundingClientRect().width;
+  const handle = e.currentTarget;
+  handle.setPointerCapture(e.pointerId);
+  document.body.classList.add("chat-resizing");
+  const move = (event) => {
+    const delta = horizontal ? start - event.clientY : start - event.clientX;
+    const max = horizontal ? window.innerHeight * .75 : window.innerWidth * .75;
+    const size = Math.round(Math.max(horizontal ? 160 : 260, Math.min(max, initial + delta)));
+    chatPanel.style.setProperty(horizontal ? "--chat-height" : "--chat-width", `${size}px`);
+  };
+  const end = () => {
+    handle.removeEventListener("pointermove", move);
+    handle.removeEventListener("pointerup", end);
+    handle.removeEventListener("pointercancel", end);
+    document.body.classList.remove("chat-resizing");
+    const size = Math.round(horizontal ? chatPanel.getBoundingClientRect().height : chatPanel.getBoundingClientRect().width);
+    try { localStorage.setItem(CHAT_SIZE_KEYS[chatSpan], String(size)); } catch (_) { /* optional */ }
+  };
+  handle.addEventListener("pointermove", move);
+  handle.addEventListener("pointerup", end);
+  handle.addEventListener("pointercancel", end);
+});
 
 // Chat concurrency is per-daemon (one subprocess in flight at a time), but
 // every open tab shares the same SSE stream -- request_id is how a tab
@@ -367,6 +454,10 @@ function applySettings(cfg) {
   const view = cfg.ui.view || "cards";
   document.getElementById("view").value = view;
   grid.dataset.view = view;
+  const sort = cfg.ui.sort || "state";
+  document.getElementById("sort").value = sort;
+  document.getElementById("sort").dataset.saved = sort;
+  applyChatSpan(cfg.ui.chat_span || "vertical");
   openChat(cfg.ui.chat_open !== false);
   for (const s of sessions.values()) upsertCard(s);
 }
@@ -399,16 +490,58 @@ document.getElementById("view").onchange = async (e) => {
     e.target.value = previous;
   }
 };
+document.getElementById("sort").onchange = async (e) => {
+  const previous = e.target.dataset.saved || "state";
+  reorder();
+  const r = await saveSettings({ ui: { sort: e.target.value } });
+  if (r.ok) {
+    e.target.dataset.saved = e.target.value;
+  } else {
+    e.target.value = previous;
+    reorder();
+  }
+};
 
 // -------------------------------------------------------------------- wiring
 
+let rosterPollTimer = null;
+let snapshotInFlight = false;
+function pollRosterSoon() {
+  clearTimeout(rosterPollTimer);
+  rosterPollTimer = setTimeout(snapshot, 750);
+}
 async function snapshot() {
-  const r = await apiFetch("/api/sessions");
-  const data = await r.json();
-  const seen = new Set();
-  for (const s of data.sessions) { seen.add(s.key); upsertCard(s); }
-  for (const key of [...sessions.keys()]) if (!seen.has(key)) removeCard(key);
-  setAttention(data.attention);
+  if (snapshotInFlight) return;
+  snapshotInFlight = true;
+  try {
+    const r = await apiFetch("/api/sessions");
+    const data = await r.json();
+    const seen = new Set();
+    for (const s of data.sessions) { seen.add(s.key); upsertCard(s); }
+    for (const key of [...sessions.keys()]) if (!seen.has(key)) removeCard(key);
+    setAttention(data.attention);
+    if (!data.sessions.length) {
+      const activity = await (await apiFetch("/api/activity")).json();
+      rosterLoading = activity.agents_running;
+      renderEmpty();
+      if (rosterLoading) pollRosterSoon();
+    } else {
+      rosterLoading = false;
+      clearTimeout(rosterPollTimer);
+      renderEmpty();
+    }
+  } catch (error) {
+    // The daemon commonly disappears for a moment during a restart. Keep the
+    // empty roster visibly alive and retry without requiring a page refresh.
+    if (!sessions.size) {
+      rosterLoading = true;
+      renderEmpty();
+    }
+    pollRosterSoon();
+    console.debug("roster snapshot unavailable; retrying", error);
+  } finally {
+    snapshotInFlight = false;
+  }
 }
 
 function connect() {
@@ -443,10 +576,21 @@ function connect() {
     }
   });
   es.onopen = snapshot;   // resync after every (re)connect
+  es.onerror = () => {
+    if (!sessions.size) {
+      rosterLoading = true;
+      renderEmpty();
+    }
+    pollRosterSoon();
+  };
 }
 
 bootstrapSession().then(() => {
+  renderEmpty();
   loadSettings();
   connect();
+  // Do not wait for EventSource's first open before attempting the initial
+  // roster fetch; this also covers browsers delaying SSE reconnection.
+  snapshot();
   setAttention(0);
 });

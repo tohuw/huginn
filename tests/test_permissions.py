@@ -59,6 +59,7 @@ class PermissiveUmaskTestCase(unittest.TestCase):
         self.tmp.cleanup()
 
 
+@unittest.skipIf(os.name == "nt", "POSIX mode bits do not model Windows ACLs")
 class DirPermissionTests(PermissiveUmaskTestCase):
     def test_ensure_state_dirs_is_0700(self):
         config.ensure_state_dirs()
@@ -81,6 +82,7 @@ class DirPermissionTests(PermissiveUmaskTestCase):
         self.assertEqual(_mode(config.CONFIG_PATH), 0o600)
 
 
+@unittest.skipIf(os.name == "nt", "POSIX mode bits do not model Windows ACLs")
 class SnapshotPermissionTests(PermissiveUmaskTestCase):
     def test_snapshot_is_0600(self):
         d = Daemon(Config({}))
@@ -88,6 +90,7 @@ class SnapshotPermissionTests(PermissiveUmaskTestCase):
         self.assertEqual(_mode(d.SNAPSHOT_PATH), 0o600)
 
 
+@unittest.skipIf(os.name == "nt", "POSIX mode bits do not model Windows ACLs")
 class NotificationLogTests(PermissiveUmaskTestCase):
     def test_log_is_0600(self):
         _log_notification("claude", "hello", Diagnostics())
@@ -126,6 +129,7 @@ class _StreamProvider:
             raise asyncio.CancelledError()
 
 
+@unittest.skipIf(os.name == "nt", "POSIX mode bits do not model Windows ACLs")
 class ChatDigestCleanupTests(PermissiveUmaskTestCase):
     async def _run(self, provider):
         from huginn.llm.chat import _run_chat

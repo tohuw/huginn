@@ -1,0 +1,49 @@
+"""Operating-system boundary for process inspection and application focus."""
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class FocusResult:
+    ok: bool
+    target: str | None = None
+    detail: str | None = None
+
+
+class Platform(ABC):
+    """Small platform contract used by source scanners and focus routing."""
+
+    @abstractmethod
+    def pid_alive(self, pid: int) -> bool: ...
+
+    @abstractmethod
+    def process_start_time(self, pid: int) -> float | None: ...
+
+    @abstractmethod
+    def children(self, pid: int) -> list[int]: ...
+
+    @abstractmethod
+    def parent(self, pid: int) -> int | None: ...
+
+    @abstractmethod
+    def process_cwd(self, pid: int) -> str | None: ...
+
+    @abstractmethod
+    def process_name(self, pid: int) -> str | None: ...
+
+    @abstractmethod
+    def process_tty(self, pid: int) -> str | None: ...
+
+    @abstractmethod
+    def find_processes(self, executable: str) -> list[int]: ...
+
+    @abstractmethod
+    def focus_terminal(self, pid: int | None, tty: str | None = None) -> FocusResult: ...
+
+    @abstractmethod
+    def focus_vscode(self, cwd: str) -> FocusResult: ...
+
+    @abstractmethod
+    def activate_app(self, name: str) -> FocusResult: ...

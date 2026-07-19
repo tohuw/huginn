@@ -52,6 +52,8 @@ def _plist_xml() -> str:
 
 
 def _launchctl(*args: str) -> subprocess.CompletedProcess:
+    if sys.platform != "darwin":
+        raise RuntimeError("LaunchAgent management is only available on macOS")
     return subprocess.run(["launchctl", *args], capture_output=True, text=True)
 
 
@@ -60,6 +62,9 @@ def _is_loaded() -> bool:
 
 
 def install() -> int:
+    if sys.platform != "darwin":
+        print("huginn: install-agent is only available on macOS", file=sys.stderr)
+        return 2
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
 
@@ -84,6 +89,9 @@ def install() -> int:
 
 
 def uninstall() -> int:
+    if sys.platform != "darwin":
+        print("huginn: uninstall-agent is only available on macOS", file=sys.stderr)
+        return 2
     if PLIST_PATH.exists():
         _launchctl("unload", "-w", str(PLIST_PATH))
         PLIST_PATH.unlink()

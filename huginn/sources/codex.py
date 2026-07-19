@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import shutil
 import sqlite3
+import os
 import time
 from pathlib import Path
 
 from .. import config
 from ..model import Session, SessionState
 
-CODEX_DIR = Path.home() / ".codex"
+CODEX_DIR = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
 STATE_DB = CODEX_DIR / "state_5.sqlite"
 LOGS_WAL = CODEX_DIR / "logs_2.sqlite-wal"
 
@@ -31,7 +32,7 @@ _copy_cache_ts: float = 0.0
 
 
 def _connect_ro(path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=1.0)
+    conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=1.0)
     conn.execute("PRAGMA busy_timeout=250")
     return conn
 
@@ -81,11 +82,12 @@ def _subagent_counts(conn: sqlite3.Connection, thread_id: str) -> dict[str, int]
 
 
 def scan_with_status(cfg: config.Config | None = None) -> tuple[list[Session], bool]:
-    """Scan recent threads and report whether the result is complete.
+    """Scan recent threads and report whether the query succeeded.
 
-    ``complete`` is false on database errors and when the 50-card display cap
-    truncates the query.  Callers may only reconcile missing sessions after a
-    complete scan; an empty failed scan must never erase live state.
+    The boolean is false only when the database could not be read.  Crossing
+    the 50-card display cap is still a successful authoritative scan: rows
+    beyond that cap are intentionally outside the live roster and must be
+    reconciled away rather than retained forever from an earlier snapshot.
     """
     cfg = cfg or config.load()
     if not STATE_DB.exists():
@@ -107,7 +109,6 @@ def scan_with_status(cfg: config.Config | None = None) -> tuple[list[Session], b
             "ORDER BY COALESCE(updated_at_ms, recency_at_ms, 0) DESC LIMIT 51",
             (cutoff_ms,),
         ).fetchall()
-        complete = len(rows) <= 50
         rows = rows[:50]
         huginn_dir = str(config.STATE_DIR)
         for row in rows:
@@ -132,7 +133,7 @@ def scan_with_status(cfg: config.Config | None = None) -> tuple[list[Session], b
         return [], False
     finally:
         conn.close()
-    return sessions, complete
+    return sessions, True
 
 
 def scan(cfg: config.Config | None = None) -> list[Session]:

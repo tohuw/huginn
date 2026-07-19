@@ -208,14 +208,15 @@ class Daemon:
             await asyncio.sleep(self.cfg.get("codex", "poll_s"))
 
     def _poll_codex_once(self) -> None:
-        sessions, complete = codex.scan_with_status(self.cfg)
+        sessions, succeeded = codex.scan_with_status(self.cfg)
         seen = {s.key for s in sessions}
         for sess in sessions:
             self.bus.emit(Event("codex.thread", sess.key, time.time(), "poll",
                                 {"session": sess}))
-        if complete:
+        if succeeded:
             for key, existing in list(self.reducer.sessions.items()):
-                if existing.source == "codex" and key not in seen:
+                if (existing.source == "codex" and not key.startswith("wsl:")
+                        and key not in seen):
                     self.bus.emit(Event("codex.missing", key, time.time(), "poll"))
 
     async def codex_rollout_watcher(self) -> None:
@@ -228,6 +229,30 @@ class Daemon:
                 if not path.endswith(".jsonl"):
                     continue
                 self._on_transcript_change(path)
+
+    async def wsl_poller(self) -> None:
+        """Poll normalized sessions from configured WSL distributions."""
+        from .sources import wsl
+        known = {key for key in self.reducer.sessions if key.startswith("wsl:")}
+        while self.cfg.get("wsl", "enabled"):
+            seen: set[str] = set()
+            complete = True
+            for distro in self.cfg.get("wsl", "distros") or [""]:
+                sessions, succeeded = await asyncio.to_thread(wsl.scan, distro)
+                complete &= succeeded
+                for sess in sessions:
+                    seen.add(sess.key)
+                    kind = "claude.file" if sess.source == "claude" else "codex.thread"
+                    self.bus.emit(Event(kind, sess.key, time.time(), "poll",
+                                        {"session": sess}))
+            if complete:
+                for key in known - seen:
+                    self.bus.emit(Event("session.hide", key, time.time(), "poll"))
+                known = seen
+                self.diagnostics.ok("wsl_poller")
+            else:
+                self.diagnostics.error("wsl_poller", RuntimeError("WSL probe failed"))
+            await asyncio.sleep(self.cfg.get("wsl", "poll_s"))
 
     async def desktop_poller(self) -> None:
         from .sources import claude_desktop
@@ -244,6 +269,21 @@ class Daemon:
             except Exception as e:
                 self.diagnostics.error("desktop_poller", e)
             await asyncio.sleep(self.cfg.get("claude_desktop", "poll_s"))
+
+    async def chatgpt_desktop_poller(self) -> None:
+        from .sources import chatgpt_desktop
+        while self.cfg.get("chatgpt_desktop", "enabled"):
+            try:
+                sess = chatgpt_desktop.scan()
+                if sess is not None:
+                    self.bus.emit(Event("desktop.tile", sess.key, time.time(), "poll",
+                                        {"session": sess}))
+                elif "chatgpt-desktop" in self.reducer.sessions:
+                    self.bus.emit(Event("claude.dead", "chatgpt-desktop", time.time(), "poll"))
+                self.diagnostics.ok("chatgpt_desktop_poller")
+            except Exception as e:
+                self.diagnostics.error("chatgpt_desktop_poller", e)
+            await asyncio.sleep(self.cfg.get("chatgpt_desktop", "poll_s"))
 
     async def ticker(self) -> None:
         while True:
@@ -302,6 +342,8 @@ class Daemon:
             self.reducer_loop(), self.claude_watcher(), self.transcript_watcher(),
             self.codex_poller(), self.codex_rollout_watcher(), self.ticker(),
             self.desktop_poller(),
+            self.chatgpt_desktop_poller(),
+            self.wsl_poller(),
         )]
         self._write_daemon_state(port)
         if open_browser:

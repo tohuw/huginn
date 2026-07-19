@@ -3,13 +3,18 @@ from __future__ import annotations
 
 import copy
 import os
+import sys
 import tomllib
 from pathlib import Path
 from typing import Any
 
-CONFIG_DIR = Path.home() / ".config" / "huginn"
+if sys.platform == "win32":
+    CONFIG_DIR = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")) / "Huginn"
+    STATE_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "Huginn"
+else:
+    CONFIG_DIR = Path.home() / ".config" / "huginn"
+    STATE_DIR = Path.home() / ".local" / "state" / "huginn"
 CONFIG_PATH = CONFIG_DIR / "config.toml"
-STATE_DIR = Path.home() / ".local" / "state" / "huginn"
 CACHE_DIR = STATE_DIR / "cache"
 
 DEFAULTS: dict[str, dict[str, Any]] = {
@@ -40,7 +45,9 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "ui": {
         "show_ended": True,
         "view": "cards",                 # cards | list
+        "sort": "state",                 # state | alpha | newest | oldest
         "chat_open": True,
+        "chat_span": "vertical",        # vertical | horizontal
         "ended_ttl_s": 300,
         "idle_ttl_s": 300,
         "done_ttl_s": 300,
@@ -49,6 +56,9 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "claude": {"sweep_s": 10.0, "pending_tool_timeout_s": 20.0},
     "codex": {"poll_s": 5.0, "active_window_h": 24, "include_subagents": False},
     "claude_desktop": {"enabled": True, "poll_s": 15.0},
+    "chatgpt_desktop": {"enabled": True, "poll_s": 15.0},
+    # Empty distros means the user's default WSL distribution.
+    "wsl": {"enabled": sys.platform == "win32", "poll_s": 5.0, "distros": []},
 }
 
 
@@ -59,10 +69,14 @@ _POSITIVE_NUMERIC_KEYS = {
     ("ui", "ended_ttl_s"), ("ui", "idle_ttl_s"), ("ui", "done_ttl_s"),
     ("ui", "exec_done_ttl_s"), ("claude", "sweep_s"), ("claude", "pending_tool_timeout_s"),
     ("codex", "poll_s"), ("codex", "active_window_h"), ("claude_desktop", "poll_s"),
+    ("chatgpt_desktop", "poll_s"),
+    ("wsl", "poll_s"),
 }
 _ENUM_KEYS: dict[tuple[str, str], set[str]] = {
     ("llm", "provider"): {"claude", "codex"},
     ("ui", "view"): {"cards", "list"},
+    ("ui", "sort"): {"state", "alpha", "newest", "oldest"},
+    ("ui", "chat_span"): {"vertical", "horizontal"},
 }
 
 

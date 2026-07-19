@@ -1,90 +1,26 @@
-"""Jump-to-session: pid → tty → iTerm2 tab via AppleScript, with fallbacks.
-
-The claude process itself may not own the tty (it wraps a caffeinate child, and
-sometimes the tty is only on the parent shell) — walk the process tree both ways.
-Degradation chain: iTerm2 by tty → VS Code by cwd → app activate → error.
-"""
+"""Platform-neutral jump-to-session routing."""
 from __future__ import annotations
 
-import subprocess
 from typing import Any
 
 from .model import Session
-
-# Two passes: normal windows first, then `current window` — iTerm2 hotkey
-# (dropdown) windows are excluded from `every window` (index -1) and are only
-# reachable via `current window` + `reveal hotkey window`. Observed on 3.6.10.
-_OSA_FOCUS_TTY = '''
-on run argv
-  set targetTty to item 1 of argv
-  tell application "iTerm2"
-    repeat with w in windows
-      repeat with t in tabs of w
-        repeat with s in sessions of t
-          if tty of s is targetTty then
-            select w
-            tell w to select t
-            try
-              tell t to select s
-            end try
-            activate
-            return "ok"
-          end if
-        end repeat
-      end repeat
-    end repeat
-    try
-      tell current window
-        repeat with t in tabs
-          repeat with s in sessions of t
-            if tty of s is targetTty then
-              select t
-              try
-                tell t to select s
-              end try
-              try
-                reveal hotkey window
-              end try
-              return "ok"
-            end if
-          end repeat
-        end repeat
-      end tell
-    end try
-  end tell
-  return "notfound"
-end run
-'''
-
-
-def _run(cmd: list[str], timeout: float = 5) -> str:
-    try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout).stdout.strip()
-    except (subprocess.SubprocessError, OSError):
-        return ""
+from .platform import platform as _platform
 
 
 def _tty_of(pid: int) -> str | None:
-    out = _run(["ps", "-o", "tty=", "-p", str(pid)])
-    return out if out and out != "??" else None
+    return _platform.process_tty(pid)
 
 
 def _children(pid: int) -> list[int]:
-    out = _run(["pgrep", "-P", str(pid)])
-    return [int(x) for x in out.split()] if out else []
+    return _platform.children(pid)
 
 
 def _parent(pid: int) -> int | None:
-    out = _run(["ps", "-o", "ppid=", "-p", str(pid)])
-    try:
-        p = int(out)
-        return p if p > 1 else None
-    except ValueError:
-        return None
+    return _platform.parent(pid)
 
 
 def find_tty(pid: int) -> str | None:
-    """tty of the process, its descendants (2 levels), or its parent shell."""
+    """TTY of the process, its descendants (two levels), or parent shell."""
     tty = _tty_of(pid)
     if tty:
         return tty
@@ -92,44 +28,95 @@ def find_tty(pid: int) -> str | None:
         tty = _tty_of(child)
         if tty:
             return tty
-        for grand in _children(child):
-            tty = _tty_of(grand)
+        for grandchild in _children(child):
+            tty = _tty_of(grandchild)
             if tty:
                 return tty
     parent = _parent(pid)
-    if parent:
-        return _tty_of(parent)
-    return None
+    return _tty_of(parent) if parent else None
 
 
 def _focus_iterm_tty(tty: str) -> bool:
-    dev = tty if tty.startswith("/dev/") else f"/dev/{tty}"
-    out = _run(["osascript", "-e", _OSA_FOCUS_TTY, dev], timeout=10)
-    return out == "ok"
+    """Compatibility wrapper retained for integrations and focused tests."""
+    return _platform.focus_terminal(None, tty).ok
+
+
+def _codex_tty_for_cwd(cwd: str) -> str | None:
+    """Find a terminal-owned Codex CLI whose process cwd matches the card."""
+    for pid in _platform.find_processes("codex"):
+        if _platform.process_cwd(pid) == cwd:
+            tty = _platform.process_tty(pid)
+            if tty:
+                return tty
+    return None
 
 
 def _open_app(name: str) -> bool:
-    return subprocess.run(["open", "-a", name], capture_output=True).returncode == 0
+    """Compatibility wrapper retained for integrations and focused tests."""
+    return _platform.activate_app(name).ok
+
+
+def _result(ok: bool, target: str | None = None, *, detail: str | None = None, **extra: Any) -> dict[str, Any]:
+    value: dict[str, Any] = {"ok": ok}
+    if target:
+        value["target"] = target
+    if detail:
+        value["detail" if ok else "error"] = detail
+    value.update(extra)
+    return value
 
 
 def focus_session(s: Session) -> dict[str, Any]:
     if s.source == "codex":
-        ok = _open_app("ChatGPT")
-        return {"ok": ok, "target": "ChatGPT"}
-    if s.source == "claude-desktop":
-        ok = _open_app("Claude")
-        return {"ok": ok, "target": "Claude"}
+        # A WSL Codex row is still source="codex" for reducer semantics, but
+        # it is never a ChatGPT desktop session. We do not yet have a stable
+        # process-to-Windows-Terminal-tab mapping, so prefer its workspace and
+        # then the best available terminal window.
+        if (s.entrypoint or "").startswith("wsl:"):
+            if s.cwd:
+                editor = _platform.focus_vscode(s.cwd)
+                if editor.ok:
+                    return _result(True, editor.target)
+            terminal = _platform.focus_terminal(None, None)
+            if terminal.ok:
+                return _result(True, terminal.target, detail=terminal.detail)
+            return _result(False, detail=terminal.detail or "WSL terminal not found")
+        if s.entrypoint in {"cli", "exec"}:
+            # macOS can resolve an exact iTerm tab from cwd even though Codex
+            # state rows generally have no pid. Windows falls back to the
+            # owning/top-level Terminal window and reports that limitation.
+            tty = _codex_tty_for_cwd(s.cwd) if s.cwd else None
+            if tty and _focus_iterm_tty(tty):
+                return _result(True, "iTerm2", tty=tty)
+            terminal = _platform.focus_terminal(s.pid, tty)
+            if terminal.ok:
+                return _result(True, terminal.target, detail=terminal.detail)
+            if s.cwd:
+                editor = _platform.focus_vscode(s.cwd)
+                if editor.ok:
+                    return _result(True, editor.target)
+            return _result(False, detail=terminal.detail or "Codex CLI terminal not found")
+        return _result(_open_app("ChatGPT"), "ChatGPT")
 
-    # Claude Code: prefer the exact iTerm2 tab
+    if s.source == "claude-desktop":
+        return _result(_open_app("Claude"), "Claude")
+
+    if s.source == "chatgpt-desktop":
+        return _result(_open_app("ChatGPT"), "ChatGPT")
+
     if s.entrypoint == "cli" and s.pid:
         tty = s.tty or find_tty(s.pid)
         if tty:
             s.tty = tty
-            if _focus_iterm_tty(tty):
-                return {"ok": True, "target": "iTerm2", "tty": tty}
-    # VS Code-attached (or tty not found): open the workspace
+        terminal = _platform.focus_terminal(s.pid, tty)
+        if terminal.ok:
+            return _result(True, terminal.target, detail=terminal.detail, **({"tty": tty} if tty else {}))
+
     if s.cwd:
-        if subprocess.run(["open", "-a", "Visual Studio Code", s.cwd],
-                          capture_output=True).returncode == 0:
-            return {"ok": True, "target": "VS Code"}
-    return {"ok": False, "error": "no focus target found"}
+        editor = _platform.focus_vscode(s.cwd)
+        if editor.ok:
+            return _result(True, editor.target)
+    return _result(False, detail="no focus target found")
+
+
+__all__ = ["find_tty", "focus_session"]

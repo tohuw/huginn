@@ -57,6 +57,31 @@ class CodexScanStatusTests(unittest.TestCase):
         self.assertEqual(sessions, [])
         self.assertFalse(complete)
 
+    def test_display_cap_is_still_an_authoritative_scan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "state.sqlite"
+            conn = sqlite3.connect(db)
+            conn.execute("""
+                CREATE TABLE threads (
+                    id TEXT PRIMARY KEY,
+                    updated_at_ms INTEGER,
+                    recency_at_ms INTEGER,
+                    archived INTEGER,
+                    thread_source TEXT
+                )
+            """)
+            now_ms = int(__import__("time").time() * 1000)
+            conn.executemany(
+                "INSERT INTO threads VALUES (?, ?, ?, 0, '')",
+                [(f"thread-{i:02d}", now_ms, now_ms) for i in range(51)],
+            )
+            conn.commit()
+            conn.close()
+            with patch("huginn.sources.codex.STATE_DB", db):
+                sessions, complete = scan_with_status(Config({}))
+        self.assertEqual(len(sessions), 50)
+        self.assertTrue(complete)
+
 
 class ActivityHeartbeatTests(unittest.TestCase):
     """issue #19: was defined but never called from anywhere -- now wired

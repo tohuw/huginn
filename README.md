@@ -1,10 +1,13 @@
 # huginn
 
+_Developed with AI assistance. See the git history for which agents contributed._
+
 Local monitor for AI coding-agent sessions. One pinned browser tab instead of
 furiously tabbing through iTerm2 to find out which agent needs you.
 
-Watches **Claude Code** (first-class), **Codex** (first-class), and
-**Claude Desktop** (activity tile only — its content is cloud-side). Everything
+Watches **Claude Code** (first-class), **Codex** across CLI/IDE/ChatGPT Desktop
+(first-class local threads), plus **ChatGPT Desktop** and **Claude Desktop**
+(app-level activity tiles; general conversation content is cloud-side). Everything
 runs locally; no data leaves the machine except your own `claude -p` /
 `codex exec` calls, which use your existing auth.
 
@@ -29,9 +32,25 @@ open ~/Applications/Huginn.app
 
 The app owns the daemon lifecycle, shows an attention count in the menu bar,
 opens the web console, and focuses an agent when you select its permission,
-input, or error entry. **Quit Huginn** stops the daemon. Remove the launchd
-version first with `uv run huginn uninstall-agent`; its `KeepAlive` policy is
+input, or error entry. **Quit Huginn** stops the daemon; hold Option while the
+menu is open to replace it with **Restart Huginn**. Remove the launchd version
+first with `uv run huginn uninstall-agent`; its `KeepAlive` policy is
 intentionally incompatible with app-owned shutdown.
+
+### Windows 11 tray app
+
+Native Windows support includes AppData-backed state, Claude/Codex discovery,
+portable hooks, Windows process/window focus, a .NET 8 tray shell, and a
+portable packaging script. Build from PowerShell with:
+
+```powershell
+.\windows\build.ps1
+```
+
+The current package needs a staged Python runtime or `huginn.exe` on `PATH`.
+Windows Terminal focus is window-level; exact selection of an arbitrary existing
+tab remains a documented limitation. WSL sessions are discovered through a
+bounded in-distribution helper and namespaced separately. See [WINDOWS.md](WINDOWS.md).
 
 ### Agent access
 
@@ -57,8 +76,9 @@ huginn focus @session-name
 Dashboard: cards sorted needs-you-first (permission → input → error → done →
 working → idle), with a persistent compact list view available from the top
 bar. Tab title + favicon carry the attention count. Per session:
-**jump** focuses the exact iTerm2 tab (hotkey windows included; VS Code
-sessions open the workspace), **peek** shows a distilled transcript tail,
+**jump** focuses the exact iTerm2 tab on macOS (hotkey windows included; VS Code
+sessions open the workspace; Windows Terminal currently focuses the owning window),
+**peek** shows a distilled transcript tail,
 **ask** feeds the chat panel — a Q&A agent (Claude or Codex, switchable
 top-right) that reads current per-session digests and answers questions about
 what's going on. Ask stays in that monitoring scope; it can also toggle blurbs,
@@ -71,7 +91,7 @@ settings persist across reloads and synchronize across open tabs.
 |---|---|---|
 | `working` | agent is running | status file `busy`/`shell`, transcript flow, hooks |
 | `waiting_permission` | blocked on a permission prompt | Notification hook; fallback: pending tool_use >20s |
-| `waiting_input` | asked you something / idle turn | Notification/Stop hooks + transcript (AskUserQuestion) |
+| `waiting_input` | explicitly asked you something | elicitation/Stop hooks + transcript (AskUserQuestion) |
 | `done` | turn finished cleanly | Stop hook, busy→idle after turn end |
 | `error` | API error or died mid-work | transcript error lines, dead pid while working |
 | `idle` / `ended` | nothing happening / process gone | status file, pid liveness |
@@ -98,6 +118,10 @@ probes therefore leave the live view without hiding attention states.
 - `~/.codex/state_5.sqlite` — thread index, polled read-only (copy-to-cache
   fallback when WAL/shm access is blocked); rollout JSONLs tailed for
   `task_started`/`task_complete` turn boundaries.
+- ChatGPT Desktop — local Codex threads share `CODEX_HOME` and therefore use
+  the same first-class scanner above. A separate app tile reports native
+  process presence and recent Electron activity on macOS and Windows without
+  attempting to extract cloud conversation content.
 - Hooks (optional, recommended): `huginn-hook` forwards Claude Code and Codex
   hook events to `POST /api/hook/...` with 0.2s connect timeout — if the
   daemon is down the hook is a no-op; sessions never block. Codex hooks are
@@ -119,7 +143,9 @@ probes therefore leave the live view without hiding attention states.
 - Headless `claude -p` runs (including huginn's own blurb/chat calls) register
   session files with entrypoint `sdk-cli` — filtered out.
 - Claude Code notifications use the structured `notification_type` field;
-  configurable message patterns remain as a fallback for older payloads.
+  `idle_prompt` settles to done rather than raising attention, while explicit
+  elicitation remains waiting-input. Configurable message patterns remain as
+  a fallback for older payloads.
 - "ChatGPT.app" *is* the Codex desktop app (`com.openai.codex`); the embedded
   CLI at `Contents/Resources/codex` powers the codex chat provider.
 

@@ -123,6 +123,12 @@ class ChatCorrelationTests(unittest.IsolatedAsyncioTestCase):
             "show list view": ("ui", "view", "list"),
             "switch back to cards": ("ui", "view", "cards"),
             "hide the ask panel": ("ui", "chat_open", False),
+            "span ask horizontally": ("ui", "chat_span", "horizontal"),
+            "dock ask on the right": ("ui", "chat_span", "vertical"),
+            "sort by state": ("ui", "sort", "state"),
+            "sort alphabetically": ("ui", "sort", "alpha"),
+            "sort newest first": ("ui", "sort", "newest"),
+            "order by oldest": ("ui", "sort", "oldest"),
         }
         for question, expected in cases.items():
             actions = _control_actions(question)

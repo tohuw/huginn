@@ -7,15 +7,28 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
-import stat
+import subprocess
+import sys
 import time
 from pathlib import Path
 
 CLAUDE_SETTINGS = Path.home() / ".claude" / "settings.json"
 CODEX_HOOKS = Path.home() / ".codex" / "hooks.json"
-HOOK_BIN = Path.home() / ".local" / "bin" / "huginn-hook"
-HOOK_SRC = Path(__file__).parent / "huginn-hook"
+LEGACY_HOOK_BIN = Path.home() / ".local" / "bin" / "huginn-hook"
+
+
+def _hook_bin() -> Path:
+    """Find the packaging-generated console script on POSIX or Windows."""
+    found = shutil.which("huginn-hook")
+    if found:
+        return Path(found)
+    scripts = Path(sys.executable).parent
+    return scripts / ("huginn-hook.exe" if os.name == "nt" else "huginn-hook")
+
+
+HOOK_BIN = _hook_bin()
 
 CLAUDE_EVENTS = ["SessionStart", "UserPromptSubmit", "Notification", "Stop", "SessionEnd"]
 # Codex 0.144.6's hook event enum has no Notification or SessionEnd.  These
@@ -24,9 +37,15 @@ CODEX_EVENTS = ["SessionStart", "UserPromptSubmit", "Stop"]
 
 
 def _install_hook_bin() -> None:
-    HOOK_BIN.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(HOOK_SRC, HOOK_BIN)
-    HOOK_BIN.chmod(HOOK_BIN.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    if not HOOK_BIN.exists():
+        raise RuntimeError(
+            "huginn-hook console script not found; reinstall Huginn before installing hooks"
+        )
+
+
+def _hook_command(source: str, event: str) -> str:
+    args = [str(HOOK_BIN), source, event]
+    return subprocess.list2cmdline(args) if os.name == "nt" else shlex.join(args)
 
 
 def _load_json(path: Path) -> dict:
@@ -59,7 +78,7 @@ def _merge_events(data: dict, events: list[str], source: str) -> int:
         entries = hooks.setdefault(event, [])
         if _has_huginn(entries):
             continue
-        hook: dict = {"type": "command", "command": f"{HOOK_BIN} {source} {event}"}
+        hook: dict = {"type": "command", "command": _hook_command(source, event)}
         # Codex 0.145 skips hooks marked async ("not supported yet"); the
         # forwarder is fast enough (<0.3s worst case) to run sync there.
         if source == "claude":
@@ -151,7 +170,9 @@ def uninstall() -> int:
         if removed:
             _write_json(path, data)
         print(f"{path}: {removed} hook(s) removed")
-    if HOOK_BIN.exists():
-        HOOK_BIN.unlink()
-        print(f"removed {HOOK_BIN}")
+    # Old releases copied a shell forwarder here. Never remove the
+    # package-managed console entrypoint when uninstalling hook settings.
+    if LEGACY_HOOK_BIN.exists() and LEGACY_HOOK_BIN != HOOK_BIN:
+        LEGACY_HOOK_BIN.unlink()
+        print(f"removed {LEGACY_HOOK_BIN}")
     return 0

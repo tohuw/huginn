@@ -92,7 +92,8 @@ def digest_for_session(s: Any, max_lines: int = 40) -> str:
         f"- cwd: {s.cwd}",
         f"- branch: {s.git_branch or '?'}  model: {s.model or '?'}",
     ]
-    if s.blurb:
-        head.append(f"- blurb: {s.blurb}")
+    # Blurbs are cached UI summaries generated at an earlier decision point.
+    # They are deliberately excluded from Ask evidence: current state and the
+    # transcript tail are authoritative, and a stale blurb can invent a blocker.
     body = distill(s.transcript_path or "", s.source, max_lines)
     return "\n".join(head) + "\n\n```\n" + "\n".join(body) + "\n```\n"

@@ -57,6 +57,7 @@ class Session:
     tokens: int | None = None
     version: str | None = None
     subagents: dict[str, int] | None = None   # e.g. {"running": 2, "done": 1}
+    shells: int = 0                 # live shell subprocesses owned by the agent
 
     @property
     def attention(self) -> bool:

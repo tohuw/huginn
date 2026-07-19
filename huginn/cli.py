@@ -134,6 +134,9 @@ def cmd_roster(args: argparse.Namespace) -> int:
         return 0
     for s in sessions:
         summary = (s.get("blurb") or s.get("last_prompt") or "").replace("\n", " ")[:100]
+        if s.get("shells"):
+            n = s["shells"]
+            summary = f"[{n} shell{'s' if n != 1 else ''}] {summary}"
         print(f"@{s['name']}\t{s['state']}\t{_age(s['state_since'])}\t"
               f"{s['source']}\t{summary}\t{s.get('cwd') or '-'}")
     return 0
@@ -165,6 +168,8 @@ def cmd_inspect(args: argparse.Namespace) -> int:
             print("\n---\n")
         print(f"@{s['name']} [{s['source']}] {s['state']} ({_age(s['state_since'])})")
         print(f"cwd: {s.get('cwd') or '-'}")
+        if s.get("shells"):
+            print(f"shells: {s['shells']} running")
         if s.get("blurb"):
             print(f"summary: {s['blurb']}")
         elif s.get("last_prompt"):

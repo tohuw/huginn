@@ -94,15 +94,14 @@ class Daemon:
         payload["live"] = False   # seed data; not evidence of current work
         self.bus.emit(Event(kind, s.key, time.time(), "transcript", payload))
 
-    def _recent_turn_end(self, key: str) -> bool:
+    def _recent_turn_end(self, key: str, status_since: float = 0) -> bool:
         pair = self.tails.get(key)
         if not pair:
             return False
         _, an = pair
         if not isinstance(an, ClaudeAnalyzer):
             return False
-        return (an.last_entry_type == "assistant" and not an.pending_tools
-                and time.time() - an.last_ts < 20)
+        return an.last_entry_type == "assistant" and not an.pending_tools
 
     # ------------------------------------------------------------- watchers
     async def claude_watcher(self) -> None:
@@ -153,7 +152,8 @@ class Daemon:
             return
         self.bus.emit(Event("claude.file", sess.key, time.time(), "statusfile",
                             {"session": sess,
-                             "recent_turn_end": self._recent_turn_end(sess.key)}))
+                             "recent_turn_end": self._recent_turn_end(
+                                 sess.key, sess.state_since)}))
 
     async def _claude_sweep(self) -> None:
         while True:

@@ -39,6 +39,8 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     },
     "ui": {
         "show_ended": True,
+        "view": "cards",                 # cards | list
+        "chat_open": True,
         "ended_ttl_s": 300,
         "idle_ttl_s": 300,
         "done_ttl_s": 300,
@@ -60,6 +62,7 @@ _POSITIVE_NUMERIC_KEYS = {
 }
 _ENUM_KEYS: dict[tuple[str, str], set[str]] = {
     ("llm", "provider"): {"claude", "codex"},
+    ("ui", "view"): {"cards", "list"},
 }
 
 

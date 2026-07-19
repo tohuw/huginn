@@ -158,7 +158,10 @@ class Daemon:
         if not pair:
             return
         tail, analyzer = pair
-        if analyzer.feed(tail.read_new()):
+        changed = False
+        for entries in tail.read_available():
+            changed |= analyzer.feed(entries)
+        if changed:
             kind = "transcript.activity" if s.source == "claude" else "codex.activity"
             payload = analyzer.activity()
             payload["live"] = True

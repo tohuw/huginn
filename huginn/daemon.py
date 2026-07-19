@@ -292,6 +292,16 @@ class Daemon:
         finally:
             for t in tasks:
                 t.cancel()
+            # Own the blurb/chat tasks too -- their subprocess children must
+            # not outlive a daemon shutdown (issue #16). asyncio.run()'s own
+            # teardown would eventually cancel these anyway, but doing it
+            # explicitly here means it doesn't depend on that implementation
+            # detail, and it happens before the snapshot write below.
+            for t in list(self.blurbs._pending.values()):
+                t.cancel()
+            from .llm import chat as _chat
+            if _chat._active_chat and not _chat._active_chat.done():
+                _chat._active_chat.cancel()
             with contextlib.suppress(Exception):
                 self._write_snapshot()   # best-effort: survive a graceful restart
             with contextlib.suppress(Exception):

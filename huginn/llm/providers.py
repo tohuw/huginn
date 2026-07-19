@@ -7,6 +7,7 @@ OAuth path is used. Codex: the CLI embedded in the desktop app bundle.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import shutil
@@ -15,6 +16,7 @@ from pathlib import Path
 from typing import AsyncIterator
 
 CODEX_BIN = "/Applications/ChatGPT.app/Contents/Resources/codex"
+STDERR_CAP = 4096   # bounded: never let a runaway/hostile subprocess fill memory or logs
 
 _claude_path: str | None = None
 
@@ -38,6 +40,36 @@ def _clean_env() -> dict[str, str]:
     return env
 
 
+async def _reap(proc: asyncio.subprocess.Process) -> None:
+    """Call from a finally: no child should survive its caller -- timeout,
+    cancellation, or any other exit path (issue #16)."""
+    if proc.returncode is not None:
+        return
+    with contextlib.suppress(ProcessLookupError):
+        proc.kill()
+    with contextlib.suppress(Exception):
+        await asyncio.wait_for(proc.wait(), timeout=5)
+
+
+async def _drain_stderr(stream: asyncio.StreamReader | None) -> bytes:
+    """Concurrently drain stderr while stdout is read line-by-line, so a
+    chatty child can't deadlock on a full stderr pipe. Keeps only the first
+    STDERR_CAP bytes; the rest is read (to keep draining) and discarded."""
+    if stream is None:
+        return b""
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await stream.read(4096)
+        if not chunk:
+            break
+        if total < STDERR_CAP:
+            take = chunk[:STDERR_CAP - total]
+            chunks.append(take)
+            total += len(take)
+    return b"".join(chunks)
+
+
 class ClaudeCLI:
     name = "claude"
 
@@ -58,14 +90,17 @@ class ClaudeCLI:
             *cmd, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE, env=_clean_env(), cwd=cwd)
         try:
-            out, err = await asyncio.wait_for(
-                proc.communicate(prompt.encode()), timeout=timeout)
-        except asyncio.TimeoutError:
-            proc.kill()
-            raise RuntimeError(f"claude -p timed out after {timeout}s")
-        if proc.returncode != 0:
-            raise RuntimeError(f"claude -p failed: {err.decode()[:300]}")
-        return out.decode().strip()
+            try:
+                out, err = await asyncio.wait_for(
+                    proc.communicate(prompt.encode()), timeout=timeout)
+            except asyncio.TimeoutError:
+                raise RuntimeError(f"claude -p timed out after {timeout}s")
+            if proc.returncode != 0:
+                raise RuntimeError(
+                    f"claude -p failed: {err[:STDERR_CAP].decode(errors='replace')[:300]}")
+            return out.decode().strip()
+        finally:
+            await _reap(proc)
 
     async def stream(self, prompt: str, *, model: str = "",
                      cwd: str | None = None, allowed_tools: str | None = None
@@ -81,22 +116,32 @@ class ClaudeCLI:
             cmd += ["--allowedTools", allowed_tools]
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL, env=_clean_env(), cwd=cwd)
-        proc.stdin.write(prompt.encode())
-        proc.stdin.write_eof()
-        assert proc.stdout is not None
-        async for raw in proc.stdout:
-            try:
-                obj = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-            # partial text deltas arrive as wrapped SSE stream events
-            if obj.get("type") == "stream_event":
-                ev = obj.get("event") or {}
-                delta = ev.get("delta") or {}
-                if delta.get("type") == "text_delta" and delta.get("text"):
-                    yield delta["text"]
-        await proc.wait()
+            stderr=asyncio.subprocess.PIPE, env=_clean_env(), cwd=cwd)
+        stderr_task = asyncio.create_task(_drain_stderr(proc.stderr))
+        try:
+            proc.stdin.write(prompt.encode())
+            proc.stdin.write_eof()
+            assert proc.stdout is not None
+            async for raw in proc.stdout:
+                try:
+                    obj = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                # partial text deltas arrive as wrapped SSE stream events
+                if obj.get("type") == "stream_event":
+                    ev = obj.get("event") or {}
+                    delta = ev.get("delta") or {}
+                    if delta.get("type") == "text_delta" and delta.get("text"):
+                        yield delta["text"]
+            await proc.wait()
+            if proc.returncode != 0:
+                err = await stderr_task
+                raise RuntimeError(f"claude -p failed: {err.decode(errors='replace')[:300]}")
+        finally:
+            await _reap(proc)
+            stderr_task.cancel()
+            with contextlib.suppress(Exception):
+                await stderr_task
 
 
 class CodexCLI:
@@ -126,24 +171,34 @@ class CodexCLI:
         cmd.append(prompt)
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL, cwd=cwd)
-        assert proc.stdout is not None
-        async for raw in proc.stdout:
-            try:
-                obj = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-            # codex exec --json emits JSONL events; surface agent text deltas/messages
-            t = obj.get("type", "")
-            if t in ("item.completed", "item.updated"):
-                item = obj.get("item") or {}
-                if item.get("type") == "agent_message" and item.get("text"):
-                    yield item["text"]
-            elif t == "agent_message" and obj.get("message"):
-                yield obj["message"]
-            elif t == "agent_message_delta" and obj.get("delta"):
-                yield obj["delta"]
-        await proc.wait()
+            stderr=asyncio.subprocess.PIPE, cwd=cwd)
+        stderr_task = asyncio.create_task(_drain_stderr(proc.stderr))
+        try:
+            assert proc.stdout is not None
+            async for raw in proc.stdout:
+                try:
+                    obj = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                # codex exec --json emits JSONL events; surface agent text deltas/messages
+                t = obj.get("type", "")
+                if t in ("item.completed", "item.updated"):
+                    item = obj.get("item") or {}
+                    if item.get("type") == "agent_message" and item.get("text"):
+                        yield item["text"]
+                elif t == "agent_message" and obj.get("message"):
+                    yield obj["message"]
+                elif t == "agent_message_delta" and obj.get("delta"):
+                    yield obj["delta"]
+            await proc.wait()
+            if proc.returncode != 0:
+                err = await stderr_task
+                raise RuntimeError(f"codex exec failed: {err.decode(errors='replace')[:300]}")
+        finally:
+            await _reap(proc)
+            stderr_task.cancel()
+            with contextlib.suppress(Exception):
+                await stderr_task
 
 
 PROVIDERS = {"claude": ClaudeCLI(), "codex": CodexCLI()}

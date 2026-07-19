@@ -279,8 +279,11 @@ class Daemon:
         )]
         self._write_daemon_state(port)
         if open_browser:
+            # The token rides in a URL fragment (#t=...), which browsers
+            # never send over the network -- see issue #23. app.js reads it
+            # once and strips it from the visible URL.
             asyncio.get_event_loop().call_later(
-                0.8, webbrowser.open, f"http://{host}:{port}/")
+                0.8, webbrowser.open, f"http://{host}:{port}/#t={self.token}")
         try:
             await server.serve()
         finally:

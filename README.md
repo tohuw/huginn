@@ -12,6 +12,7 @@ runs locally; no data leaves the machine except your own `claude -p` /
 
 ```sh
 uv run huginn serve          # daemon + dashboard at http://127.0.0.1:47100
+uv run huginn open           # reopen the dashboard tab with a fresh auth bootstrap
 uv run huginn status         # one-shot table in the terminal
 uv run huginn install-hooks  # sub-second state changes (recommended, once)
 uv run huginn doctor         # environment/hook/daemon health check
@@ -68,6 +69,31 @@ all LLM polling off; chat stays available on demand.
   configurable message patterns remain as a fallback for older payloads.
 - "ChatGPT.app" *is* the Codex desktop app (`com.openai.codex`); the embedded
   CLI at `Contents/Resources/codex` powers the codex chat provider.
+
+## Security
+
+The daemon binds `127.0.0.1` only and every `/api/*` route requires a
+per-restart token (`~/.local/state/huginn/token`, mode 0600). What this does
+and doesn't protect against:
+
+- **Protects against:** another process on your machine — a script, a
+  compromised dependency, a stray webpage your browser has open — making
+  requests to the daemon's API without your consent. The token bootstraps
+  into the browser via a URL fragment (`#t=...`, never sent to the server or
+  logged) traded for an HttpOnly, `SameSite=Strict` session cookie; `GET /`
+  itself carries no secret, so it's safe for any local process to fetch.
+  `Origin`/`Host` header checks reject cross-origin and DNS-rebinding
+  requests on top of that.
+- **Does not protect against:** another process running *as you* that can
+  read your files — it can read `~/.local/state/huginn/token` directly (same
+  permission boundary as reading your Claude transcripts), so this isn't
+  privilege isolation between processes owned by the same user. If that's
+  your threat model, huginn isn't the layer defending against it; your OS
+  user/process sandboxing is.
+
+If the daemon restarts, the token rotates and any open tab 401s — run
+`huginn open` to reopen the dashboard with a fresh bootstrap rather than
+reloading the stale tab.
 
 ## Config
 

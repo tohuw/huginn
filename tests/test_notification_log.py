@@ -19,7 +19,7 @@ def make_client(debug_log: bool) -> TestClient:
     daemon = Daemon(cfg)
     daemon.token = "t"
     app = create_app(daemon)
-    return TestClient(app)
+    return TestClient(app, base_url="http://127.0.0.1")
 
 
 class NotificationDebugLogTests(unittest.TestCase):

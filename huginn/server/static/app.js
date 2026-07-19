@@ -1,10 +1,31 @@
 "use strict";
 
-// HUGINN_TOKEN is injected server-side into index.html (same-origin bootstrap).
+// Auth: the daemon hands us a token once, via a URL fragment (#t=...) that
+// browsers never send over the network -- see issue #23. bootstrapSession()
+// trades it for an HttpOnly cookie the browser then attaches automatically
+// to every same-origin request (including EventSource, which can't set
+// custom headers), so the token never needs to touch a URL or JS-readable
+// storage again.
+let authExpired = false;
+
+async function bootstrapSession() {
+  const params = new URLSearchParams(location.hash.slice(1));
+  const token = params.get("t");
+  if (!token) return;
+  history.replaceState(null, "", location.pathname + location.search);
+  await fetch("/api/session", { method: "POST", headers: { "X-Huginn-Token": token } });
+}
+
 function apiFetch(url, opts = {}) {
-  const headers = { ...(opts.headers || {}), "X-Huginn-Token": HUGINN_TOKEN };
-  return fetch(url, { ...opts, headers }).then((r) => {
-    if (r.status === 401) { location.reload(); throw new Error("stale token"); }
+  return fetch(url, opts).then((r) => {
+    if (r.status === 401) {
+      if (!authExpired) {
+        authExpired = true;
+        document.querySelector(".brand").textContent =
+          "⛬ huginn — session expired, run `huginn open`";
+      }
+      throw new Error("unauthorized");
+    }
     return r;
   });
 }
@@ -218,8 +239,9 @@ async function snapshot() {
 }
 
 function connect() {
-  // EventSource can't set custom headers; the token rides as a query param.
-  const es = new EventSource(`/api/events?token=${encodeURIComponent(HUGINN_TOKEN)}`);
+  // Same-origin EventSource requests send cookies automatically -- no query
+  // param needed (a bearer token must never ride in a URL).
+  const es = new EventSource("/api/events");
   es.addEventListener("session.upsert", (e) => upsertCard(JSON.parse(e.data)));
   es.addEventListener("session.remove", (e) => removeCard(JSON.parse(e.data).key));
   es.addEventListener("attention.count", (e) => setAttention(JSON.parse(e.data).count));
@@ -241,6 +263,8 @@ function connect() {
   es.onopen = snapshot;   // resync after every (re)connect
 }
 
-loadSettings();
-connect();
-setAttention(0);
+bootstrapSession().then(() => {
+  loadSettings();
+  connect();
+  setAttention(0);
+});

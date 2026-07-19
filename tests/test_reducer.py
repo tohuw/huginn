@@ -155,6 +155,58 @@ class CodexAnalyzerTests(unittest.TestCase):
         self.assertEqual(an.phase, "done")
         self.assertEqual(an.last_prompt, "hi")
 
+    def test_exec_approval_request_sets_waiting_permission(self):
+        an = CodexAnalyzer()
+        an.feed([{"type": "event_msg",
+                  "payload": {"type": "exec_approval_request", "call_id": "1", "command": ["ls"]}}])
+        self.assertEqual(an.phase, "waiting_permission")
+
+    def test_apply_patch_approval_request_sets_waiting_permission(self):
+        an = CodexAnalyzer()
+        an.feed([{"type": "event_msg",
+                  "payload": {"type": "apply_patch_approval_request", "call_id": "1"}}])
+        self.assertEqual(an.phase, "waiting_permission")
+
+    def test_request_user_input_sets_waiting_input(self):
+        an = CodexAnalyzer()
+        an.feed([{"type": "event_msg",
+                  "payload": {"type": "request_user_input", "call_id": "1"}}])
+        self.assertEqual(an.phase, "waiting_input")
+
+
+def codex_session(key="codex:t1", state=SessionState.WORKING, **kw):
+    defaults = dict(key=key, source="codex", session_id="t1", cwd="/tmp/p", name="p-1",
+                    state=state, state_since=NOW, state_origin="poll", last_activity=NOW)
+    defaults.update(kw)
+    return Session(**defaults)
+
+
+class CodexWaitingReducerTests(unittest.TestCase):
+    """Issue #3: no approval/question event was ever observed locally when this
+    was written, so this pins the reducer wiring against synthetic payloads."""
+
+    def setUp(self):
+        self.r = Reducer(Config({}))
+
+    def feed(self, kind, key, payload, ts=None):
+        return self.r.apply(Event(kind, key, ts or time.time(), "test", payload))
+
+    def test_approval_request_reaches_waiting_permission(self):
+        s = codex_session()
+        self.r.sessions[s.key] = s
+        an = CodexAnalyzer()
+        an.feed([{"type": "event_msg", "payload": {"type": "exec_approval_request"}}])
+        self.feed("codex.activity", s.key, an.activity())
+        self.assertEqual(s.state, SessionState.WAITING_PERMISSION)
+
+    def test_user_input_request_reaches_waiting_input(self):
+        s = codex_session()
+        self.r.sessions[s.key] = s
+        an = CodexAnalyzer()
+        an.feed([{"type": "event_msg", "payload": {"type": "request_user_input"}}])
+        self.feed("codex.activity", s.key, an.activity())
+        self.assertEqual(s.state, SessionState.WAITING_INPUT)
+
 
 if __name__ == "__main__":
     unittest.main()

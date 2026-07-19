@@ -170,6 +170,8 @@ class Reducer:
             "done": SessionState.DONE,
             "error": SessionState.ERROR,
             "aborted": SessionState.IDLE,
+            "waiting_permission": SessionState.WAITING_PERMISSION,
+            "waiting_input": SessionState.WAITING_INPUT,
         }.get(a.get("phase") or "")
         if phase_state:
             changed |= self._set_state(s, phase_state, "transcript", now)

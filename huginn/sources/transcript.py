@@ -199,6 +199,14 @@ class CodexAnalyzer:
                 self.phase = "aborted"; changed = True
             elif ptype in ("error", "stream_error", "task_failed"):
                 self.phase = "error"; changed = True
+            # Field shapes below are unconfirmed against live traffic (never
+            # observed on the machine this was written on, no local session
+            # ever hit an approval prompt) -- type names come from the Codex
+            # desktop app's embedded EventMsg constants; stay defensive.
+            elif ptype in ("exec_approval_request", "apply_patch_approval_request"):
+                self.phase = "waiting_permission"; changed = True
+            elif ptype in ("request_user_input", "elicitation_request"):
+                self.phase = "waiting_input"; changed = True
             elif ptype == "user_message":
                 self.last_prompt = str(payload.get("message", ""))[:300]
                 self.phase = "working"; changed = True

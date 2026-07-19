@@ -140,7 +140,7 @@ class ClaudeCLI:
         finally:
             await _reap(proc)
             stderr_task.cancel()
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(Exception, asyncio.CancelledError):
                 await stderr_task
 
 
@@ -197,7 +197,7 @@ class CodexCLI:
         finally:
             await _reap(proc)
             stderr_task.cancel()
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(Exception, asyncio.CancelledError):
                 await stderr_task
 
 

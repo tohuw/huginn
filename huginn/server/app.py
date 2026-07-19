@@ -166,12 +166,22 @@ def create_app(daemon: "Daemon") -> FastAPI:
     @api.put("/settings")
     async def put_settings(request: Request):
         body = await request.json()
+        # Validate the whole batch before mutating anything (issue #18) --
+        # a partially-invalid update must not poison runtime/disk config.
+        errors: list[str] = []
         for section, values in body.items():
-            if section not in config.DEFAULTS or not isinstance(values, dict):
+            if not isinstance(values, dict):
+                errors.append(f"{section}: expected an object")
                 continue
             for key, value in values.items():
-                if key in config.DEFAULTS[section]:
-                    cfg.update(section, key, value)
+                err = config.validate_setting(section, key, value)
+                if err:
+                    errors.append(err)
+        if errors:
+            raise HTTPException(422, {"errors": errors})
+        for section, values in body.items():
+            for key, value in values.items():
+                cfg.update(section, key, value)
         config.save(cfg)
         return cfg.to_dict()
 

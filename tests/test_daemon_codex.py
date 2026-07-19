@@ -39,6 +39,14 @@ class CodexPollingTests(unittest.TestCase):
             daemon._poll_codex_once()
         self.assertTrue(daemon.bus.events.empty())
 
+    def test_native_scan_does_not_reconcile_wsl_codex(self):
+        daemon = Daemon(Config({}))
+        wsl = codex_session("wsl:Ubuntu:codex:keep")
+        daemon.reducer.sessions[wsl.key] = wsl
+        with patch("huginn.daemon.codex.scan_with_status", return_value=([], True)):
+            daemon._poll_codex_once()
+        self.assertTrue(daemon.bus.events.empty())
+
 
 if __name__ == "__main__":
     unittest.main()

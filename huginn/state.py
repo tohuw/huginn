@@ -242,7 +242,12 @@ class Reducer:
             notification_type = data.get("notification_type")
             if notification_type == "permission_prompt":
                 target = SessionState.WAITING_PERMISSION
-            elif notification_type in {"idle_prompt", "elicitation_dialog"}:
+            elif notification_type == "idle_prompt":
+                # Claude emits this well after an ordinary completed turn. It
+                # means the terminal is passively idle, not that the agent
+                # asked the user a question.
+                target = SessionState.DONE
+            elif notification_type == "elicitation_dialog":
                 target = SessionState.WAITING_INPUT
             elif notification_type in {
                 "auth_success", "elicitation_complete", "elicitation_response",

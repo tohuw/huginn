@@ -15,10 +15,7 @@ concurrency:
 jobs:
   test:
     name: test (py${{ matrix.python-version }})
-    # macOS-only (issue #21, "include macOS coverage where feasible"):
-    # huginn is a macOS-specific tool -- LaunchAgent install, iTerm2/osascript
-    # focus, and the embedded ChatGPT.app codex binary path all assume it.
-    # A Linux runner wouldn't exercise anything meaningful here.
+    # macOS remains the primary regression target for LaunchAgent and iTerm focus.
     runs-on: macos-latest
     strategy:
       fail-fast: false
@@ -55,3 +52,42 @@ jobs:
           /tmp/huginn-smoke-venv/bin/python -c "import huginn; print('import ok')"
           /tmp/huginn-smoke-venv/bin/huginn --help
           /tmp/huginn-smoke-venv/bin/huginn status
+
+  windows:
+    name: windows (py${{ matrix.python-version }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Install Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Sync dependencies
+        run: uv sync --locked --python ${{ matrix.python-version }}
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Test
+        run: uv run pytest -q
+
+      - name: Build wheel
+        run: uv build
+
+      - name: Build Windows tray
+        run: dotnet build windows/Huginn.Tray/Huginn.Tray.csproj --configuration Release
+
+      - name: Package portable tray
+        if: matrix.python-version == '3.12'
+        shell: pwsh
+        run: .\windows\build.ps1

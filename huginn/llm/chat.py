@@ -73,8 +73,29 @@ def _control_actions(question: str) -> list[tuple[str, str, object, str]]:
     if view:
         name = "cards" if view.group(1).startswith("card") else "list"
         actions.append(("ui", "view", name, f"{name.title()} view enabled."))
+    sort = re.search(
+        r"\b(?:sort|order)\b.{0,30}\b(state|status|alpha(?:betical(?:ly)?)?|a[-– ]?z|newest|recent|oldest)\b", q)
+    if sort:
+        requested = sort.group(1)
+        if requested in {"state", "status"}:
+            name, reply = "state", "Sessions sorted by state."
+        elif requested.startswith("alpha") or requested.startswith("a"):
+            name, reply = "alpha", "Sessions sorted alphabetically."
+        elif requested in {"newest", "recent"}:
+            name, reply = "newest", "Newest sessions first."
+        else:
+            name, reply = "oldest", "Oldest sessions first."
+        actions.append(("ui", "sort", name, reply))
     if re.search(r"\b(?:hide|close|dismiss)\b.{0,25}\b(?:ask|chat)\s+(?:panel|sidebar)\b", q):
         actions.append(("ui", "chat_open", False, "Ask panel hidden."))
+    horizontal = re.search(
+        r"\b(?:span|dock|orient|put|set|switch)\b.{0,35}\b(?:ask|chat)\b.{0,35}\b(?:horizontal(?:ly)?|bottom|below)\b", q)
+    vertical = re.search(
+        r"\b(?:span|dock|orient|put|set|switch)\b.{0,35}\b(?:ask|chat)\b.{0,35}\b(?:vertical(?:ly)?|side|right)\b", q)
+    if horizontal:
+        actions.append(("ui", "chat_span", "horizontal", "Ask panel spans the bottom."))
+    elif vertical:
+        actions.append(("ui", "chat_span", "vertical", "Ask panel docked on the right."))
     return actions
 
 

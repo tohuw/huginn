@@ -10,6 +10,7 @@ import asyncio
 import contextlib
 import json
 import os
+import signal
 import shutil
 import subprocess
 from pathlib import Path
@@ -25,12 +26,24 @@ def claude_binary() -> str | None:
     global _claude_path
     if _claude_path is None:
         try:
+            if os.name == "nt":
+                _claude_path = shutil.which("claude") or shutil.which("claude.exe") or ""
+                return _claude_path or None
             out = subprocess.run(["zsh", "-lc", "whence -p claude"],
                                  capture_output=True, text=True, timeout=10).stdout.strip()
             _claude_path = out or shutil.which("claude") or ""
         except (subprocess.SubprocessError, OSError):
             _claude_path = shutil.which("claude") or ""
     return _claude_path or None
+
+
+def codex_binary() -> str | None:
+    """Resolve native codex.exe on Windows, retaining the macOS app fallback."""
+    if os.name == "nt":
+        return shutil.which("codex") or shutil.which("codex.exe")
+    if Path(CODEX_BIN).exists():
+        return CODEX_BIN
+    return shutil.which("codex")
 
 
 def _clean_env() -> dict[str, str]:
@@ -45,8 +58,20 @@ async def _reap(proc: asyncio.subprocess.Process) -> None:
     cancellation, or any other exit path (issue #16)."""
     if proc.returncode is not None:
         return
+    if os.name == "nt":
+        # /T terminates descendants too; provider CLIs commonly launch shell
+        # and tool children which otherwise survive cancellation or timeout.
+        with contextlib.suppress(Exception):
+            killer = await asyncio.create_subprocess_exec(
+                "taskkill", "/PID", str(proc.pid), "/T", "/F",
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+            )
+            await asyncio.wait_for(killer.wait(), timeout=5)
+    else:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGKILL)
     with contextlib.suppress(ProcessLookupError):
-        proc.kill()
+        proc.kill()  # fallback if tree/group termination raced
     with contextlib.suppress(Exception):
         await asyncio.wait_for(proc.wait(), timeout=5)
 
@@ -70,6 +95,13 @@ async def _drain_stderr(stream: asyncio.StreamReader | None) -> bytes:
     return b"".join(chunks)
 
 
+def _spawn_options() -> dict[str, object]:
+    """Put each provider invocation in a separately terminable process tree."""
+    if os.name == "nt":
+        return {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)}
+    return {"start_new_session": True}
+
+
 class ClaudeCLI:
     name = "claude"
 
@@ -88,7 +120,7 @@ class ClaudeCLI:
             cmd += ["--allowedTools", allowed_tools]
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, env=_clean_env(), cwd=cwd)
+            stderr=asyncio.subprocess.PIPE, env=_clean_env(), cwd=cwd, **_spawn_options())
         try:
             try:
                 out, err = await asyncio.wait_for(
@@ -116,7 +148,7 @@ class ClaudeCLI:
             cmd += ["--allowedTools", allowed_tools]
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, env=_clean_env(), cwd=cwd)
+            stderr=asyncio.subprocess.PIPE, env=_clean_env(), cwd=cwd, **_spawn_options())
         stderr_task = asyncio.create_task(_drain_stderr(proc.stderr))
         try:
             proc.stdin.write(prompt.encode())
@@ -148,10 +180,11 @@ class CodexCLI:
     name = "codex"
 
     def available(self) -> str | None:
-        if not Path(CODEX_BIN).exists():
-            return "embedded codex binary not found"
-        if not (Path.home() / ".codex" / "auth.json").exists():
-            return "~/.codex/auth.json missing (not logged in)"
+        if not codex_binary():
+            return "codex binary not found"
+        auth = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")) / "auth.json"
+        if not auth.exists():
+            return f"{auth} missing (not logged in)"
         return None
 
     async def run_text(self, prompt: str, *, model: str = "", timeout: float = 60,
@@ -165,13 +198,16 @@ class CodexCLI:
     async def stream(self, prompt: str, *, model: str = "",
                      cwd: str | None = None, allowed_tools: str | None = None
                      ) -> AsyncIterator[str]:
-        cmd = [CODEX_BIN, "exec", "--json", "--skip-git-repo-check"]
+        binary = codex_binary()
+        if not binary:
+            raise RuntimeError("codex binary not found")
+        cmd = [binary, "exec", "--json", "--skip-git-repo-check"]
         if model:
             cmd += ["--model", model]
         cmd.append(prompt)
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, cwd=cwd)
+            stderr=asyncio.subprocess.PIPE, cwd=cwd, **_spawn_options())
         stderr_task = asyncio.create_task(_drain_stderr(proc.stderr))
         emitted_message = False
         try:

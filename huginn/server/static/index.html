@@ -12,6 +12,16 @@
   <div class="brand"><img src="/static/bird.svg" alt="">Huginn</div>
   <div class="attention" id="attention-pill" hidden><span id="attention-n">0</span> need you</div>
   <div class="spacer"></div>
+  <select id="view" class="ctl" title="Session view">
+    <option value="cards">cards</option>
+    <option value="list">list</option>
+  </select>
+  <select id="sort" class="ctl" title="Sort sessions" aria-label="Sort sessions">
+    <option value="state">by state</option>
+    <option value="alpha">by A–Z</option>
+    <option value="newest">by newest</option>
+    <option value="oldest">by oldest</option>
+  </select>
   <label class="ctl" title="LLM blurbs on state change">
     <input type="checkbox" id="llm-toggle"> blurbs
   </label>
@@ -19,19 +29,24 @@
     <option value="claude">claude</option>
     <option value="codex">codex</option>
   </select>
-  <select id="view" class="ctl" title="Session view">
-    <option value="cards">cards</option>
-    <option value="list">list</option>
-  </select>
   <button id="chat-toggle" class="ctl">ask ▾</button>
 </header>
 
 <main>
   <div id="grid"></div>
-  <div id="empty" hidden>no sessions</div>
+  <div id="empty" hidden>
+    <span id="roster-throbber" hidden></span>
+    <span id="empty-label">no sessions</span>
+  </div>
 </main>
 
 <aside id="chat">
+  <div id="chat-resize" role="separator" aria-label="Resize Ask panel"></div>
+  <div id="chat-bar">
+    <span>ask</span>
+    <button id="chat-span" type="button" title="Span Ask across the bottom"
+      aria-label="Span Ask across the bottom"></button>
+  </div>
   <div id="chat-log"></div>
   <form id="chat-form">
     <div class="chat-input-wrap">

@@ -31,6 +31,7 @@ def _alive(pid: int) -> bool:
         return False
 
 
+@unittest.skipIf(os.name == "nt", "POSIX fixture scripts; Windows tree-kill has adapter tests")
 class ClaudeRunTextLifecycleTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -70,6 +71,7 @@ class ClaudeRunTextLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(_alive(pid))
 
 
+@unittest.skipIf(os.name == "nt", "POSIX fixture scripts; Windows tree-kill has adapter tests")
 class ClaudeStreamLifecycleTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -119,6 +121,7 @@ class ClaudeStreamLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(_alive(pid))
 
 
+@unittest.skipIf(os.name == "nt", "POSIX fixture scripts; Windows tree-kill has adapter tests")
 class CodexStreamLifecycleTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

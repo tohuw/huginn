@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 import urllib.request
 from pathlib import Path
@@ -68,15 +69,15 @@ def run_doctor() -> int:
     ok = True
 
     print("binaries:")
-    from .llm.providers import CODEX_BIN, claude_binary
+    from .llm.providers import claude_binary, codex_binary
     cb = claude_binary()
     ok &= _check("claude CLI", bool(cb), cb or "not found via `whence -p claude`")
-    codex_ok = Path(CODEX_BIN).exists()
-    _check("codex (embedded in ChatGPT.app)", codex_ok,
-           CODEX_BIN if codex_ok else "ChatGPT.app not installed — codex source disabled")
+    codex_path = codex_binary()
+    codex_ok = bool(codex_path)
+    _check("codex CLI", codex_ok, codex_path or "codex executable not found")
     if codex_ok:
-        _check("codex auth", (Path.home() / ".codex" / "auth.json").exists(),
-               "~/.codex/auth.json")
+        auth = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")) / "auth.json"
+        _check("codex auth", auth.exists(), str(auth))
 
     print("data sources:")
     from .sources import claude_code, codex as codex_src

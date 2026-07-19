@@ -12,6 +12,7 @@ dependencies = [
 
 [project.scripts]
 huginn = "huginn.cli:main"
+huginn-hook = "huginn.hooks.cli:main"
 
 [build-system]
 requires = ["hatchling"]

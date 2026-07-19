@@ -5,23 +5,24 @@ can honestly report is app-running + recent disk activity.
 """
 from __future__ import annotations
 
-import subprocess
+import os
+import sys
 import time
 from pathlib import Path
 
 from ..model import Session, SessionState
+from ..platform import platform as _platform
 
-APP_SUPPORT = Path.home() / "Library" / "Application Support" / "Claude"
+APP_SUPPORT = (Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")) / "Claude"
+               if sys.platform == "win32"
+               else Path.home() / "Library" / "Application Support" / "Claude")
 ACTIVE_S = 30
 
 _ACTIVITY_GLOBS = ["*.log", "*-wal", "IndexedDB/*/*.log", "Local Storage/leveldb/*.log"]
 
 
 def _app_running() -> bool:
-    try:
-        return subprocess.run(["pgrep", "-xq", "Claude"], timeout=5).returncode == 0
-    except (subprocess.SubprocessError, OSError):
-        return False
+    return bool(_platform.find_processes("Claude"))
 
 
 def _latest_activity() -> float:
@@ -45,7 +46,7 @@ def scan() -> Session | None:
         source="claude-desktop",
         session_id="claude-desktop",
         cwd="",
-        name="Claude.app",
+        name="Claude" if sys.platform == "win32" else "Claude.app",
         state=SessionState.WORKING if active else SessionState.IDLE,
         state_since=activity or time.time(),
         state_origin="poll",

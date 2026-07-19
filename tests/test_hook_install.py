@@ -1,10 +1,26 @@
 """Hook installation reconciliation tests."""
+import os
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
-from huginn.hooks.install import CODEX_EVENTS, _remove_stale_huginn_events
+from huginn.hooks.install import CODEX_EVENTS, _hook_command, _remove_stale_huginn_events
 
 
 class HookInstallTests(unittest.TestCase):
+    def test_command_quotes_console_script_path(self):
+        with patch("huginn.hooks.install.HOOK_BIN", Path("/tmp/Huginn Tools/huginn-hook")):
+            command = _hook_command("claude", "Stop")
+        self.assertIn("Huginn Tools", command)
+        self.assertTrue(command.endswith("claude Stop"))
+
+    def test_windows_command_quotes_console_executable(self):
+        with (patch("huginn.hooks.install.HOOK_BIN", Path(r"C:\Program Files\Huginn\huginn-hook.exe")),
+              patch.object(os, "name", "nt")):
+            command = _hook_command("codex", "SessionStart")
+        self.assertTrue(command.startswith('"C:\\Program Files'))
+        self.assertTrue(command.endswith("codex SessionStart"))
+
     def test_codex_registers_only_observed_supported_events(self):
         self.assertEqual(CODEX_EVENTS, ["SessionStart", "UserPromptSubmit", "Stop"])
 

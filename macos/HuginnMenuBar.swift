@@ -195,6 +195,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let quit = NSMenuItem(title: "Quit Huginn", action: #selector(quitApp), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
+        let restart = NSMenuItem(
+            title: "Restart Huginn", action: #selector(restartDaemon), keyEquivalent: "q")
+        restart.target = self
+        restart.isAlternate = true
+        restart.keyEquivalentModifierMask = [.command, .option]
+        menu.addItem(restart)
     }
 
     @objc private func refreshNow() { refreshSessions() }

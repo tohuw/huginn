@@ -55,6 +55,20 @@ class BlurbTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(s.blurb)
 
+    async def test_disabling_cancels_pending_blurbs(self):
+        daemon = Daemon(Config({"llm": {"blurb_debounce_s": 60}}))
+        s = session(SessionState.DONE)
+        daemon.reducer.sessions[s.key] = s
+        daemon.blurbs.request(s)
+        task = daemon.blurbs._pending[s.key]
+
+        daemon.cfg.update("llm", "enabled", False)
+        daemon.blurbs.set_enabled(False)
+        await asyncio.sleep(0)
+
+        self.assertTrue(task.cancelled())
+        self.assertEqual(daemon.blurbs._pending, {})
+
 
 if __name__ == "__main__":
     unittest.main()

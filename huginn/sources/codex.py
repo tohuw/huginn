@@ -116,7 +116,18 @@ def scan_with_status(cfg: config.Config | None = None) -> tuple[list[Session], b
             # register as threads too — don't monitor ourselves
             if (t.get("cwd") or "").startswith(huginn_dir):
                 continue
-            sessions.append(_thread_to_session(t, subagents=_subagent_counts(conn, t["id"])))
+            session = _thread_to_session(t, subagents=_subagent_counts(conn, t["id"]))
+            # The dashboard is a live roster, not a second thread-history UI.
+            # Codex keeps completed top-level threads unarchived, including
+            # short `codex exec` probes launched from another agent's scratchpad.
+            if session.state == SessionState.IDLE:
+                continue
+            if session.state == SessionState.DONE:
+                ttl = cfg.get("ui", "exec_done_ttl_s") if session.entrypoint == "exec" \
+                    else cfg.get("ui", "done_ttl_s")
+                if time.time() - session.last_activity >= ttl:
+                    continue
+            sessions.append(session)
     except sqlite3.Error:
         return [], False
     finally:

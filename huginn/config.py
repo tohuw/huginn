@@ -37,7 +37,13 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         # for tuning the pattern list above against real traffic.
         "debug_log": False,
     },
-    "ui": {"show_ended": True, "ended_ttl_s": 300},
+    "ui": {
+        "show_ended": True,
+        "ended_ttl_s": 300,
+        "idle_ttl_s": 300,
+        "done_ttl_s": 300,
+        "exec_done_ttl_s": 30,
+    },
     "claude": {"sweep_s": 10.0, "pending_tool_timeout_s": 20.0},
     "codex": {"poll_s": 5.0, "active_window_h": 24, "include_subagents": False},
     "claude_desktop": {"enabled": True, "poll_s": 15.0},
@@ -48,7 +54,8 @@ DEFAULTS: dict[str, dict[str, Any]] = {
 # timeout doesn't fail loudly, it just wedges a background task forever.
 _POSITIVE_NUMERIC_KEYS = {
     ("llm", "blurb_debounce_s"), ("llm", "blurb_max_per_min"), ("llm", "blurb_timeout_s"),
-    ("ui", "ended_ttl_s"), ("claude", "sweep_s"), ("claude", "pending_tool_timeout_s"),
+    ("ui", "ended_ttl_s"), ("ui", "idle_ttl_s"), ("ui", "done_ttl_s"),
+    ("ui", "exec_done_ttl_s"), ("claude", "sweep_s"), ("claude", "pending_tool_timeout_s"),
     ("codex", "poll_s"), ("codex", "active_window_h"), ("claude_desktop", "poll_s"),
 }
 _ENUM_KEYS: dict[tuple[str, str], set[str]] = {

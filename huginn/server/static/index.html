@@ -5,11 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Huginn</title>
 <link rel="stylesheet" href="/static/style.css">
-<link id="favicon" rel="icon" href="data:,">
+<link id="favicon" rel="icon" type="image/svg+xml" href="/static/bird.svg">
 </head>
 <body>
 <header>
-  <div class="brand">⛬ huginn</div>
+  <div class="brand"><img src="/static/bird.svg" alt="">huginn</div>
   <div class="attention" id="attention-pill" hidden><span id="attention-n">0</span> need you</div>
   <div class="spacer"></div>
   <label class="ctl" title="LLM blurbs on state change">
@@ -30,8 +30,11 @@
 <aside id="chat" hidden>
   <div id="chat-log"></div>
   <form id="chat-form">
-    <textarea id="chat-input" rows="2"
-      placeholder="ask about your sessions… (@name to focus one)"></textarea>
+    <div class="chat-input-wrap">
+      <textarea id="chat-input" rows="2" autocomplete="off"
+        placeholder="ask about your sessions… (@name to focus one)"></textarea>
+      <div id="mention-menu" role="listbox" hidden></div>
+    </div>
     <button type="submit">→</button>
   </form>
 </aside>

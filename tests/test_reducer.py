@@ -143,6 +143,22 @@ class ReducerTests(unittest.TestCase):
         self.assertNotIn(s.key, self.r.sessions)
         self.assertEqual(self.r.removed, [s.key])
 
+    def test_show_ended_false_removes_ended_sessions_immediately(self):
+        # issue #19: ui.show_ended previously had no effect at all.
+        r = Reducer(Config({"ui": {"show_ended": False}}))
+        s = claude_session(state=SessionState.ENDED, state_origin="timeout", state_since=NOW)
+        r.sessions[s.key] = s
+        r.apply(Event("tick", None, NOW, "test", {"pending_ages": {}}))
+        self.assertNotIn(s.key, r.sessions)
+        self.assertEqual(r.removed, [s.key])
+
+    def test_show_ended_true_still_honors_ended_ttl_s(self):
+        r = Reducer(Config({"ui": {"show_ended": True, "ended_ttl_s": 300}}))
+        s = claude_session(state=SessionState.ENDED, state_origin="timeout", state_since=NOW)
+        r.sessions[s.key] = s
+        r.apply(Event("tick", None, NOW, "test", {"pending_ages": {}}))
+        self.assertIn(s.key, r.sessions, "a freshly-ended session shouldn't vanish before its TTL")
+
     def test_snapshot_restore_round_trip(self):
         live = claude_session(state=SessionState.WAITING_INPUT, blurb="doing a thing")
         ended = claude_session(key="claude:200", state=SessionState.ENDED)

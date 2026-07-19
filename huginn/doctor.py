@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import time
 import urllib.request
 from pathlib import Path
 
@@ -58,6 +59,12 @@ def run_doctor() -> int:
             conn.close()
     else:
         _warn("codex state db absent", str(codex_src.STATE_DB))
+    heartbeat = codex_src.activity_heartbeat()
+    if heartbeat is None:
+        _warn("codex event log heartbeat unavailable", str(codex_src.LOGS_WAL))
+    else:
+        age = int(time.time() - heartbeat)
+        _check("codex event log active", age < 3600, f"last write {age}s ago")
 
     print("hooks:")
     from .hooks.install import CLAUDE_SETTINGS, CODEX_HOOKS, HOOK_BIN, _has_huginn

@@ -47,6 +47,14 @@ class ValidateSettingTests(unittest.TestCase):
         self.assertIsNotNone(validate_setting("patterns", "permission", "not-a-list"))
         self.assertIsNotNone(validate_setting("patterns", "permission", ["a", 1]))
 
+    def test_patterns_waiting_removed(self):
+        # issue #19: the string-match fallback is a binary permission/
+        # not-permission classification -- a separate "waiting" pattern
+        # list could never affect behavior, so it was removed rather than
+        # left as a config knob that does nothing.
+        self.assertNotIn("waiting", config.DEFAULTS["patterns"])
+        self.assertIsNotNone(validate_setting("patterns", "waiting", ["x"]))
+
     def test_plain_string_type_enforced(self):
         self.assertIsNone(validate_setting("llm", "provider", "claude"))
         self.assertIsNotNone(validate_setting("llm", "chat_model", 5))
@@ -67,10 +75,10 @@ class TomlRoundTripTests(unittest.TestCase):
 
     def _round_trip(self, value: str) -> str:
         cfg = Config({})
-        cfg.update("patterns", "waiting", [value])
+        cfg.update("patterns", "permission", [value])
         config.save(cfg)
         reloaded = config.load()
-        return reloaded.section("patterns")["waiting"][0]
+        return reloaded.section("patterns")["permission"][0]
 
     def test_quotes_and_backslashes(self):
         self.assertEqual(self._round_trip('say "hi" \\ bye'), 'say "hi" \\ bye')
@@ -86,6 +94,17 @@ class TomlRoundTripTests(unittest.TestCase):
 
     def test_empty_string(self):
         self.assertEqual(self._round_trip(""), "")
+
+    def test_save_drops_keys_no_longer_in_defaults(self):
+        # issue #19: a config.toml written before "waiting" was removed
+        # from DEFAULTS carried it forward on every save indefinitely.
+        config.CONFIG_PATH.write_text('[patterns]\npermission = ["x"]\nwaiting = ["y"]\n')
+        cfg = config.load()
+        self.assertIn("waiting", cfg.section("patterns"))   # still present pre-save
+        config.save(cfg)
+        reloaded = config.load()
+        self.assertNotIn("waiting", reloaded.section("patterns"))
+        self.assertEqual(reloaded.section("patterns")["permission"], ["x"])
 
 
 if __name__ == "__main__":

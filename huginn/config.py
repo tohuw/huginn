@@ -84,8 +84,15 @@ def _toml_value(v: Any) -> str:
     raise TypeError(f"unsupported config value type: {type(v)}")
 
 
+def secure_dir(path: Path) -> None:
+    """mkdir + chmod 0700 explicitly -- mkdir's own mode= is masked by
+    umask, which isn't good enough for directories holding prompts/tokens."""
+    path.mkdir(parents=True, exist_ok=True)
+    path.chmod(0o700)
+
+
 def save(cfg: Config) -> None:
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    secure_dir(CONFIG_DIR)
     lines: list[str] = []
     for section in DEFAULTS:
         lines.append(f"[{section}]")
@@ -94,12 +101,13 @@ def save(cfg: Config) -> None:
         lines.append("")
     tmp = CONFIG_PATH.with_suffix(".toml.tmp")
     tmp.write_text("\n".join(lines))
+    tmp.chmod(0o600)
     os.replace(tmp, CONFIG_PATH)
 
 
 def ensure_state_dirs() -> None:
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    secure_dir(STATE_DIR)
+    secure_dir(CACHE_DIR)
 
 
 TOKEN_PATH = STATE_DIR / "token"

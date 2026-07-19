@@ -16,6 +16,7 @@ class ValidateSettingTests(unittest.TestCase):
 
     def test_bool_type_enforced(self):
         self.assertIsNone(validate_setting("ui", "show_ended", False))
+        self.assertIsNone(validate_setting("ui", "show_desktop", False))
         self.assertIsNotNone(validate_setting("ui", "show_ended", "yes"))
         self.assertIsNotNone(validate_setting("ui", "show_ended", 1))   # bool, not int-as-bool
 

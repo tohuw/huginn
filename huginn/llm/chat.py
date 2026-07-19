@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from .. import config
 from .context import digest_for_session
-from .providers import get_provider
+from .providers import compatible_model, get_provider
 
 if TYPE_CHECKING:
     from ..daemon import Daemon
@@ -88,6 +88,12 @@ def _control_actions(question: str) -> list[tuple[str, str, object, str]]:
         actions.append(("ui", "sort", name, reply))
     if re.search(r"\b(?:hide|close|dismiss)\b.{0,25}\b(?:ask|chat)\s+(?:panel|sidebar)\b", q):
         actions.append(("ui", "chat_open", False, "Ask panel hidden."))
+    if re.search(r"\b(?:hide|disable)\b.{0,30}\b(?:desktop presence|desktop apps?|app tiles?)\b", q):
+        actions.append(("ui", "show_desktop", False, "Desktop presence hidden."))
+    elif re.search(r"\b(?:show|enable)\b.{0,30}\b(?:desktop presence|desktop apps?|app tiles?)\b", q):
+        actions.append(("ui", "show_desktop", True, "Desktop presence shown."))
+    elif re.search(r"\btoggle\b.{0,30}\b(?:desktop presence|desktop apps?|app tiles?)\b", q):
+        actions.append(("ui", "show_desktop", "toggle", "Desktop presence toggled."))
     horizontal = re.search(
         r"\b(?:span|dock|orient|put|set|switch)\b.{0,35}\b(?:ask|chat)\b.{0,35}\b(?:horizontal(?:ly)?|bottom|below)\b", q)
     vertical = re.search(
@@ -97,6 +103,30 @@ def _control_actions(question: str) -> list[tuple[str, str, object, str]]:
     elif vertical:
         actions.append(("ui", "chat_span", "vertical", "Ask panel docked on the right."))
     return actions
+
+
+def _apply_title_control(daemon: "Daemon", question: str) -> str | None:
+    clear = re.search(r"\bclear\s+(?:the\s+)?title\s+(?:for\s+)?@([\w-]+)", question, re.I)
+    setting = re.search(
+        r"\b(?:set\s+)?(?:the\s+)?title\s+(?:for\s+)?@([\w-]+)(?:\s+to|\s*[:=])?\s+(.+)$",
+        question, re.I)
+    match = clear or setting
+    if not match:
+        return None
+    needle = match.group(1).lower()
+    matches = [s for s in daemon.reducer.sessions.values()
+               if s.name.lower() == needle or s.name.lower().startswith(needle)]
+    if len(matches) != 1:
+        return f"Could not uniquely match @{match.group(1)}."
+    s = matches[0]
+    title = "" if clear else setting.group(2).strip().strip('"')[:60]
+    s.title = title or None
+    s.title_origin = "manual" if title else None
+    daemon.mark_dirty()
+    daemon.bus.broadcast("session.upsert", s.to_dict())
+    if not title:
+        daemon.blurbs.request(s)
+    return f"Title {'set to ' + title if title else 'cleared'} for @{s.name}."
 
 
 async def start_chat(daemon: "Daemon", body: dict) -> dict:
@@ -111,6 +141,12 @@ async def start_chat(daemon: "Daemon", body: dict) -> dict:
         return {"ok": False, "error": "empty question"}
     if daemon.active_chat and not daemon.active_chat.done():
         return {"ok": False, "error": "a chat is already running"}
+    title_reply = _apply_title_control(daemon, question)
+    if title_reply:
+        request_id = uuid.uuid4().hex[:12]
+        daemon.active_chat = asyncio.create_task(
+            _confirm_controls(daemon, [title_reply], request_id))
+        return {"ok": True, "request_id": request_id}
     actions = _control_actions(question)
     if actions:
         request_id = uuid.uuid4().hex[:12]
@@ -119,12 +155,14 @@ async def start_chat(daemon: "Daemon", body: dict) -> dict:
             _confirm_controls(daemon, replies, request_id))
         return {"ok": True, "request_id": request_id,
                 "settings": daemon.cfg.to_dict()}
-    provider = get_provider(body.get("provider") or daemon.cfg.get("llm", "provider"))
+    provider_name = body.get("provider") or daemon.cfg.get("llm", "provider")
+    provider = get_provider(provider_name)
     unavailable = provider.available()
     if unavailable:
         return {"ok": False, "error": unavailable}
     request_id = uuid.uuid4().hex[:12]
-    daemon.active_chat = asyncio.create_task(_run_chat(daemon, provider, question, request_id))
+    daemon.active_chat = asyncio.create_task(
+        _run_chat(daemon, provider, question, request_id, provider_name))
     return {"ok": True, "request_id": request_id}
 
 
@@ -134,7 +172,8 @@ def _apply_controls(daemon: "Daemon", actions) -> list[str]:
     for section, key, value, reply in actions:
         if value == "toggle":
             value = not daemon.cfg.get(section, key)
-            reply = f"Blurbs {'enabled' if value else 'disabled'}."
+            reply = (f"Blurbs {'enabled' if value else 'disabled'}." if key == "enabled"
+                     else f"Desktop presence {'shown' if value else 'hidden'}.")
         daemon.cfg.update(section, key, value)
         replies.append(reply)
     config.save(daemon.cfg)
@@ -153,7 +192,8 @@ async def _confirm_controls(daemon: "Daemon", replies: list[str], request_id: st
     daemon.bus.broadcast("chat.done", {"request_id": request_id})
 
 
-async def _run_chat(daemon: "Daemon", provider, question: str, request_id: str) -> None:
+async def _run_chat(daemon: "Daemon", provider, question: str, request_id: str,
+                    provider_name: str | None = None) -> None:
     bus = daemon.bus
 
     def broadcast(event: str, data: dict) -> None:
@@ -187,7 +227,8 @@ async def _run_chat(daemon: "Daemon", provider, question: str, request_id: str) 
             return
 
         prompt = SYSTEM.format(roster="\n".join(roster_lines), question=question)
-        model = daemon.cfg.get("llm", "chat_model")
+        provider_name = provider_name or getattr(provider, "name", daemon.cfg.get("llm", "provider"))
+        model = compatible_model(provider_name, daemon.cfg.get("llm", "chat_model"))
         got_any = False
         async for chunk in provider.stream(
                 prompt, model=model, cwd=str(chat_dir), allowed_tools="Read,Grep"):

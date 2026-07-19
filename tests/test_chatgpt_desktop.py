@@ -16,7 +16,7 @@ class ChatGPTDesktopTests(unittest.TestCase):
         with patch("huginn.sources.chatgpt_desktop._app_pids", return_value=[]):
             self.assertIsNone(chatgpt_desktop.scan())
 
-    def test_recent_local_activity_marks_app_working(self):
+    def test_recent_local_activity_marks_app_active(self):
         with tempfile.TemporaryDirectory() as tmp:
             support = Path(tmp)
             log = support / "desktop.log"
@@ -25,7 +25,7 @@ class ChatGPTDesktopTests(unittest.TestCase):
                  patch("huginn.sources.chatgpt_desktop._support_dirs", return_value=[support]):
                 session = chatgpt_desktop.scan()
         self.assertIsNotNone(session)
-        self.assertEqual(session.state, SessionState.WORKING)
+        self.assertEqual(session.state, SessionState.ACTIVE)
         self.assertEqual(session.pid, 42)
         self.assertEqual(session.source, "chatgpt-desktop")
 

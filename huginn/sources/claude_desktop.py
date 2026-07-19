@@ -18,7 +18,12 @@ APP_SUPPORT = (Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming
                else Path.home() / "Library" / "Application Support" / "Claude")
 ACTIVE_S = 30
 
-_ACTIVITY_GLOBS = ["*.log", "*-wal", "IndexedDB/*/*.log", "Local Storage/leveldb/*.log"]
+# Chromium touches Local Storage and housekeeping WALs (notably DIPS-wal)
+# every few seconds while Claude is merely open.  They cannot distinguish a
+# conversation from an idle renderer and made the tile effectively permanent
+# WORKING.  IndexedDB is Claude's conversation-side store; root logs are kept
+# for desktop builds that emit explicit application activity there.
+_ACTIVITY_GLOBS = ["*.log", "IndexedDB/*/*.log"]
 
 
 def _app_running() -> bool:
@@ -47,7 +52,7 @@ def scan() -> Session | None:
         session_id="claude-desktop",
         cwd="",
         name="Claude" if sys.platform == "win32" else "Claude.app",
-        state=SessionState.WORKING if active else SessionState.IDLE,
+        state=SessionState.ACTIVE if active else SessionState.IDLE,
         state_since=activity or time.time(),
         state_origin="poll",
         last_activity=activity or time.time(),

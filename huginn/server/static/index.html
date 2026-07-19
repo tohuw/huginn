@@ -25,6 +25,9 @@
   <label class="ctl" title="LLM blurbs on state change">
     <input type="checkbox" id="llm-toggle"> blurbs
   </label>
+  <label class="ctl" title="Desktop presence tiles">
+    <input type="checkbox" id="desktop-toggle"> apps
+  </label>
   <select id="provider" class="ctl" title="Q&A provider">
     <option value="claude">claude</option>
     <option value="codex">codex</option>
@@ -34,6 +37,10 @@
 
 <main>
   <div id="grid"></div>
+  <section id="app-tiles" hidden>
+    <div class="section-label">desktop presence</div>
+    <div id="app-grid"></div>
+  </section>
   <div id="empty" hidden>
     <span id="roster-throbber" hidden></span>
     <span id="empty-label">no sessions</span>
@@ -65,6 +72,8 @@
       <span class="badge"></span><span class="dur"></span>
     </div>
     <div class="row2"><span class="cwd"></span><span class="branch"></span><span class="model"></span></div>
+    <div class="card-title-row"><span class="card-title"></span><button class="edit-title"
+      title="Edit card title" aria-label="Edit card title">✎</button></div>
     <div class="blurb"></div>
     <div class="subagents"></div>
     <pre class="peek" hidden></pre>

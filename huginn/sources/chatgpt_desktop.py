@@ -61,7 +61,7 @@ def scan() -> Session | None:
         key="chatgpt-desktop", source="chatgpt-desktop",
         session_id="chatgpt-desktop", cwd="", name="ChatGPT",
         pid=pids[0], entrypoint="desktop",
-        state=SessionState.WORKING if active else SessionState.IDLE,
+        state=SessionState.ACTIVE if active else SessionState.IDLE,
         state_since=activity or now, state_origin="poll",
         last_activity=activity or now,
     )

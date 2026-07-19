@@ -99,28 +99,40 @@ huginn inspect @session-name
 huginn focus @session-name
 ```
 
-Dashboard: cards sorted needs-you-first (permission → input → error → done →
-working → idle), with a persistent compact list view available from the top
-bar. Tab title + favicon carry the attention count. Per session:
+Dashboard: session cards sort needs-you-first (permission → input → error →
+done → working → idle); ambient desktop-app tiles form a separate group below
+them. A persistent compact list view is available from the top bar. Tab title +
+favicon carry only actionable session attention, never app activity. Per session:
 **jump** focuses the exact iTerm2 tab on macOS (hotkey windows included; VS Code
 sessions open the workspace; Windows Terminal currently focuses the owning window),
 **peek** shows a distilled transcript tail,
 **ask** feeds the chat panel — a Q&A agent (Claude or Codex, switchable
 top-right) that reads current per-session digests and answers questions about
 what's going on. Ask stays in that monitoring scope; it can also toggle blurbs,
-switch its provider, change cards/list view, and hide its own panel. Dashboard
-settings persist across reloads and synchronize across open tabs.
+switch its provider, change cards/list view, title a card, and hide its own
+panel. The pencil edits a short ephemeral card title; absent a manual title,
+the configured LLM may guess one from current session evidence. Titles belong
+to that card only and disappear when it does. Dashboard settings persist across
+reloads and synchronize across open tabs.
 
-## States
+## Session states
 
 | state | meaning | derived from |
 |---|---|---|
 | `working` | agent is running | status file `busy`/`shell`, transcript flow, hooks |
-| `waiting_permission` | blocked on a permission prompt | Notification hook; fallback: pending tool_use >20s |
+| `waiting_permission` | blocked on a permission prompt | Claude Notification; Codex approval event when emitted; fallback: pending tool use >20s |
 | `waiting_input` | explicitly asked you something | elicitation/Stop hooks + transcript (AskUserQuestion) |
 | `done` | turn finished cleanly | Stop hook, busy→idle after turn end |
 | `error` | API error or died mid-work | transcript error lines, dead pid while working |
 | `idle` / `ended` | nothing happening / process gone | status file, pid liveness |
+
+Desktop tiles are a different observation class. `active` means the native app
+is running and its Electron renderer recently wrote local state; `idle` means
+the app is present without that recent signal. Renderer activity can come from
+scrolling or other user interaction as well as generation, so app tiles are
+visually separated, sorted outside the urgency queue, and never raise attention.
+The `apps` control—or Ask commands such as “hide desktop presence”—can remove
+that section entirely when app-level context is not useful.
 
 Rule-based states are always on and cost nothing. One-line LLM **blurbs** are
 generated only when a session hits a decision point (debounced and rate-capped)
@@ -136,13 +148,17 @@ probes therefore leave the live view without hiding attention states.
 ## How it watches
 
 - `~/.claude/sessions/<PID>.json` — live per-process status (fsevents watch +
-  pid liveness sweep; PID-reuse guarded via procStart, which is UTC vs ps's
-  local time — handled). Direct child shells are counted separately; a
+  pid liveness sweep; PID reuse guarded by comparing Claude's UTC `procStart`
+  to the OS process creation epoch, obtained through native process APIs where
+  available). Direct child shells are counted separately; a
   completed assistant turn remains done even when background shells survive.
 - `~/.claude/projects/*/<sessionId>.jsonl` — transcripts, tailed seek-from-end
-  (64KB attach window, incremental offsets; never read front-to-back).
-- `~/.codex/state_5.sqlite` — thread index, polled read-only (copy-to-cache
-  fallback when WAL/shm access is blocked); rollout JSONLs tailed for
+  (64KB normal attach window, bounded widening across oversized JSONL records,
+  incremental offsets; never read front-to-back).
+- `~/.codex/state_5.sqlite` — thread index, polled read-only. Successful reads
+  refresh a transactionally consistent SQLite online-backup snapshot; a recent
+  snapshot is used if WAL/shm access is temporarily blocked, and an unavailable
+  or expired snapshot fails closed rather than returning a torn roster. Rollout JSONLs tailed for
   `task_started`/`task_complete` turn boundaries.
 - ChatGPT Desktop — local Codex threads share `CODEX_HOME` and therefore use
   the same first-class scanner above. A separate app tile reports native
@@ -161,19 +177,29 @@ probes therefore leave the live view without hiding attention states.
   poll/rollout source via the same origin-priority rules as Claude's hooks —
   not a replacement for it, and a safe no-op for a thread the poller hasn't
   discovered yet. `GET /api/hook-stats` (issue #2) shows real fire counts.
+  Huginn defensively recognizes the command/file/permission approval families
+  exposed by the installed Codex binary, but no approval event has appeared in
+  the captured local rollout fixtures. Therefore Codex still has a documented
+  worst-case 20-second pending-tool fallback when those events are absent.
 
 ## Gotchas
 
 - Hooks fire only in sessions started *after* `install-hooks` (settings load at
   session start). Watcher-derived state covers older sessions at ~1–5s latency.
-- Headless `claude -p` runs (including huginn's own blurb/chat calls) register
-  session files with entrypoint `sdk-cli` — filtered out.
+- Headless `claude -p` runs (including Huginn's own blurb/chat calls) register
+  session files with entrypoint `sdk-cli` — filtered out. Provider children also
+  carry Huginn's owned `HUGINN_INTERNAL=1` marker and are tracked by PID, so the
+  recursion guard does not depend solely on Claude's entrypoint convention.
 - Claude Code notifications use the structured `notification_type` field;
   `idle_prompt` settles to done rather than raising attention, while explicit
   elicitation remains waiting-input. Configurable message patterns remain as
   a fallback for older payloads.
 - "ChatGPT.app" *is* the Codex desktop app (`com.openai.codex`); the embedded
   CLI at `Contents/Resources/codex` powers the codex chat provider.
+- Huginn cannot track conversations open in `claude.ai` or `chatgpt.com`
+  browser tabs. Without an explicit browser integration, that would require
+  fragile screen scraping tied to frequently changing web interfaces. Huginn
+  deliberately avoids that maintenance and privacy boundary.
 
 ## Security
 
@@ -187,7 +213,9 @@ this does and doesn't protect against:
   compromised dependency, a stray webpage your browser has open — making
   requests to the daemon's API without your consent. The token bootstraps
   into the browser via a URL fragment (`#t=...`, never sent to the server or
-  logged) traded for an HttpOnly, `SameSite=Strict` session cookie; `GET /`
+  logged) traded for an HttpOnly, `SameSite=Strict` session cookie. Fragments
+  can remain in browser history/session restoration until Huginn strips them,
+  so bootstrap URLs should not be pasted into chats, issues, or recordings. `GET /`
   itself carries no secret, so it's safe for any local process to fetch. The
   refresh credential can only mint a new session cookie; it is never accepted
   by other API routes. `Origin`/`Host` header checks reject cross-origin and
@@ -199,9 +227,11 @@ this does and doesn't protect against:
   your threat model, huginn isn't the layer defending against it; your OS
   user/process sandboxing is.
 
-If the daemon restarts, the API token rotates. An open, previously authorized
-tab silently refreshes its HttpOnly session cookie; `huginn open` remains the
-bootstrap path for a new browser profile or a cleared-cookie session.
+If the daemon restarts, the API token rotates, but this is continuity rather
+than revocation: the separate on-disk refresh credential intentionally persists
+across restarts. An open, previously authorized tab silently refreshes its
+HttpOnly session cookie; `huginn open` remains the bootstrap path for a new
+browser profile or a cleared-cookie session.
 
 ## Config
 

@@ -13,6 +13,7 @@ from typing import Any, Iterator
 
 ATTACH_WINDOW = 64 * 1024
 MAX_READ = 256 * 1024
+MAX_ATTACH_LINE = 4 * 1024 * 1024
 
 _TASK_NOTIF_TOOL_ID_RE = re.compile(r"<tool-use-id>(.*?)</tool-use-id>")
 _TASK_NOTIF_STATUS_RE = re.compile(r"<status>(.*?)</status>")
@@ -32,6 +33,21 @@ class Tail:
             return []
         start = max(0, size - ATTACH_WINDOW)
         with self.path.open("rb") as f:
+            # A tool result or embedded payload can make one JSONL record much
+            # larger than the normal attach window. Widen backwards, bounded,
+            # until the record boundary is found instead of silently dropping
+            # every entry in the window.
+            while start > 0:
+                earlier = max(0, start - ATTACH_WINDOW)
+                f.seek(earlier)
+                prefix = f.read(start - earlier)
+                boundary = prefix.rfind(b"\n")
+                if boundary >= 0:
+                    start = earlier + boundary + 1
+                    break
+                start = earlier
+                if size - start >= MAX_ATTACH_LINE:
+                    break
             f.seek(start)
             data = f.read(size - start)
         if start > 0:
@@ -251,11 +267,14 @@ class CodexAnalyzer:
                 self.phase = "aborted"; changed = True
             elif ptype in ("error", "stream_error", "task_failed"):
                 self.phase = "error"; changed = True
-            # Field shapes below are unconfirmed against live traffic (never
-            # observed on the machine this was written on, no local session
-            # ever hit an approval prompt) -- type names come from the Codex
-            # desktop app's embedded EventMsg constants; stay defensive.
-            elif ptype in ("exec_approval_request", "apply_patch_approval_request"):
+            # Codex exposes native command/file approval and user-input request
+            # types. Keep the aliases defensive across CLI/app protocol names;
+            # the pending-tool timeout remains a fallback for older rollouts.
+            elif ptype in (
+                "exec_approval_request", "apply_patch_approval_request",
+                "command_execution_approval_request", "file_change_approval_request",
+                "permissions_approval_request",
+            ):
                 self.phase = "waiting_permission"; changed = True
             elif ptype in ("request_user_input", "elicitation_request"):
                 self.phase = "waiting_input"; changed = True

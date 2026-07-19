@@ -44,6 +44,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     },
     "ui": {
         "show_ended": True,
+        "show_desktop": True,
         "view": "cards",                 # cards | list
         "sort": "state",                 # state | alpha | newest | oldest
         "chat_open": True,
@@ -222,12 +223,18 @@ REFRESH_TOKEN_PATH = STATE_DIR / "refresh-token"
 def write_token() -> str:
     """Fresh per-daemon-start API token."""
     import secrets
+    import tempfile
     ensure_state_dirs()
     token = secrets.token_urlsafe(32)
-    tmp = TOKEN_PATH.with_suffix(".tmp")
-    tmp.write_text(token)
-    tmp.chmod(0o600)
-    os.replace(tmp, TOKEN_PATH)
+    fd, tmp_name = tempfile.mkstemp(prefix="token.", dir=STATE_DIR)
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(token)
+        tmp.chmod(0o600)
+        os.replace(tmp, TOKEN_PATH)
+    finally:
+        tmp.unlink(missing_ok=True)
     return token
 
 

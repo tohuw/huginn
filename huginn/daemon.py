@@ -335,7 +335,14 @@ class Daemon:
         host = self.cfg.get("server", "host")
         port = self.cfg.get("server", "port")
         app = create_app(self)
-        uv_cfg = uvicorn.Config(app, host=host, port=port, log_level="warning")
+        # SSE connections are intentionally long-lived. On restart they may
+        # not observe disconnect quickly enough for Uvicorn's unbounded drain,
+        # leaving a live PID with no listening socket. Bound graceful shutdown
+        # so the menu app can reliably launch the replacement daemon.
+        uv_cfg = uvicorn.Config(
+            app, host=host, port=port, log_level="warning",
+            timeout_graceful_shutdown=2,
+        )
         server = uvicorn.Server(uv_cfg)
 
         tasks = [asyncio.create_task(c) for c in (

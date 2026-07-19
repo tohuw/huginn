@@ -52,6 +52,24 @@ class WindowsPlatform(Platform):
         return True
 
     def process_start_time(self, pid: int) -> float | None:
+        if os.name == "nt":
+            handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, int(pid))
+            if not handle:
+                return None
+            created = wintypes.FILETIME()
+            exited = wintypes.FILETIME()
+            kernel = wintypes.FILETIME()
+            user = wintypes.FILETIME()
+            try:
+                if ctypes.windll.kernel32.GetProcessTimes(
+                    handle, ctypes.byref(created), ctypes.byref(exited),
+                    ctypes.byref(kernel), ctypes.byref(user),
+                ):
+                    ticks = (created.dwHighDateTime << 32) | created.dwLowDateTime
+                    return ticks / 10_000_000 - 11_644_473_600
+            finally:
+                ctypes.windll.kernel32.CloseHandle(handle)
+            return None
         rows = _process_json(f"ProcessId={int(pid)}")
         if not rows or not rows[0].get("CreationDate"):
             return None

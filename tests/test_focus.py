@@ -34,6 +34,16 @@ class FocusRoutingTests(unittest.TestCase):
         focus.assert_not_called()
         self.assertEqual(result["target"], "ChatGPT")
 
+    def test_missing_codex_terminal_never_falls_through_to_vscode(self):
+        with patch("huginn.focus._codex_tty_for_cwd", return_value=None), \
+             patch("huginn.focus._platform.focus_terminal") as terminal, \
+             patch("huginn.focus._platform.focus_vscode") as vscode:
+            terminal.return_value.ok = False
+            terminal.return_value.detail = "iTerm2 tab not found"
+            result = focus_session(session())
+        vscode.assert_not_called()
+        self.assertFalse(result["ok"])
+
     def test_wsl_codex_never_opens_chatgpt(self):
         wsl = session(entrypoint="wsl:cli")
         wsl.key = "wsl:Ubuntu:codex:test"

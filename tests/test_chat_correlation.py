@@ -101,6 +101,18 @@ class ChatCorrelationTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["ok"])
         self.assertNotIn("request_id", result)
 
+    async def test_ask_can_set_a_manual_card_title(self):
+        daemon = Daemon(Config({}))
+        daemon.bus.broadcast = lambda *a, **k: None
+        session = Session(key="codex:test", source="codex", session_id="test",
+                          cwd="/tmp", name="test-agent")
+        daemon.reducer.sessions[session.key] = session
+        result = await start_chat(daemon, {"question": "title @test-agent release cleanup"})
+        self.assertTrue(result["ok"])
+        await daemon.active_chat
+        self.assertEqual(session.title, "release cleanup")
+        self.assertEqual(session.title_origin, "manual")
+
     async def test_prompt_restricts_ask_agent_to_session_questions(self):
         daemon = Daemon(Config({}))
         daemon.bus.broadcast = lambda *a, **k: None
@@ -123,6 +135,8 @@ class ChatCorrelationTests(unittest.IsolatedAsyncioTestCase):
             "show list view": ("ui", "view", "list"),
             "switch back to cards": ("ui", "view", "cards"),
             "hide the ask panel": ("ui", "chat_open", False),
+            "hide desktop presence": ("ui", "show_desktop", False),
+            "show app tiles": ("ui", "show_desktop", True),
             "span ask horizontally": ("ui", "chat_span", "horizontal"),
             "dock ask on the right": ("ui", "chat_span", "vertical"),
             "sort by state": ("ui", "sort", "state"),

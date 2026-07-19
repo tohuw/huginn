@@ -41,27 +41,21 @@ def child_shell_count(pid: int) -> int:
                if (_platform.process_name(child) or "").lower() in shells)
 
 
-def _ps_lstart(pid: int) -> datetime.datetime | None:
-    started = _platform.process_start_time(pid)
-    return datetime.datetime.fromtimestamp(started) if started is not None else None
-
-
 def pid_matches_start(pid: int, proc_start: str | None) -> bool:
-    """Guard against PID reuse: the recorded procStart must match ps within 5s."""
+    """Guard PID reuse by comparing Claude's UTC procStart with OS epoch time."""
     if not proc_start:
         return True  # nothing to check against
     recorded = None
     try:
-        recorded = datetime.datetime.strptime(proc_start.strip(), "%a %b %d %H:%M:%S %Y")
+        recorded = datetime.datetime.strptime(
+            proc_start.strip(), "%a %b %d %H:%M:%S %Y"
+        ).replace(tzinfo=datetime.timezone.utc).timestamp()
     except ValueError:
         return True  # unknown format; don't false-negative
-    actual = _ps_lstart(pid)
+    actual = _platform.process_start_time(pid)
     if actual is None:
         return True
-    # procStart in the file is UTC; ps lstart is local time. Accept any delta
-    # that is a whole timezone offset (15-min granularity) plus <=5s of skew.
-    delta = abs((actual - recorded).total_seconds())
-    return delta % 900 <= 5 or delta % 900 >= 895
+    return abs(actual - recorded) <= 5
 
 
 def find_transcript(session_id: str) -> str | None:
@@ -88,6 +82,11 @@ def parse_session_file(path: Path) -> Session | None:
     # here too with kind "interactive" but entrypoint "sdk-cli" — only real
     # interactive sessions are worth monitoring
     if raw.get("kind") not in (None, "interactive") or raw.get("entrypoint") == "sdk-cli":
+        return None
+    # Self-owned backstop: provider children are registered at spawn time, so
+    # an upstream entrypoint rename cannot make Huginn observe its own work.
+    from ..llm.providers import is_internal_pid
+    if is_internal_pid(pid):
         return None
 
     status = raw.get("status")  # absent pre-2.1.211

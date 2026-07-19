@@ -168,6 +168,21 @@ def create_app(daemon: "Daemon") -> FastAPI:
         from ..focus import focus_session
         return focus_session(s)
 
+    @api.put("/sessions/{key}/title")
+    async def set_title(key: str, request: Request):
+        s = reducer.sessions.get(key)
+        if s is None:
+            raise HTTPException(404)
+        body = await request.json()
+        title = str(body.get("title") or "").strip()[:60]
+        s.title = title or None
+        s.title_origin = "manual" if title else None
+        daemon.mark_dirty()
+        bus.broadcast("session.upsert", s.to_dict())
+        if not title:
+            daemon.blurbs.request(s)
+        return s.to_dict()
+
     @api.post("/hook/{source}/{event}")
     async def hook(source: str, event: str, request: Request):
         try:

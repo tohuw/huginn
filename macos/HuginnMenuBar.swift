@@ -26,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var sessions: [AgentSession] = []
     private var attention = 0
     private var isQuitting = false
+    private var refreshFailures = 0
 
     static func main() {
         let app = NSApplication.shared
@@ -118,6 +119,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 if kill(pid, 0) != 0 { break }
                 usleep(50_000)
             }
+            // A long-lived SSE request can keep Uvicorn draining after it has
+            // closed the listening socket. Do not leave a live-but-unusable
+            // PID that ensureDaemon() will mistake for a healthy server.
+            if kill(pid, 0) == 0 {
+                kill(pid, SIGKILL)
+                for _ in 0..<20 {
+                    if kill(pid, 0) != 0 { break }
+                    usleep(50_000)
+                }
+            }
         } else if let daemon, daemon.isRunning {
             daemon.terminate()
         }
@@ -141,10 +152,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         URLSession.shared.dataTask(with: request) { [weak self] data, _, error in
             guard let data, error == nil,
                   let envelope = try? JSONDecoder().decode(SessionEnvelope.self, from: data) else {
-                DispatchQueue.main.async { self?.ensureDaemon() }
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.refreshFailures += 1
+                    if self.refreshFailures >= 3 {
+                        self.refreshFailures = 0
+                        self.restartDaemon()
+                    } else {
+                        self.ensureDaemon()
+                    }
+                }
                 return
             }
             DispatchQueue.main.async {
+                self?.refreshFailures = 0
                 self?.sessions = envelope.sessions
                 self?.attention = envelope.attention
                 self?.rebuildMenu()

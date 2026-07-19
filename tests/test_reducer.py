@@ -31,6 +31,14 @@ class ReducerTests(unittest.TestCase):
         self.assertEqual(len(changed), 1)
         self.assertIn("claude:100", self.r.sessions)
 
+    def test_app_activity_never_counts_as_attention(self):
+        tile = claude_session(
+            key="claude-desktop", state=SessionState.ACTIVE,
+            source="claude-desktop", pid=None,
+        )
+        self.r.sessions[tile.key] = tile
+        self.assertEqual(self.r.attention_count(), 0)
+
     def test_busy_overrides_stale_waiting(self):
         s = claude_session(state=SessionState.WAITING_INPUT,
                            state_origin="hook", state_since=NOW - 60,
@@ -287,6 +295,14 @@ class CodexAnalyzerTests(unittest.TestCase):
         an.feed([{"type": "event_msg",
                   "payload": {"type": "apply_patch_approval_request", "call_id": "1"}}])
         self.assertEqual(an.phase, "waiting_permission")
+
+    def test_desktop_protocol_approval_aliases_set_waiting_permission(self):
+        for kind in ("command_execution_approval_request", "file_change_approval_request",
+                     "permissions_approval_request"):
+            with self.subTest(kind=kind):
+                an = CodexAnalyzer()
+                an.feed([{"type": "event_msg", "payload": {"type": kind, "call_id": "1"}}])
+                self.assertEqual(an.phase, "waiting_permission")
 
     def test_request_user_input_sets_waiting_input(self):
         an = CodexAnalyzer()

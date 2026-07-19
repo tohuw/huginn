@@ -14,6 +14,7 @@ from pathlib import Path
 
 from .. import config
 from ..model import Session, SessionState
+from ..platform import platform as _platform
 
 CODEX_DIR = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
 STATE_DB = CODEX_DIR / "state_5.sqlite"
@@ -31,6 +32,24 @@ _THREAD_COLS = [
 _backup_cache_ts: float = 0.0
 BACKUP_MAX_AGE_S = 30.0
 BACKUP_REFRESH_S = 5.0
+
+
+def cli_terminal_alive(session: Session) -> bool:
+    """Whether a Codex CLI process still owns a TTY in this workspace.
+
+    Codex's thread database does not record the CLI pid.  Matching the live
+    process by cwd is deliberately conservative: if two threads share a
+    workspace we may retain an old card, which is preferable to dropping the
+    card for an open terminal tab.
+    """
+    if session.entrypoint != "cli" or not session.cwd:
+        return False
+    for pid in _platform.find_processes("codex"):
+        if (_platform.pid_alive(pid)
+                and _platform.process_cwd(pid) == session.cwd
+                and _platform.process_tty(pid)):
+            return True
+    return False
 
 
 def _connect_ro(path: Path) -> sqlite3.Connection:
@@ -98,9 +117,9 @@ def scan_with_status(cfg: config.Config | None = None) -> tuple[list[Session], b
     """Scan recent threads and report whether the query succeeded.
 
     The boolean is false only when the database could not be read.  Crossing
-    the 50-card display cap is still a successful authoritative scan: rows
-    beyond that cap are intentionally outside the live roster and must be
-    reconciled away rather than retained forever from an earlier snapshot.
+    the recency window or 50-card display cap is an authoritative roster miss,
+    but the daemon separately checks terminal liveness before evicting CLI
+    cards because an open tab matters more than database recency.
     """
     cfg = cfg or config.load()
     if not STATE_DB.exists():

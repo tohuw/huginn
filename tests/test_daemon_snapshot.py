@@ -2,6 +2,8 @@
 share one file on disk, written/restored together."""
 from __future__ import annotations
 
+import asyncio
+import socket
 import tempfile
 import unittest
 from pathlib import Path
@@ -55,6 +57,21 @@ class DaemonSnapshotTests(unittest.TestCase):
             self.assertTrue(d._flush_snapshot_if_dirty())
         write.assert_called_once_with()
         self.assertFalse(d._dirty)
+
+    def test_second_daemon_does_not_rotate_live_credentials(self):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen()
+            port = listener.getsockname()[1]
+            token_path = Path(self.tmp.name) / "token"
+            token_path.write_text("live-token")
+            cfg = Config({"server": {"host": "127.0.0.1", "port": port}})
+            with patch("huginn.daemon.config.TOKEN_PATH", token_path), \
+                 patch("huginn.daemon.config.write_token") as write_token:
+                with self.assertRaisesRegex(OSError, "address already in use"):
+                    asyncio.run(Daemon(cfg).run(open_browser=False))
+            write_token.assert_not_called()
+            self.assertEqual(token_path.read_text(), "live-token")
 
 
 if __name__ == "__main__":

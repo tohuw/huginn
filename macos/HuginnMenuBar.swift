@@ -209,6 +209,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let open = NSMenuItem(title: "Open Console", action: #selector(openConsole), keyEquivalent: "o")
         open.target = self
         menu.addItem(open)
+        let demo = NSMenuItem(title: "Open Demo Console", action: #selector(openDemo), keyEquivalent: "")
+        demo.target = self
+        menu.addItem(demo)
         let refresh = NSMenuItem(title: "Refresh", action: #selector(refreshNow), keyEquivalent: "r")
         refresh.target = self
         menu.addItem(refresh)
@@ -239,6 +242,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
               let port = try? String(contentsOfFile: portPath, encoding: .utf8)
                 .trimmingCharacters(in: .whitespacesAndNewlines),
               let url = URL(string: "http://127.0.0.1:\(port)/#t=\(token)") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    @objc private func openDemo() {
+        guard let port = try? String(contentsOfFile: portPath, encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+              let url = URL(string: "http://127.0.0.1:\(port)/?demo=1") else { return }
         NSWorkspace.shared.open(url)
     }
 

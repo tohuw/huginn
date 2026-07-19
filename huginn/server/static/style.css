@@ -37,7 +37,8 @@ header {
 .ctl option:disabled { color: var(--idle); background: var(--panel); }
 label.ctl { display: flex; gap: 6px; align-items: center; }
 
-main { grid-area: main; position: relative; z-index: 0; overflow-y: auto; padding: 14px; }
+main { grid-area: main; position: relative; z-index: 0; overflow-y: auto; padding: 14px;
+  container-type: inline-size; }
 #grid, #app-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
 #grid[data-view="list"], #app-grid[data-view="list"] { grid-template-columns: 1fr; gap: 5px; }
 #app-tiles { margin-top: 18px; padding-top: 10px; border-top: 1px solid var(--edge); }
@@ -70,6 +71,11 @@ main { grid-area: main; position: relative; z-index: 0; overflow-y: auto; paddin
 .card[data-state="error"] { border-left-color: var(--error); }
 .card[data-state="done"] { border-left-color: var(--done); }
 .card[data-state="ended"] { opacity: .45; }
+.card.demo-focused { animation: demo-focus 1.2s ease-out; }
+@keyframes demo-focus {
+  0%, 30% { outline: 2px solid var(--accent); outline-offset: 2px; filter: brightness(1.22); }
+  100% { outline-color: transparent; filter: none; }
+}
 
 .row1 { display: flex; align-items: baseline; gap: 8px; }
 .src { flex: 0 0 auto; padding: 0 5px; border: 1px solid currentColor; border-radius: 3px;
@@ -134,18 +140,48 @@ main { grid-area: main; position: relative; z-index: 0; overflow-y: auto; paddin
 .actions button:hover { color: var(--fg); border-color: var(--accent); }
 .tokens { margin-left: auto; color: var(--idle); font-size: 11px; }
 
-#grid[data-view="list"] .card {
-  display: grid; grid-template-columns: minmax(210px, .8fr) minmax(180px, 1fr)
-    minmax(240px, 2fr) auto; align-items: center; column-gap: 14px;
+:is(#grid, #app-grid)[data-view="list"] .card {
+  display: grid;
+  grid-template-columns: minmax(250px, .9fr) minmax(300px, 1.7fr) max-content;
+  grid-template-areas:
+    "identity title actions"
+    "meta     blurb actions"
+    ".        work  actions";
+  align-items: center; column-gap: 16px;
   padding: 6px 10px; border-radius: 4px;
 }
-#grid[data-view="list"] .row1, #grid[data-view="list"] .row2 { min-width: 0; }
-#grid[data-view="list"] .blurb { margin: 0; min-width: 0; overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap; }
-#grid[data-view="list"] .subagents { grid-column: 3; margin: 0; }
-#grid[data-view="list"] .actions { grid-column: 4; grid-row: 1 / span 2; margin: 0; }
-#grid[data-view="list"] .peek { grid-column: 1 / -1; }
-#grid[data-view="list"] .tokens { display: none; }
+:is(#grid, #app-grid)[data-view="list"] .row1 { grid-area: identity; min-width: 0; }
+:is(#grid, #app-grid)[data-view="list"] .row2 { grid-area: meta; min-width: 0; }
+:is(#grid, #app-grid)[data-view="list"] .card-title-row {
+  grid-area: title; min-width: 0; margin: 0;
+}
+:is(#grid, #app-grid)[data-view="list"] .card-title {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+:is(#grid, #app-grid)[data-view="list"] .blurb {
+  grid-area: blurb; margin: 0; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+:is(#grid, #app-grid)[data-view="list"] .subagents {
+  grid-area: work; min-width: 0; margin: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+:is(#grid, #app-grid)[data-view="list"] .actions {
+  grid-area: actions; align-self: center; margin: 0;
+}
+:is(#grid, #app-grid)[data-view="list"] .peek { grid-column: 1 / -1; }
+:is(#grid, #app-grid)[data-view="list"] .tokens { display: none; }
+
+@container (max-width: 900px) {
+  :is(#grid, #app-grid)[data-view="list"] .card {
+    grid-template-columns: minmax(220px, .8fr) minmax(260px, 1.5fr);
+    grid-template-areas:
+      "identity title"
+      "meta     blurb"
+      "actions  work";
+  }
+  :is(#grid, #app-grid)[data-view="list"] .actions { justify-self: start; }
+}
 
 aside#chat {
   --chat-width: 420px; --chat-height: 300px;

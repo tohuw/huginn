@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -71,6 +72,17 @@ class AuthTests(unittest.TestCase):
     def test_hook_stats_requires_token(self):
         c = make_client()
         self.assertEqual(c.get("/api/hook-stats").status_code, 401)
+
+    def test_chat_rejection_uses_error_status(self):
+        c = make_client()
+        with patch("huginn.llm.chat.start_chat", new=AsyncMock(
+                return_value={"ok": False, "error": "a chat is already running"})):
+            r = c.post(
+                "/api/chat", json={"question": "status?"},
+                headers={"X-Huginn-Token": "secret-token"},
+            )
+        self.assertEqual(r.status_code, 409)
+        self.assertEqual(r.json()["detail"], "a chat is already running")
 
 
 if __name__ == "__main__":

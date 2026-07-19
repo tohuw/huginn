@@ -157,8 +157,15 @@ document.getElementById("chat-form").onsubmit = async (e) => {
     body: JSON.stringify({ question: q, provider }),
   });
   if (!r.ok) {
-    currentAnswer.classList.add("err");
-    currentAnswer.textContent = `chat unavailable (${r.status})`;
+    let detail = `chat unavailable (${r.status})`;
+    try {
+      const body = await r.json();
+      if (body.detail) detail = body.detail;
+    } catch (_) {}
+    if (currentAnswer) {
+      currentAnswer.classList.add("err");
+      currentAnswer.textContent = detail;
+    }
     currentAnswer = null;
   }
 };

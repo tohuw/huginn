@@ -7,7 +7,7 @@ nesting changes; these don't, because they carry the real shape.
 | Fixture | Captured from | Version | Date |
 |---|---|---|---|
 | `claude_transcript_lines.jsonl` | `~/.claude/projects/*.jsonl` | Claude Code 2.1.214 | 2026-07-19 |
-| `codex_rollout_lines.jsonl` | `~/.codex/sessions/**/*.jsonl` | Codex CLI 0.144.6 | 2026-07-19 |
+| `codex_rollout_lines.jsonl` | `~/.codex/sessions/**/*.jsonl` | Codex CLI 0.144.6 | 2026-07-19 (completion sample refreshed 2026-07-19) |
 | `codex_state_db_schema.sql` | `~/.codex/state_5.sqlite` (`.schema`) | Codex CLI 0.144.6 | 2026-07-19 |
 
 ## Redaction

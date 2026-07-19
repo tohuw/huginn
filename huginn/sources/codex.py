@@ -1,12 +1,12 @@
 """Codex source: ~/.codex/state_5.sqlite thread index + rollout JSONL activity.
 
-The DBs are actively written by the Codex desktop app — always open read-only.
-If a direct ro open fails (observed under sandboxing: WAL shm creation is
-blocked), fall back to copying db+wal to our cache dir and reading the copy.
+The DB is actively written by Codex — always open read-only.  A successful
+read refreshes a transactionally consistent SQLite online-backup snapshot;
+when sandboxing temporarily blocks the live WAL/shm, a recent snapshot is a
+safe fallback.  Never copy the live database files directly.
 """
 from __future__ import annotations
 
-import shutil
 import sqlite3
 import os
 import time
@@ -28,7 +28,9 @@ _THREAD_COLS = [
     "archived", "source", "thread_source", "agent_nickname", "cli_version",
 ]
 
-_copy_cache_ts: float = 0.0
+_backup_cache_ts: float = 0.0
+BACKUP_MAX_AGE_S = 30.0
+BACKUP_REFRESH_S = 5.0
 
 
 def _connect_ro(path: Path) -> sqlite3.Connection:
@@ -37,28 +39,39 @@ def _connect_ro(path: Path) -> sqlite3.Connection:
     return conn
 
 
+def _refresh_backup(source: sqlite3.Connection) -> None:
+    """Atomically publish a consistent snapshot using sqlite3_backup()."""
+    global _backup_cache_ts
+    config.ensure_state_dirs()
+    snapshot = config.CACHE_DIR / "codex_state.sqlite"
+    if snapshot.exists() and time.time() - _backup_cache_ts <= BACKUP_REFRESH_S:
+        return
+    pending = snapshot.with_suffix(".sqlite.pending")
+    try:
+        pending.unlink(missing_ok=True)
+        with sqlite3.connect(pending) as destination:
+            source.backup(destination)
+        os.replace(pending, snapshot)
+        _backup_cache_ts = time.time()
+    except (OSError, sqlite3.Error):
+        pending.unlink(missing_ok=True)
+
+
 def _connect_with_fallback() -> sqlite3.Connection | None:
-    global _copy_cache_ts
+    conn: sqlite3.Connection | None = None
     try:
         conn = _connect_ro(STATE_DB)
         conn.execute("SELECT 1 FROM threads LIMIT 1")
+        _refresh_backup(conn)
         return conn
     except sqlite3.Error:
-        pass
-    # Copy-to-cache fallback; reuse a copy younger than 5s.
-    config.ensure_state_dirs()
-    copy = config.CACHE_DIR / "codex_state.sqlite"
+        if conn is not None:
+            conn.close()
+    snapshot = config.CACHE_DIR / "codex_state.sqlite"
     try:
-        if time.time() - _copy_cache_ts > 5 or not copy.exists():
-            shutil.copy2(STATE_DB, copy)
-            wal = STATE_DB.with_name(STATE_DB.name + "-wal")
-            wal_copy = copy.with_name(copy.name + "-wal")
-            if wal.exists():
-                shutil.copy2(wal, wal_copy)
-            elif wal_copy.exists():
-                wal_copy.unlink()
-            _copy_cache_ts = time.time()
-        return _connect_ro(copy)
+        if time.time() - snapshot.stat().st_mtime > BACKUP_MAX_AGE_S:
+            return None
+        return _connect_ro(snapshot)
     except (OSError, sqlite3.Error):
         return None
 

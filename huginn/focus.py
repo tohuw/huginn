@@ -91,10 +91,6 @@ def focus_session(s: Session) -> dict[str, Any]:
             terminal = _platform.focus_terminal(s.pid, tty)
             if terminal.ok:
                 return _result(True, terminal.target, detail=terminal.detail)
-            if s.cwd:
-                editor = _platform.focus_vscode(s.cwd)
-                if editor.ok:
-                    return _result(True, editor.target)
             return _result(False, detail=terminal.detail or "Codex CLI terminal not found")
         return _result(_open_app("ChatGPT"), "ChatGPT")
 
@@ -104,13 +100,16 @@ def focus_session(s: Session) -> dict[str, Any]:
     if s.source == "chatgpt-desktop":
         return _result(_open_app("ChatGPT"), "ChatGPT")
 
-    if s.entrypoint == "cli" and s.pid:
+    if s.entrypoint == "cli":
+        if not s.pid or not _platform.pid_alive(s.pid):
+            return _result(False, detail="Claude CLI process is no longer running")
         tty = s.tty or find_tty(s.pid)
         if tty:
             s.tty = tty
         terminal = _platform.focus_terminal(s.pid, tty)
         if terminal.ok:
             return _result(True, terminal.target, detail=terminal.detail, **({"tty": tty} if tty else {}))
+        return _result(False, detail=terminal.detail or "Claude CLI terminal not found")
 
     if s.cwd:
         editor = _platform.focus_vscode(s.cwd)

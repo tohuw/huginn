@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from huginn.llm.providers import ClaudeCLI, CodexCLI
+from huginn.llm.providers import ClaudeCLI, CodexCLI, _clean_env
 
 
 def _script(tmp: Path, name: str, body: str) -> str:
@@ -29,6 +29,11 @@ def _alive(pid: int) -> bool:
         return True
     except ProcessLookupError:
         return False
+
+
+class InternalProviderGuardTests(unittest.TestCase):
+    def test_provider_children_carry_owned_internal_marker(self):
+        self.assertEqual(_clean_env()["HUGINN_INTERNAL"], "1")
 
 
 @unittest.skipIf(os.name == "nt", "POSIX fixture scripts; Windows tree-kill has adapter tests")

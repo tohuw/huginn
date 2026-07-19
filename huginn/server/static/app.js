@@ -35,8 +35,11 @@ async function apiFetch(url, opts = {}) {
 const sessions = new Map();   // key -> session object
 const cards = new Map();      // key -> card element
 const grid = document.getElementById("grid");
+const appGrid = document.getElementById("app-grid");
+const appTiles = document.getElementById("app-tiles");
 const tpl = document.getElementById("card-tpl");
 let llmEnabled = true;
+let desktopVisible = true;
 // Startup and daemon restarts are indeterminate until both the roster and the
 // cheap activity probe answer.  Begin with the honest state instead of briefly
 // claiming there are no sessions.
@@ -87,6 +90,7 @@ function compactPath(path) {
 }
 
 const BADGES = {
+  active: "active",
   working: "working", waiting_input: "input?", waiting_permission: "permit?",
   error: "error", done: "done", idle: "idle", ended: "ended",
 };
@@ -107,9 +111,11 @@ function upsertCard(s) {
     card.querySelector(".jump").onclick = () => jump(s.key);
     card.querySelector(".peek-btn").onclick = () => peek(s.key);
     card.querySelector(".ask").onclick = () => askAbout(s.key);
+    card.querySelector(".edit-title").onclick = () => editTitle(s.key);
     cards.set(s.key, card);
   }
   card.dataset.state = s.state;
+  card.dataset.appTile = String(s.source.endsWith("-desktop"));
   card.dataset.since = s.state_since;
   const source = SOURCE_META[s.source] || { label: s.source || "unknown", family: "other" };
   card.dataset.sourceFamily = source.family;
@@ -121,6 +127,9 @@ function upsertCard(s) {
   card.querySelector(".cwd").textContent = s.cwd ? compactPath(s.cwd) : "";
   card.querySelector(".branch").textContent = s.git_branch ? `⎇ ${s.git_branch}` : "";
   card.querySelector(".model").textContent = s.model || "";
+  const title = card.querySelector(".card-title");
+  title.textContent = s.title || "";
+  title.dataset.origin = s.title_origin || "";
   const summary = card.querySelector(".blurb");
   const usingBlurb = llmEnabled && Boolean(s.blurb);
   summary.textContent = usingBlurb ? s.blurb : (s.last_prompt || "");
@@ -130,19 +139,63 @@ function upsertCard(s) {
   reorder();
 }
 
+async function editTitle(key) {
+  const s = sessions.get(key);
+  const card = cards.get(key);
+  const row = card.querySelector(".card-title-row");
+  if (row.querySelector("input")) return;
+  const label = row.querySelector(".card-title");
+  const button = row.querySelector(".edit-title");
+  const input = document.createElement("input");
+  input.className = "title-input";
+  input.maxLength = 60;
+  input.placeholder = "short title";
+  input.value = s?.title || "";
+  label.hidden = true; button.hidden = true;
+  row.prepend(input); input.focus(); input.select();
+  let finished = false;
+  const finish = async (save) => {
+    if (finished) return;
+    finished = true;
+    input.remove(); label.hidden = false; button.hidden = false;
+    if (!save) return;
+    const r = await apiFetch(`/api/sessions/${encodeURIComponent(key)}/title`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: input.value }),
+    });
+    if (r.ok) upsertCard(await r.json());
+  };
+  input.onkeydown = (e) => {
+    if (e.key === "Enter") { e.preventDefault(); finish(true); }
+    if (e.key === "Escape") { e.preventDefault(); finish(false); }
+  };
+  input.onblur = () => finish(true);
+}
+
 function reorder() {
   const mode = document.getElementById("sort").value || "state";
   const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+  const byClass = (a, b) => Number(a.source.endsWith("-desktop")) - Number(b.source.endsWith("-desktop"));
   const compare = {
-    state: (a, b) => a.rank - b.rank || a.state_since - b.state_since || byName(a, b),
-    alpha: byName,
-    newest: (a, b) => b.last_activity - a.last_activity || byName(a, b),
-    oldest: (a, b) => a.last_activity - b.last_activity || byName(a, b),
+    state: (a, b) => byClass(a, b) || a.rank - b.rank || a.state_since - b.state_since || byName(a, b),
+    alpha: (a, b) => byClass(a, b) || byName(a, b),
+    newest: (a, b) => byClass(a, b) || b.last_activity - a.last_activity || byName(a, b),
+    oldest: (a, b) => byClass(a, b) || a.last_activity - b.last_activity || byName(a, b),
   }[mode];
   const sorted = [...sessions.values()].sort(compare);
-  const frag = document.createDocumentFragment();
-  for (const s of sorted) frag.appendChild(cards.get(s.key));
-  grid.replaceChildren(frag);
+  const sessionFrag = document.createDocumentFragment();
+  const appFrag = document.createDocumentFragment();
+  let appCount = 0;
+  for (const s of sorted) {
+    if (s.source.endsWith("-desktop")) {
+      appFrag.appendChild(cards.get(s.key)); appCount += 1;
+    } else {
+      sessionFrag.appendChild(cards.get(s.key));
+    }
+  }
+  grid.replaceChildren(sessionFrag);
+  appGrid.replaceChildren(appFrag);
+  appTiles.hidden = !desktopVisible || appCount === 0;
   renderEmpty();
 }
 
@@ -194,6 +247,12 @@ function setAttention(n) {
 
 async function jump(key) {
   const r = await apiFetch(`/api/sessions/${encodeURIComponent(key)}/focus`, { method: "POST" });
+  if (r.status === 404) {
+    // The browser can miss a removal event while EventSource reconnects.
+    // A rejected focus is definitive: discard that local card immediately.
+    removeCard(key);
+    return;
+  }
   if (!r.ok) console.warn("focus failed", await r.text());
 }
 
@@ -449,11 +508,14 @@ async function loadSettings() {
 function applySettings(cfg) {
   llmEnabled = cfg.llm.enabled;
   document.getElementById("llm-toggle").checked = llmEnabled;
+  desktopVisible = cfg.ui.show_desktop !== false;
+  document.getElementById("desktop-toggle").checked = desktopVisible;
   providerSelect.value = cfg.llm.provider;
   rememberProvider(cfg.llm.provider);
   const view = cfg.ui.view || "cards";
   document.getElementById("view").value = view;
   grid.dataset.view = view;
+  appGrid.dataset.view = view;
   const sort = cfg.ui.sort || "state";
   document.getElementById("sort").value = sort;
   document.getElementById("sort").dataset.saved = sort;
@@ -471,6 +533,17 @@ document.getElementById("llm-toggle").onchange = async (e) => {
     for (const s of sessions.values()) upsertCard(s);
   }
 };
+document.getElementById("desktop-toggle").onchange = async (e) => {
+  const previous = desktopVisible;
+  desktopVisible = e.target.checked;
+  reorder();
+  const r = await saveSettings({ ui: { show_desktop: desktopVisible } });
+  if (!r.ok) {
+    desktopVisible = previous;
+    e.target.checked = previous;
+    reorder();
+  }
+};
 providerSelect.onchange = async (e) => {
   const previous = getRememberedProvider();
   rememberProvider(e.target.value);
@@ -484,9 +557,11 @@ providerSelect.onchange = async (e) => {
 document.getElementById("view").onchange = async (e) => {
   const previous = grid.dataset.view || "cards";
   grid.dataset.view = e.target.value;
+  appGrid.dataset.view = e.target.value;
   const r = await saveSettings({ ui: { view: e.target.value } });
   if (!r.ok) {
     grid.dataset.view = previous;
+    appGrid.dataset.view = previous;
     e.target.value = previous;
   }
 };
@@ -516,9 +591,11 @@ async function snapshot() {
   try {
     const r = await apiFetch("/api/sessions");
     const data = await r.json();
-    const seen = new Set();
-    for (const s of data.sessions) { seen.add(s.key); upsertCard(s); }
-    for (const key of [...sessions.keys()]) if (!seen.has(key)) removeCard(key);
+    // Snapshots are additive reconciliation. During daemon startup they may be
+    // temporarily incomplete, so absence is never evidence that a terminal
+    // session ended. Removal requires the source/reducer's explicit SSE event
+    // (confirmed dead/missing) or a definitive 404 when the card is used.
+    for (const s of data.sessions) upsertCard(s);
     setAttention(data.attention);
     if (!data.sessions.length) {
       const activity = await (await apiFetch("/api/activity")).json();
@@ -592,5 +669,8 @@ bootstrapSession().then(() => {
   // Do not wait for EventSource's first open before attempting the initial
   // roster fetch; this also covers browsers delaying SSE reconnection.
   snapshot();
+  // SSE is the fast path; periodic additive reconciliation recovers session
+  // upserts that landed while the browser or daemon was reconnecting.
+  setInterval(snapshot, 5000);
   setAttention(0);
 });

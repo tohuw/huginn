@@ -73,9 +73,18 @@ class CodexRolloutFixtureTests(unittest.TestCase):
     def test_phase_and_token_extraction_from_real_shape(self):
         an = CodexAnalyzer()
         an.feed(self.entries)
-        self.assertEqual(an.phase, "working")   # task_started, no complete in the sample
+        self.assertEqual(an.phase, "done")
         self.assertIsNotNone(an.tokens)
         self.assertEqual(an.last_agent_text, "[REDACTED TEXT]")
+
+    def test_real_turn_replays_start_through_completion(self):
+        an = CodexAnalyzer()
+        phases = []
+        for entry in self.entries:
+            if an.feed([entry]) and an.phase:
+                phases.append(an.phase)
+        self.assertIn("working", phases)
+        self.assertEqual(phases[-1], "done")
 
     def test_tolerates_unknown_extra_key(self):
         mutated = [{**e, "some_future_field": "x"} for e in self.entries]

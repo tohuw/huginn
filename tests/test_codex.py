@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from huginn.config import Config
+from huginn.sources import codex
 from huginn.sources.codex import _subagent_counts, activity_heartbeat, scan_with_status
 
 DDL = """
@@ -49,6 +50,56 @@ class CodexSubagentTests(unittest.TestCase):
 
 
 class CodexScanStatusTests(unittest.TestCase):
+    def test_online_backup_includes_uncheckpointed_wal_transaction(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.sqlite"
+            cache = root / "cache"; cache.mkdir()
+            writer = sqlite3.connect(source)
+            writer.execute("PRAGMA journal_mode=WAL")
+            writer.execute("CREATE TABLE threads (id TEXT PRIMARY KEY)")
+            writer.execute("INSERT INTO threads VALUES ('visible-from-wal')")
+            writer.commit()
+            reader = codex._connect_ro(source)
+            with patch("huginn.sources.codex.config.CACHE_DIR", cache), \
+                 patch("huginn.sources.codex.config.ensure_state_dirs"), \
+                 patch("huginn.sources.codex._backup_cache_ts", 0):
+                codex._refresh_backup(reader)
+            reader.close(); writer.close()
+            snapshot = sqlite3.connect(cache / "codex_state.sqlite")
+            rows = snapshot.execute("SELECT id FROM threads").fetchall()
+            snapshot.close()
+        self.assertEqual(rows, [("visible-from-wal",)])
+
+    def test_recent_consistent_snapshot_is_used_when_live_open_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp)
+            snapshot = cache / "codex_state.sqlite"
+            stored = sqlite3.connect(snapshot)
+            stored.execute("CREATE TABLE threads (id TEXT)")
+            stored.execute("INSERT INTO threads VALUES ('cached')")
+            stored.commit(); stored.close()
+            fallback = sqlite3.connect(snapshot)
+            with patch("huginn.sources.codex.config.CACHE_DIR", cache), \
+                 patch("huginn.sources.codex._connect_ro",
+                       side_effect=[sqlite3.OperationalError("blocked"), fallback]):
+                conn = codex._connect_with_fallback()
+            self.assertIsNotNone(conn)
+            self.assertEqual(conn.execute("SELECT id FROM threads").fetchone(), ("cached",))
+            conn.close()
+
+    def test_expired_snapshot_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp)
+            snapshot = cache / "codex_state.sqlite"
+            snapshot.touch()
+            old = __import__("time").time() - codex.BACKUP_MAX_AGE_S - 1
+            __import__("os").utime(snapshot, (old, old))
+            with patch("huginn.sources.codex.config.CACHE_DIR", cache), \
+                 patch("huginn.sources.codex._connect_ro",
+                       side_effect=sqlite3.OperationalError("blocked")):
+                self.assertIsNone(codex._connect_with_fallback())
+
     def test_unreadable_database_is_not_a_complete_empty_scan(self):
         with tempfile.TemporaryDirectory() as tmp:
             missing = Path(tmp) / "missing.sqlite"

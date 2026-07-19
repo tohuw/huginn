@@ -7,6 +7,7 @@ from typing import Any
 
 
 class SessionState(str, enum.Enum):
+    ACTIVE = "active"             # app tile: renderer activity, not agent work
     WORKING = "working"
     WAITING_INPUT = "waiting_input"
     WAITING_PERMISSION = "waiting_permission"
@@ -31,6 +32,7 @@ STATE_RANK = {
     SessionState.WORKING: 4,
     SessionState.IDLE: 5,
     SessionState.ENDED: 6,
+    SessionState.ACTIVE: 7,        # app tiles are grouped separately in the UI
 }
 
 
@@ -58,6 +60,8 @@ class Session:
     version: str | None = None
     subagents: dict[str, int] | None = None   # e.g. {"running": 2, "done": 1}
     shells: int = 0                 # live shell subprocesses owned by the agent
+    title: str | None = None        # ephemeral card label; dies with this session
+    title_origin: str | None = None # manual | guessed
 
     @property
     def attention(self) -> bool:

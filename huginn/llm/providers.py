@@ -20,6 +20,7 @@ CODEX_BIN = "/Applications/ChatGPT.app/Contents/Resources/codex"
 STDERR_CAP = 4096   # bounded: never let a runaway/hostile subprocess fill memory or logs
 
 _claude_path: str | None = None
+_internal_pids: set[int] = set()
 
 
 def claude_binary() -> str | None:
@@ -50,13 +51,25 @@ def _clean_env() -> dict[str, str]:
     env = dict(os.environ)
     env.pop("ANTHROPIC_API_KEY", None)
     env.pop("ANTHROPIC_AUTH_TOKEN", None)
+    env["HUGINN_INTERNAL"] = "1"
     return env
+
+
+def is_internal_pid(pid: int | None) -> bool:
+    """Self-owned guard supplementing Claude's upstream entrypoint field."""
+    return pid is not None and pid in _internal_pids
+
+
+def _track_internal(proc: asyncio.subprocess.Process) -> None:
+    if proc.pid is not None:
+        _internal_pids.add(proc.pid)
 
 
 async def _reap(proc: asyncio.subprocess.Process) -> None:
     """Call from a finally: no child should survive its caller -- timeout,
     cancellation, or any other exit path (issue #16)."""
     if proc.returncode is not None:
+        _internal_pids.discard(proc.pid)
         return
     if os.name == "nt":
         # /T terminates descendants too; provider CLIs commonly launch shell
@@ -74,6 +87,7 @@ async def _reap(proc: asyncio.subprocess.Process) -> None:
         proc.kill()  # fallback if tree/group termination raced
     with contextlib.suppress(Exception):
         await asyncio.wait_for(proc.wait(), timeout=5)
+    _internal_pids.discard(proc.pid)
 
 
 async def _drain_stderr(stream: asyncio.StreamReader | None) -> bytes:
@@ -82,17 +96,13 @@ async def _drain_stderr(stream: asyncio.StreamReader | None) -> bytes:
     STDERR_CAP bytes; the rest is read (to keep draining) and discarded."""
     if stream is None:
         return b""
-    chunks: list[bytes] = []
-    total = 0
+    tail = b""
     while True:
         chunk = await stream.read(4096)
         if not chunk:
             break
-        if total < STDERR_CAP:
-            take = chunk[:STDERR_CAP - total]
-            chunks.append(take)
-            total += len(take)
-    return b"".join(chunks)
+        tail = (tail + chunk)[-STDERR_CAP:]
+    return tail
 
 
 def _spawn_options() -> dict[str, object]:
@@ -121,6 +131,7 @@ class ClaudeCLI:
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE, env=_clean_env(), cwd=cwd, **_spawn_options())
+        _track_internal(proc)
         try:
             try:
                 out, err = await asyncio.wait_for(
@@ -149,6 +160,7 @@ class ClaudeCLI:
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE, env=_clean_env(), cwd=cwd, **_spawn_options())
+        _track_internal(proc)
         stderr_task = asyncio.create_task(_drain_stderr(proc.stderr))
         try:
             proc.stdin.write(prompt.encode())
@@ -207,7 +219,8 @@ class CodexCLI:
         cmd.append(prompt)
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, cwd=cwd, **_spawn_options())
+            stderr=asyncio.subprocess.PIPE, env=_clean_env(), cwd=cwd, **_spawn_options())
+        _track_internal(proc)
         stderr_task = asyncio.create_task(_drain_stderr(proc.stderr))
         emitted_message = False
         try:
@@ -249,3 +262,12 @@ PROVIDERS = {"claude": ClaudeCLI(), "codex": CodexCLI()}
 
 def get_provider(name: str):
     return PROVIDERS.get(name, PROVIDERS["claude"])
+
+
+def compatible_model(provider: str, model: str) -> str:
+    """Avoid carrying one provider's configured model into the other CLI."""
+    value = (model or "").strip()
+    if not value:
+        return ""
+    is_claude = value.lower().startswith("claude")
+    return value if (provider == "claude") == is_claude else ""

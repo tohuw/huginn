@@ -30,7 +30,7 @@ class _Provider:
 
 
 class BlurbTests(unittest.IsolatedAsyncioTestCase):
-    async def test_leaving_blurb_state_cancels_pending_task(self):
+    async def test_state_change_replaces_pending_blurb_task(self):
         daemon = Daemon(Config({"llm": {"blurb_debounce_s": 60}}))
         s = session(SessionState.DONE)
         daemon.reducer.sessions[s.key] = s
@@ -42,7 +42,8 @@ class BlurbTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0)
 
         self.assertTrue(task.cancelled())
-        self.assertNotIn(s.key, daemon.blurbs._pending)
+        self.assertIn(s.key, daemon.blurbs._pending)
+        self.assertIsNot(task, daemon.blurbs._pending[s.key])
 
     async def test_state_change_during_generation_discards_result(self):
         daemon = Daemon(Config({"llm": {"blurb_debounce_s": 0}}))

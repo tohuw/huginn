@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import ctypes
 import os
 import subprocess
 
@@ -58,6 +59,37 @@ end run
 '''
 
 
+class _ProcBSDInfo(ctypes.Structure):
+    _fields_ = [
+        ("flags", ctypes.c_uint32), ("status", ctypes.c_uint32),
+        ("xstatus", ctypes.c_uint32), ("pid", ctypes.c_uint32),
+        ("ppid", ctypes.c_uint32), ("uid", ctypes.c_uint32),
+        ("gid", ctypes.c_uint32), ("ruid", ctypes.c_uint32),
+        ("rgid", ctypes.c_uint32), ("svuid", ctypes.c_uint32),
+        ("svgid", ctypes.c_uint32), ("rfu_1", ctypes.c_uint32),
+        ("comm", ctypes.c_char * 16), ("name", ctypes.c_char * 32),
+        ("nfiles", ctypes.c_uint32), ("pgid", ctypes.c_uint32),
+        ("pjobc", ctypes.c_uint32), ("e_tdev", ctypes.c_uint32),
+        ("e_tpgid", ctypes.c_uint32), ("nice", ctypes.c_int32),
+        ("start_tvsec", ctypes.c_uint64), ("start_tvusec", ctypes.c_uint64),
+    ]
+
+
+def _native_process_start_time(pid: int) -> float | None:
+    """Read proc_bsdinfo's integer start timeval through libproc."""
+    try:
+        libproc = ctypes.CDLL("/usr/lib/libproc.dylib")
+        info = _ProcBSDInfo()
+        size = libproc.proc_pidinfo(
+            int(pid), 3, 0, ctypes.byref(info), ctypes.sizeof(info)  # PROC_PIDTBSDINFO
+        )
+        if size == ctypes.sizeof(info) and info.start_tvsec:
+            return info.start_tvsec + info.start_tvusec / 1_000_000
+    except (AttributeError, OSError):
+        pass
+    return None
+
+
 class MacOSPlatform(Platform):
     def pid_alive(self, pid: int) -> bool:
         try:
@@ -67,6 +99,9 @@ class MacOSPlatform(Platform):
             return False
 
     def process_start_time(self, pid: int) -> float | None:
+        native = _native_process_start_time(pid)
+        if native is not None:
+            return native
         value = run(["ps", "-o", "lstart=", "-p", str(pid)])
         try:
             parsed = dt.datetime.strptime(value, "%a %b %d %H:%M:%S %Y")

@@ -6,17 +6,47 @@ transcripts — last 64KB only.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
 from ..sources.transcript import Tail, _items, _user_text
 
 TRUNC = 300
+_PRIVATE_KEY_RE = re.compile(
+    r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----",
+    re.IGNORECASE,
+)
+_URL_CREDENTIAL_RE = re.compile(r"(?i)\b(https?://)[^\s/@:]+:[^\s/@]+@")
+_SECRET_PATTERNS = (
+    re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"),
+    re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b"),
+    re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"),
+    re.compile(r"\b(?:sk-ant-|sk-proj-|xai-)[A-Za-z0-9_-]{16,}\b"),
+    re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"),
+    re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+\-/]+=*"),
+    re.compile(r"(?i)\b(?:password|passwd|secret|token|api[_-]?key)\s*[:=]\s*[^\s,;]+"),
+)
+
+
+def redact_secrets(text: str) -> str:
+    """Redact common credential shapes before evidence leaves the transcript seam."""
+    if _PRIVATE_KEY_RE.search(text):
+        return "[REDACTED PRIVATE KEY]"
+    value = _URL_CREDENTIAL_RE.sub(r"\1[REDACTED]@", text)
+    for pattern in _SECRET_PATTERNS:
+        value = pattern.sub("[REDACTED]", value)
+    return value
 
 
 def _clip(text: str, n: int = TRUNC) -> str:
-    text = " ".join(text.split())
+    text = " ".join(redact_secrets(text).split())
     return text if len(text) <= n else text[: n - 1] + "…"
+
+
+def evidence_text(value: Any, n: int = TRUNC) -> str:
+    """Normalize, redact, and bound metadata inserted into an LLM evidence prompt."""
+    return _clip(str(value or "?"), n)
 
 
 def _tool_summary(item: dict) -> str:
@@ -98,10 +128,10 @@ def evidence_for_session(s: Any, max_lines: int = 40) -> list[str]:
 def digest_for_session(s: Any, max_lines: int = 40) -> str:
     """Markdown digest of one session — header + distilled tail."""
     head = [
-        f"# {s.name} ({s.source})",
+        f"# {evidence_text(s.name, 180)} ({evidence_text(s.source, 80)})",
         f"- state: {s.state.value} (since {int(__import__('time').time() - s.state_since)}s ago)",
-        f"- cwd: {s.cwd}",
-        f"- branch: {s.git_branch or '?'}  model: {s.model or '?'}",
+        f"- cwd: {evidence_text(s.cwd, 500)}",
+        f"- branch: {evidence_text(s.git_branch, 180)}  model: {evidence_text(s.model, 180)}",
     ]
     # Blurbs are cached UI summaries generated at an earlier decision point.
     # They are deliberately excluded from Ask evidence: current state and the

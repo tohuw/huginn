@@ -612,7 +612,7 @@ document.getElementById("chat-form").onsubmit = async (e) => {
   currentRequestId = null;
   if (DEMO_MODE) {
     await new Promise((resolve) => setTimeout(resolve, 350));
-    currentAnswer.textContent = demoAnswer(q);
+    setMarkdownText(currentAnswer, demoAnswer(q));
     setChatBusy(false);
     currentAnswer = null;
     return;
@@ -648,11 +648,127 @@ document.getElementById("chat-form").onsubmit = async (e) => {
 function addMsg(kind, text) {
   const div = document.createElement("div");
   div.className = `msg ${kind}`;
-  div.textContent = text;
+  if (kind === "a") setMarkdownText(div, text);
+  else div.textContent = text;
   const log = document.getElementById("chat-log");
   log.appendChild(div);
   log.scrollTop = log.scrollHeight;
   return div;
+}
+
+// --------------------------------------------------------- safe Markdown DOM
+
+function appendInlineMarkdown(parent, text) {
+  let cursor = 0;
+  const markers = ["`", "**", "*"];
+  while (cursor < text.length) {
+    let marker = null;
+    let start = text.length;
+    for (const candidate of markers) {
+      const found = text.indexOf(candidate, cursor);
+      if (found !== -1 && found < start) {
+        marker = candidate;
+        start = found;
+      }
+    }
+    if (!marker) {
+      parent.appendChild(document.createTextNode(text.slice(cursor)));
+      break;
+    }
+    if (start > cursor) parent.appendChild(document.createTextNode(text.slice(cursor, start)));
+    const end = text.indexOf(marker, start + marker.length);
+    if (end === -1) {
+      parent.appendChild(document.createTextNode(text.slice(start)));
+      break;
+    }
+    const tag = marker === "`" ? "code" : marker === "**" ? "strong" : "em";
+    const element = document.createElement(tag);
+    element.textContent = text.slice(start + marker.length, end);
+    parent.appendChild(element);
+    cursor = end + marker.length;
+  }
+}
+
+function renderMarkdown(target, raw) {
+  target.replaceChildren();
+  const lines = String(raw).split("\n");
+  let paragraph = [];
+  let list = null;
+  let codeLines = null;
+
+  const flushParagraph = () => {
+    if (!paragraph.length) return;
+    const element = document.createElement("p");
+    appendInlineMarkdown(element, paragraph.join(" "));
+    target.appendChild(element);
+    paragraph = [];
+  };
+  const closeList = () => { list = null; };
+  const appendCode = () => {
+    const pre = document.createElement("pre");
+    const code = document.createElement("code");
+    code.textContent = codeLines.join("\n");
+    pre.appendChild(code);
+    target.appendChild(pre);
+    codeLines = null;
+  };
+
+  for (const line of lines) {
+    if (line.trimStart().startsWith("```")) {
+      flushParagraph();
+      closeList();
+      if (codeLines === null) codeLines = [];
+      else appendCode();
+      continue;
+    }
+    if (codeLines !== null) {
+      codeLines.push(line);
+      continue;
+    }
+    const trimmed = line.trim();
+    if (!trimmed) {
+      flushParagraph();
+      closeList();
+      continue;
+    }
+    const heading = /^(#{1,3})\s+(.+)$/.exec(trimmed);
+    if (heading) {
+      flushParagraph();
+      closeList();
+      const element = document.createElement(`h${heading[1].length}`);
+      appendInlineMarkdown(element, heading[2]);
+      target.appendChild(element);
+      continue;
+    }
+    const bullet = /^[-*]\s+(.+)$/.exec(trimmed);
+    const numbered = /^\d+\.\s+(.+)$/.exec(trimmed);
+    if (bullet || numbered) {
+      flushParagraph();
+      const kind = bullet ? "ul" : "ol";
+      if (!list || list.tagName.toLowerCase() !== kind) {
+        list = document.createElement(kind);
+        target.appendChild(list);
+      }
+      const item = document.createElement("li");
+      appendInlineMarkdown(item, (bullet || numbered)[1]);
+      list.appendChild(item);
+      continue;
+    }
+    closeList();
+    paragraph.push(trimmed);
+  }
+  flushParagraph();
+  if (codeLines !== null) appendCode();
+}
+
+function setMarkdownText(target, text) {
+  target.dataset.raw = String(text);
+  renderMarkdown(target, target.dataset.raw);
+}
+
+function appendMarkdownText(target, text) {
+  target.dataset.raw = (target.dataset.raw || "") + String(text);
+  renderMarkdown(target, target.dataset.raw);
 }
 
 // ------------------------------------------------------- @name autocomplete
@@ -680,17 +796,15 @@ function updateMentions() {
     option.type = "button";
     option.setAttribute("role", "option");
     option.className = i === mentionIndex ? "selected" : "";
-    option.innerHTML = `<span>@${escapeHtml(s.name)}</span><small>${escapeHtml(s.state)}</small>`;
+    const name = document.createElement("span");
+    name.textContent = `@${s.name}`;
+    const state = document.createElement("small");
+    state.textContent = s.state;
+    option.append(name, state);
     option.onmousedown = (e) => { e.preventDefault(); chooseMention(i); };
     return option;
   }));
   mentionMenu.hidden = false;
-}
-
-function escapeHtml(text) {
-  const node = document.createElement("span");
-  node.textContent = text;
-  return node.innerHTML;
 }
 
 function closeMentions() {
@@ -885,7 +999,7 @@ function connect() {
   es.addEventListener("chat.delta", (e) => {
     const data = JSON.parse(e.data);
     if (currentAnswer && data.request_id === currentRequestId) {
-      currentAnswer.textContent += data.text;
+      appendMarkdownText(currentAnswer, data.text);
       const log = document.getElementById("chat-log");
       log.scrollTop = log.scrollHeight;
     }

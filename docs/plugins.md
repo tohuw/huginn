@@ -64,10 +64,11 @@ class ExampleSource:
             external_id = "stable-upstream-id"
             session = Session(
                 key=context.key(external_id),
-                source="example",
+                source=self.name,
                 session_id=external_id,
                 cwd="example/project",
                 name="example-session",
+                source_summary="status: waiting\nmessage: review requested",
             )
             context.upsert(session)
             context.ok()
@@ -78,7 +79,10 @@ Use `context.key(external_id)` for every record. This gives each plugin/source a
 collision-proof namespace. Call `context.remove(key)` when a previously emitted
 record is definitively gone; do not infer removal from one partial poll. Report
 bounded failures with `context.error(exception)` and keep retry/backoff policy in
-the plugin.
+the plugin. A source may put up to 4,000 characters of authoritative current
+evidence in `Session.source_summary`; Peek and Ask use it when there is no local
+transcript. Keep it factual, current, and free of credentials. The session's
+`source` must equal the source capability's `name`.
 
 ## Submodules
 

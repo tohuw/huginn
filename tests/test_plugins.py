@@ -8,6 +8,7 @@ from huginn.bus import Bus
 from huginn.config import Config, validate_setting
 from huginn.diagnostics import Diagnostics
 from huginn.llm.providers import all_providers, compatible_model
+from huginn.llm.context import evidence_for_session
 from huginn.model import Session
 from huginn.plugins import (
     API_VERSION,
@@ -150,10 +151,11 @@ class PluginSourceTests(unittest.TestCase):
         key = self.context.key("node-1:run-2")
         session = Session(
             key=key,
-            source="neo-cortex",
+            source="workers",
             session_id="run-2",
             cwd="worker-1/repo",
             name="worker-1-run-2",
+            source_summary="status: waiting\nmessage: needs review",
         )
 
         self.context.upsert(session)
@@ -162,6 +164,19 @@ class PluginSourceTests(unittest.TestCase):
         self.assertEqual(event.kind, "plugin.session")
         self.assertEqual(event.session_key, key)
         self.assertIs(event.payload["session"], session)
+
+    def test_context_bounds_authoritative_source_summary(self):
+        session = Session(
+            key=self.context.key("run-2"),
+            source="workers",
+            session_id="run-2",
+            cwd="worker-1/repo",
+            name="worker-1-run-2",
+            source_summary="x" * 4001,
+        )
+
+        with self.assertRaisesRegex(ValueError, "limited to 4000"):
+            self.context.upsert(session)
 
     def test_context_rejects_foreign_session_key(self):
         session = Session(
@@ -175,11 +190,38 @@ class PluginSourceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "must start"):
             self.context.upsert(session)
 
+    def test_context_rejects_mismatched_source_name(self):
+        session = Session(
+            key=self.context.key("run-2"),
+            source="neo-cortex",
+            session_id="run-2",
+            cwd="worker-1/repo",
+            name="worker-1-run-2",
+        )
+
+        with self.assertRaisesRegex(ValueError, "source must be workers"):
+            self.context.upsert(session)
+
+    def test_source_summary_is_used_as_bounded_session_evidence(self):
+        session = Session(
+            key=self.context.key("run-2"),
+            source="workers",
+            session_id="run-2",
+            cwd="worker-1/repo",
+            name="worker-1-run-2",
+            source_summary="status: waiting\nmessage: needs review",
+        )
+
+        self.assertEqual(
+            evidence_for_session(session),
+            ["status: waiting", "message: needs review"],
+        )
+
     def test_reducer_applies_plugin_upsert_and_remove(self):
         key = self.context.key("run-1")
         session = Session(
             key=key,
-            source="neo-cortex",
+            source="workers",
             session_id="run-1",
             cwd="node/repo",
             name="run-1",

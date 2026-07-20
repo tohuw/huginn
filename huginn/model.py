@@ -56,6 +56,10 @@ class Session:
     blurb_ts: float | None = None
     last_activity: float = 0.0     # epoch seconds
     last_prompt: str | None = None
+    # Bounded current evidence supplied by an installed non-transcript source.
+    # Kept distinct from blurbs: this is authoritative source data, not an LLM
+    # interpretation, and may therefore be included in Ask digests.
+    source_summary: str | None = None
     tokens: int | None = None
     version: str | None = None
     subagents: dict[str, int] | None = None   # e.g. {"running": 2, "done": 1}

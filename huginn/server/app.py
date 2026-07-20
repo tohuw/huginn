@@ -157,8 +157,8 @@ def create_app(daemon: "Daemon") -> FastAPI:
         s = reducer.sessions.get(key)
         if s is None:
             raise HTTPException(404)
-        from ..llm.context import distill
-        return {"lines": distill(s.transcript_path or "", s.source, max_lines=n)}
+        from ..llm.context import evidence_for_session
+        return {"lines": evidence_for_session(s, max_lines=max(1, min(n, 100)))}
 
     @api.post("/sessions/{key}/focus")
     def focus(key: str):

@@ -27,6 +27,7 @@ API_VERSION = 1
 ENTRY_POINT_GROUP = "huginn.plugins"
 _NAME_RE = re.compile(r"^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$")
 _EXTERNAL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$")
+MAX_SOURCE_SUMMARY_CHARS = 4000
 _RESERVED_PROVIDER_NAMES = frozenset({"claude", "codex"})
 LOG = logging.getLogger("huginn.plugins")
 
@@ -256,6 +257,15 @@ class SourceContext:
         expected = f"plugin:{self.namespace}:"
         if not isinstance(session, Session) or not session.key.startswith(expected):
             raise ValueError(f"plugin session key must start with {expected}")
+        if session.source != self.source_name:
+            raise ValueError(f"plugin session source must be {self.source_name}")
+        if session.source_summary is not None:
+            if not isinstance(session.source_summary, str):
+                raise ValueError("plugin source summary must be text")
+            if len(session.source_summary) > MAX_SOURCE_SUMMARY_CHARS:
+                raise ValueError(
+                    f"plugin source summary is limited to {MAX_SOURCE_SUMMARY_CHARS} characters"
+                )
         self.bus.emit(Event(
             "plugin.session",
             session.key,
@@ -286,6 +296,7 @@ __all__ = [
     "API_VERSION",
     "ENTRY_POINT_GROUP",
     "LLMProvider",
+    "MAX_SOURCE_SUMMARY_CHARS",
     "PluginRegistry",
     "PluginSpec",
     "SessionSource",

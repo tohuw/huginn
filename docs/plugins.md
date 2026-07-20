@@ -90,16 +90,12 @@ snapshot. Seed reconciliation state from those keys so a record removed while
 Huginn was stopped can age out after successful upstream polls. No other
 source's keys or session contents are exposed through this capability.
 
-## Submodules
+## Installing a plugin
 
-Submodules under core's `plugins/` directory are a convenient way to pin reviewed
-source revisions and develop multiple repositories together. They are not the
-runtime discovery mechanism. Install a checked-out plugin into the active Huginn
-environment, for example:
+Install a plugin package into Huginn's active environment, for example:
 
 ```sh
-uv pip install -e plugins/huginn-plugin-example
+uv pip install -e /path/to/huginn-plugin-example
 ```
 
-This split lets packaged Huginn installations discover plugins normally while a
-source checkout can reproduce the exact contributed plugin revisions.
+Huginn discovers it through the `huginn.plugins` entry point at the next start.

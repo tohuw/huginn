@@ -300,17 +300,10 @@ narrow `SourceContext` for namespaced session upserts, removals, configuration,
 and redacted health reporting. `GET /api/plugins` reports loaded plugins and
 isolated load failures.
 
-Git submodules under `plugins/` may pin contributed plugin source for coordinated
-development, but runtime discovery still uses installed package metadata. From a
-source checkout, install a plugin package into Huginn's environment (for example,
-`uv pip install -e plugins/<plugin>`); a submodule alone does not execute code.
-See [the plugin author guide](docs/plugins.md) for the contract and a minimal
+Install a plugin package into Huginn's active environment (for example,
+`uv pip install -e /path/to/plugin`) to make it discoverable. See
+[the plugin author guide](docs/plugins.md) for the contract and a minimal
 package example.
-
-The optional Bedrock provider and Neo-Cortex source are maintained as separate,
-pinned repositories under [`plugins/`](plugins/README.md). They are not bundled
-into core's runtime dependencies; initialize the submodules and explicitly
-install the capabilities you trust and need.
 
 ## Dev
 

@@ -4,6 +4,7 @@ the real schema in a temp sqlite file rather than relying on live data."""
 from __future__ import annotations
 
 import sqlite3
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -50,6 +51,39 @@ class CodexSubagentTests(unittest.TestCase):
 
 
 class CodexScanStatusTests(unittest.TestCase):
+    def test_backup_destination_is_closed_before_atomic_replace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.sqlite"
+            cache = root / "cache"; cache.mkdir()
+            writer = sqlite3.connect(source)
+            writer.execute("CREATE TABLE threads (id TEXT PRIMARY KEY)")
+            writer.commit(); writer.close()
+            reader = codex._connect_ro(source)
+            real_connect = sqlite3.connect
+            real_replace = os.replace
+            destinations = []
+
+            def connect(path):
+                destination = real_connect(path)
+                destinations.append(destination)
+                return destination
+
+            def replace(pending, snapshot):
+                with self.assertRaises(sqlite3.ProgrammingError):
+                    destinations[0].execute("SELECT 1")
+                real_replace(pending, snapshot)
+
+            with patch("huginn.sources.codex.config.CACHE_DIR", cache), \
+                 patch("huginn.sources.codex.config.ensure_state_dirs"), \
+                 patch("huginn.sources.codex._backup_cache_ts", 0), \
+                 patch("huginn.sources.codex.sqlite3.connect", side_effect=connect), \
+                 patch("huginn.sources.codex.os.replace", side_effect=replace):
+                codex._refresh_backup(reader)
+            reader.close()
+
+        self.assertTrue(destinations)
+
     def test_online_backup_includes_uncheckpointed_wal_transaction(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

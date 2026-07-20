@@ -7,6 +7,7 @@ safe fallback.  Never copy the live database files directly.
 """
 from __future__ import annotations
 
+import contextlib
 import sqlite3
 import os
 import time
@@ -68,12 +69,19 @@ def _refresh_backup(source: sqlite3.Connection) -> None:
     pending = snapshot.with_suffix(".sqlite.pending")
     try:
         pending.unlink(missing_ok=True)
-        with sqlite3.connect(pending) as destination:
+        # sqlite3.Connection's context manager commits or rolls back but does
+        # not close the handle. POSIX permits replacing that open file;
+        # Windows correctly rejects it with ERROR_SHARING_VIOLATION.
+        destination = sqlite3.connect(pending)
+        try:
             source.backup(destination)
+        finally:
+            destination.close()
         os.replace(pending, snapshot)
         _backup_cache_ts = time.time()
     except (OSError, sqlite3.Error):
-        pending.unlink(missing_ok=True)
+        with contextlib.suppress(OSError):
+            pending.unlink(missing_ok=True)
 
 
 def _connect_with_fallback() -> sqlite3.Connection | None:

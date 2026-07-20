@@ -112,6 +112,24 @@ huginn inspect @session-name
 huginn focus @session-name
 ```
 
+Local terminal sessions are observe-only by default. Steering is a separate,
+explicit capability with a two-stage confirmation:
+
+```sh
+huginn authority @session-name steer
+huginn send @session-name "continue with the focused test"
+huginn interrupt @session-name
+huginn authority @session-name observe
+```
+
+`send` accepts one bounded line, previews that exact line, and requires typing
+`yes` before the daemon submits it. `interrupt` separately previews Ctrl-C.
+Confirmations are random, one-use, process-local, and expire after 60 seconds;
+authority is bound to both the roster key and session ID so PID reuse cannot
+inherit control. There is no generic command runner. Exact-tab steering is
+currently available for live Claude/Codex CLI sessions mapped to iTerm2; Windows
+and editor-hosted sessions fail closed until an exact target can be guaranteed.
+
 Dashboard: session cards sort needs-you-first (permission → input → error →
 done → working → idle); ambient desktop-app tiles form a separate group below
 them. A persistent compact list view is available from the top bar. Tab title +

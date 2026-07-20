@@ -153,6 +153,23 @@ def cmd_roster(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_triage(args: argparse.Namespace) -> int:
+    try:
+        result = _daemon_api("/api/sessions").get("triage", {})
+    except RuntimeError as e:
+        print(f"huginn: {e}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(result, indent=2))
+        return 0
+    verdict = result.get("verdict", {})
+    print(verdict.get("headline") or "No triage result")
+    for item in result.get("contentions", []):
+        names = ", ".join(f"@{session['name']}" for session in item.get("sessions", []))
+        print(f"  {item.get('worktree')}: {names}")
+    return 0
+
+
 def cmd_inspect(args: argparse.Namespace) -> int:
     if not args.attention and not args.target:
         print("huginn: inspect requires @name or --attention", file=sys.stderr)
@@ -249,6 +266,10 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--attention", action="store_true", help="only sessions needing user attention")
     sp.add_argument("--json", action="store_true", help="emit structured JSON")
     sp.set_defaults(fn=cmd_roster)
+
+    sp = sub.add_parser("triage", help="summarize attention and worktree contention")
+    sp.add_argument("--json", action="store_true", help="emit structured JSON")
+    sp.set_defaults(fn=cmd_triage)
 
     sp = sub.add_parser("inspect", help="read a distilled live-session digest")
     sp.add_argument("target", nargs="?", help="session name, @name, or canonical key")

@@ -107,6 +107,7 @@ read daemon internals:
 
 ```sh
 huginn roster --attention
+huginn triage
 huginn inspect @session-name
 huginn focus @session-name
 ```
@@ -157,6 +158,11 @@ open terminal session. Claude CLI cards remain for the life of their process;
 Codex CLI cards require repeated roster misses plus a live-process/TTY poll
 confirming the tab is gone. Completed `codex exec` jobs remain for 30 seconds,
 and persistent editor backends still leave the view after their idle cutoff.
+
+Huginn also computes deterministic triage from the same roster used by Ask.
+When two active local agents resolve to the same Git worktree, the dashboard,
+CLI, and Ask context surface that contention explicitly. Separate worktrees are
+kept separate even when their repositories share the same basename.
 
 ## How it watches
 

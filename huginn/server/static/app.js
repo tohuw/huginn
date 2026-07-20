@@ -432,6 +432,27 @@ function setAttention(n) {
   document.getElementById("favicon").href = c.toDataURL("image/png");
 }
 
+function setTriage(triage) {
+  const banner = document.getElementById("triage");
+  const contentions = triage?.contentions || [];
+  banner.replaceChildren();
+  banner.hidden = contentions.length === 0;
+  if (!contentions.length) return;
+  const head = document.createElement("div");
+  head.className = "triage-head";
+  head.textContent = triage.verdict?.headline || "Competing sessions detected";
+  banner.appendChild(head);
+  for (const item of contentions) {
+    const row = document.createElement("div");
+    row.className = "triage-item";
+    const root = document.createElement("code");
+    root.textContent = item.worktree;
+    const names = (item.sessions || []).map((session) => `@${session.name}`).join(", ");
+    row.append(root, document.createTextNode(` — ${names}`));
+    banner.appendChild(row);
+  }
+}
+
 // ------------------------------------------------------------------- actions
 
 async function jump(key) {
@@ -827,6 +848,7 @@ async function snapshot() {
     // (confirmed dead/missing) or a definitive 404 when the card is used.
     for (const s of data.sessions) upsertCard(s);
     setAttention(data.attention);
+    setTriage(data.triage);
     if (!data.sessions.length) {
       const activity = await (await apiFetch("/api/activity")).json();
       rosterLoading = activity.agents_running;
@@ -858,6 +880,7 @@ function connect() {
   es.addEventListener("session.upsert", (e) => upsertCard(JSON.parse(e.data)));
   es.addEventListener("session.remove", (e) => removeCard(JSON.parse(e.data).key));
   es.addEventListener("attention.count", (e) => setAttention(JSON.parse(e.data).count));
+  es.addEventListener("triage.changed", (e) => setTriage(JSON.parse(e.data)));
   es.addEventListener("settings.changed", (e) => applySettings(JSON.parse(e.data)));
   es.addEventListener("chat.delta", (e) => {
     const data = JSON.parse(e.data);

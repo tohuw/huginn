@@ -37,6 +37,7 @@ class AuthTests(unittest.TestCase):
         c = make_client()
         r = c.get("/api/sessions", headers={"X-Huginn-Token": "secret-token"})
         self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["triage"]["verdict"]["level"], "clear")
 
     def test_activity_probes_sources_when_roster_is_empty(self):
         c = make_client()

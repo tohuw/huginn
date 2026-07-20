@@ -18,6 +18,7 @@ from .plugins import SourceContext, get_registry
 from .sources import claude_code, codex
 from .sources.transcript import ClaudeAnalyzer, CodexAnalyzer, Tail
 from .state import Reducer
+from .triage import build_triage
 
 
 class Daemon:
@@ -343,6 +344,10 @@ class Daemon:
                 self.bus.broadcast("session.remove", {"key": key})
             if changed or self.reducer.removed:
                 self.mark_dirty()
+                self.bus.broadcast(
+                    "triage.changed",
+                    build_triage(self.reducer.sessions.values()),
+                )
             att = self.reducer.attention_count()
             if att != self._last_attention:
                 self._last_attention = att

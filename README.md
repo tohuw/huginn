@@ -272,6 +272,14 @@ across restarts. An open, previously authorized tab silently refreshes its
 HttpOnly session cookie; `huginn open` remains the bootstrap path for a new
 browser profile or a cleared-cookie session.
 
+Peek, blurbs, and Ask share one bounded transcript-distillation seam. Before
+that evidence reaches the dashboard or an LLM provider, Huginn redacts common
+credential shapes (including AWS and GitHub tokens, bearer/JWT values, secret
+assignments, credential-bearing URLs, and private keys). Session metadata
+inserted into LLM prompts is normalized, redacted, and length-bounded too. This
+is defense in depth, not a general secret scanner: avoid putting credentials in
+prompts or agent output in the first place.
+
 ## Config
 
 `~/.config/huginn/config.toml` — server port, LLM enable/provider/models/caps,

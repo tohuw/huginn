@@ -11,7 +11,7 @@ from collections import deque
 from typing import TYPE_CHECKING
 
 from ..model import Session, SessionState
-from .context import distill
+from .context import distill, evidence_text
 from .providers import compatible_model, get_provider
 
 if TYPE_CHECKING:
@@ -79,7 +79,11 @@ class BlurbWorker:
         tail = "\n".join(distill(s.transcript_path or "", s.source, max_lines=25))
         if not s.title:
             guessed = await self._run_prompt(
-                TITLE_PROMPT.format(name=s.name, cwd=s.cwd, tail=tail),
+                TITLE_PROMPT.format(
+                    name=evidence_text(s.name, 180),
+                    cwd=evidence_text(s.cwd, 500),
+                    tail=tail,
+                ),
                 reserve=1 if s.state in BLURB_STATES else 0)
             current = self.daemon.reducer.sessions.get(key)
             if guessed and current is not None and not current.title:
@@ -90,7 +94,12 @@ class BlurbWorker:
         if s.state not in BLURB_STATES:
             return
         text = await self._run_prompt(
-            PROMPT.format(name=s.name, state=s.state.value, cwd=s.cwd, tail=tail))
+            PROMPT.format(
+                name=evidence_text(s.name, 180),
+                state=s.state.value,
+                cwd=evidence_text(s.cwd, 500),
+                tail=tail,
+            ))
         if not text:
             return
         first_line = text.splitlines()[0].strip()

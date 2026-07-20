@@ -252,6 +252,27 @@ browser profile or a cleared-cookie session.
 notification patterns, poll cadences, ended-card TTL. All editable from the
 dashboard settings too (PUT `/api/settings`).
 
+## Plugins
+
+Huginn discovers installed plugin distributions through the standard
+`huginn.plugins` Python entry-point group. Plugins can contribute Ask providers
+and long-running session sources without being copied into the core package.
+They are trusted native code: installation is the explicit trust boundary, and
+Huginn does not execute modules found by scanning arbitrary directories.
+
+An entry point returns a `huginn.plugins.PluginSpec` with API version `1`.
+Provider options appear dynamically in the dashboard; source plugins receive a
+narrow `SourceContext` for namespaced session upserts, removals, configuration,
+and redacted health reporting. `GET /api/plugins` reports loaded plugins and
+isolated load failures.
+
+Git submodules under `plugins/` may pin contributed plugin source for coordinated
+development, but runtime discovery still uses installed package metadata. From a
+source checkout, install a plugin package into Huginn's environment (for example,
+`uv pip install -e plugins/<plugin>`); a submodule alone does not execute code.
+See [the plugin author guide](docs/plugins.md) for the contract and a minimal
+package example.
+
 ## Dev
 
 ```sh

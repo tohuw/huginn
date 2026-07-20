@@ -718,6 +718,14 @@ async function loadSettings() {
   ]);
   const cfg = await settingsResponse.json();
   const availability = (await providersResponse.json()).providers;
+  for (const [name, status] of Object.entries(availability)) {
+    if (![...providerSelect.options].some((option) => option.value === name)) {
+      const option = document.createElement("option");
+      option.value = name;
+      option.textContent = status.label || name;
+      providerSelect.appendChild(option);
+    }
+  }
   applySettings(cfg);
   for (const option of providerSelect.options) {
     const status = availability[option.value];

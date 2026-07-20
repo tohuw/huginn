@@ -12,7 +12,15 @@ from unittest.mock import patch
 from huginn import config
 from huginn.config import Config
 from huginn.daemon import Daemon
+from huginn.plugins import PluginRegistry, PluginSpec
 from huginn.model import Session, SessionState
+
+
+class _PluginSource:
+    name = "workers"
+
+    async def run(self, context):
+        return None
 
 
 class DaemonSnapshotTests(unittest.TestCase):
@@ -45,6 +53,46 @@ class DaemonSnapshotTests(unittest.TestCase):
         d._restore_snapshot()   # no sessions.json written yet
         self.assertEqual(d.reducer.sessions, {})
         self.assertEqual(d.hook_hits, {})
+
+    def test_restore_prunes_session_for_uninstalled_plugin(self):
+        d1 = Daemon(Config({}))
+        key = "plugin:neo-cortex.workers:run-1"
+        d1.reducer.sessions[key] = Session(
+            key=key,
+            source="neo-cortex",
+            session_id="run-1",
+            cwd="node/repo",
+            name="run-1",
+        )
+        d1._write_snapshot()
+
+        d2 = Daemon(Config({}))
+        d2.plugins = PluginRegistry()
+        d2._restore_snapshot()
+
+        self.assertNotIn(key, d2.reducer.sessions)
+
+    def test_restore_keeps_session_for_installed_plugin_source(self):
+        d1 = Daemon(Config({}))
+        key = "plugin:neo-cortex.workers:run-1"
+        d1.reducer.sessions[key] = Session(
+            key=key,
+            source="neo-cortex",
+            session_id="run-1",
+            cwd="node/repo",
+            name="run-1",
+        )
+        d1._write_snapshot()
+
+        d2 = Daemon(Config({}))
+        d2.plugins = PluginRegistry((PluginSpec(
+            name="neo-cortex",
+            version="1",
+            sources=(_PluginSource(),),
+        ),))
+        d2._restore_snapshot()
+
+        self.assertIn(key, d2.reducer.sessions)
 
     def test_failed_write_stays_dirty_for_retry(self):
         d = Daemon(Config({}))

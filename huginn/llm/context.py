@@ -84,6 +84,17 @@ def distill(transcript_path: str, source: str, max_lines: int = 40) -> list[str]
     return lines[-max_lines:]
 
 
+def evidence_for_session(s: Any, max_lines: int = 40) -> list[str]:
+    """Bounded authoritative evidence for a built-in or plugin session."""
+    transcript = distill(s.transcript_path or "", s.source, max_lines)
+    if transcript:
+        return transcript
+    summary = getattr(s, "source_summary", None)
+    if not isinstance(summary, str):
+        return []
+    return [_clip(line) for line in summary.splitlines() if line.strip()][-max_lines:]
+
+
 def digest_for_session(s: Any, max_lines: int = 40) -> str:
     """Markdown digest of one session — header + distilled tail."""
     head = [
@@ -95,5 +106,5 @@ def digest_for_session(s: Any, max_lines: int = 40) -> str:
     # Blurbs are cached UI summaries generated at an earlier decision point.
     # They are deliberately excluded from Ask evidence: current state and the
     # transcript tail are authoritative, and a stale blurb can invent a blocker.
-    body = distill(s.transcript_path or "", s.source, max_lines)
+    body = evidence_for_session(s, max_lines)
     return "\n".join(head) + "\n\n```\n" + "\n".join(body) + "\n```\n"

@@ -79,6 +79,21 @@ def run_doctor() -> int:
         auth = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")) / "auth.json"
         _check("codex auth", auth.exists(), str(auth))
 
+    print("plugins:")
+    from .plugins import get_registry
+    registry = get_registry()
+    for plugin in registry.plugins:
+        capabilities = len(plugin.providers) + len(plugin.sources)
+        _check(plugin.name, True, f"{plugin.version}, {capabilities} capabilities")
+    if not registry.plugins:
+        _check("installed plugins", True, "none")
+    for error in registry.errors:
+        ok &= _check(
+            error.entry_point,
+            False,
+            f"{error.error_class}: {error.detail}",
+        )
+
     print("data sources:")
     from .sources import claude_code, codex as codex_src
     ok &= _check("~/.claude/sessions", claude_code.SESSIONS_DIR.is_dir())

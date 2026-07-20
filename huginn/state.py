@@ -217,6 +217,16 @@ class Reducer:
     def _on_desktop_tile(self, ev: Event, now: float) -> list[Session]:
         return self._on_codex_thread(ev, now)
 
+    def _on_plugin_session(self, ev: Event, now: float) -> list[Session]:
+        """Upsert a session emitted through the public plugin source context."""
+        return self._on_codex_thread(ev, now)
+
+    def _on_plugin_remove(self, ev: Event, now: float) -> list[Session]:
+        s = self.sessions.pop(ev.session_key or "", None)
+        if s is not None:
+            self.removed.append(s.key)
+        return []
+
     # hook events (installed in M3; reducer rules live here from the start)
     def _on_hook_claude(self, ev: Event, now: float) -> list[Session]:
         data = ev.payload.get("data", {})

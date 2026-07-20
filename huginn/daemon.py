@@ -14,6 +14,7 @@ from . import config
 from .bus import Bus
 from .diagnostics import Diagnostics
 from .model import Event, Session, SessionState
+from .plugins import SourceContext, get_registry
 from .sources import claude_code, codex
 from .sources.transcript import ClaudeAnalyzer, CodexAnalyzer, Tail
 from .state import Reducer
@@ -38,6 +39,7 @@ class Daemon:
         # instances in one process never share chat state -- issue #17.
         self.active_chat: asyncio.Task | None = None
         self.diagnostics = Diagnostics()   # issue #15
+        self.plugins = get_registry()
         from .llm.blurb import BlurbWorker
         self.blurbs = BlurbWorker(self)
 
@@ -58,6 +60,13 @@ class Daemon:
         except (OSError, json.JSONDecodeError):
             return
         self.reducer.restore(data.get("sessions", {}))
+        active_plugin_prefixes = tuple(
+            f"plugin:{plugin.name}.{source.name}:"
+            for plugin, source in self.plugins.sources()
+        )
+        for key in list(self.reducer.sessions):
+            if key.startswith("plugin:") and not key.startswith(active_plugin_prefixes):
+                del self.reducer.sessions[key]
         self.hook_hits = data.get("hook_hits", {})
 
     def _write_snapshot(self) -> None:
@@ -340,6 +349,22 @@ class Daemon:
                 self.bus.broadcast("attention.count", {"count": att})
 
     # --------------------------------------------------------------- server
+    async def _run_plugin_source(self, plugin, source) -> None:
+        context = SourceContext(
+            plugin_name=plugin.name,
+            source_name=source.name,
+            config=self.cfg,
+            bus=self.bus,
+            diagnostics=self.diagnostics,
+        )
+        try:
+            await source.run(context)
+            context.ok()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            context.error(exc)
+
     async def run(self, open_browser: bool = True) -> int:
         import uvicorn
         from .server.app import create_app
@@ -375,6 +400,10 @@ class Daemon:
             self.chatgpt_desktop_poller(),
             self.wsl_poller(),
         )]
+        tasks.extend(
+            asyncio.create_task(self._run_plugin_source(plugin, source))
+            for plugin, source in self.plugins.sources()
+        )
         self._write_daemon_state(port)
         if open_browser:
             # The token rides in a URL fragment (#t=...), which browsers

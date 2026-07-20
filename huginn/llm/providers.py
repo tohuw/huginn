@@ -257,17 +257,34 @@ class CodexCLI:
                 await stderr_task
 
 
-PROVIDERS = {"claude": ClaudeCLI(), "codex": CodexCLI()}
+BUILTIN_PROVIDERS = {"claude": ClaudeCLI(), "codex": CodexCLI()}
+# Compatibility alias for code that imported the original registry directly.
+PROVIDERS = BUILTIN_PROVIDERS
 
 
-def get_provider(name: str):
-    return PROVIDERS.get(name, PROVIDERS["claude"])
+def all_providers(registry=None):
+    """Built-ins plus installed plugin providers, with built-ins reserved."""
+    from ..plugins import get_registry
+
+    result = dict(BUILTIN_PROVIDERS)
+    for name, provider in (registry or get_registry()).providers().items():
+        if name not in result:
+            result[name] = provider
+    return result
 
 
-def compatible_model(provider: str, model: str) -> str:
+def get_provider(name: str, registry=None):
+    return all_providers(registry).get(name, BUILTIN_PROVIDERS["claude"])
+
+
+def compatible_model(provider: str, model: str, registry=None) -> str:
     """Avoid carrying one provider's configured model into the other CLI."""
     value = (model or "").strip()
     if not value:
         return ""
+    selected = get_provider(provider, registry)
+    plugin_filter = getattr(selected, "compatible_model", None)
+    if callable(plugin_filter):
+        return str(plugin_filter(value) or "")
     is_claude = value.lower().startswith("claude")
     return value if (provider == "claude") == is_claude else ""

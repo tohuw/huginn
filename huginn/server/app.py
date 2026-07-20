@@ -227,12 +227,20 @@ def create_app(daemon: "Daemon") -> FastAPI:
 
     @api.get("/providers")
     def providers():
-        from ..llm.providers import get_provider
+        from ..llm.providers import all_providers
         result = {}
-        for name in ("claude", "codex"):
-            reason = get_provider(name).available()
-            result[name] = {"available": reason is None, "reason": reason}
+        for name, provider in all_providers(daemon.plugins).items():
+            reason = provider.available()
+            result[name] = {
+                "available": reason is None,
+                "reason": reason,
+                "label": str(getattr(provider, "label", name))[:80],
+            }
         return {"providers": result}
+
+    @api.get("/plugins")
+    def plugins():
+        return daemon.plugins.to_dict()
 
     @api.put("/settings")
     async def put_settings(request: Request):

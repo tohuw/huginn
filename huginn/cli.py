@@ -94,17 +94,26 @@ def cmd_demo(args: argparse.Namespace) -> int:
     return 0
 
 
-def _daemon_api(path: str, method: str = "GET") -> dict:
+def _daemon_api(
+    path: str,
+    method: str = "GET",
+    body: dict | None = None,
+    timeout: float = 3,
+) -> dict:
     """Call the local authenticated daemon without exposing token mechanics."""
     if not (config.STATE_DIR / "daemon.json").exists():
         raise RuntimeError("daemon not running (open Huginn.app or run `huginn serve`)")
     try:
         port = (config.STATE_DIR / "port").read_text().strip()
         token = config.TOKEN_PATH.read_text().strip()
+        data = json.dumps(body).encode() if body is not None else None
+        headers = {"X-Huginn-Token": token}
+        if data is not None:
+            headers["Content-Type"] = "application/json"
         request = urllib.request.Request(
             f"http://127.0.0.1:{port}{path}", method=method,
-            headers={"X-Huginn-Token": token})
-        with urllib.request.urlopen(request, timeout=3) as response:
+            headers=headers, data=data)
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.load(response)
     except (OSError, urllib.error.URLError, json.JSONDecodeError) as e:
         raise RuntimeError(f"cannot reach Huginn daemon: {type(e).__name__}") from e
@@ -222,6 +231,63 @@ def cmd_focus(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_authority(args: argparse.Namespace) -> int:
+    try:
+        session = _resolve_session(args.target, _live_sessions())
+        key = urllib.parse.quote(session["key"], safe="")
+        result = _daemon_api(
+            f"/api/sessions/{key}/authority",
+            method="PUT",
+            body={"level": args.level},
+        )
+    except RuntimeError as e:
+        print(f"huginn: {e}", file=sys.stderr)
+        return 1
+    print(f"@{session['name']} authority: {result['level']}")
+    return 0
+
+
+def _confirmed_steering(target: str, action: str, instruction: str | None = None) -> int:
+    try:
+        session = _resolve_session(target, _live_sessions())
+        key = urllib.parse.quote(session["key"], safe="")
+        preview = _daemon_api(
+            f"/api/sessions/{key}/steering/preview",
+            method="POST",
+            body={"action": action, "instruction": instruction},
+        )
+        answer = input(f"{preview['summary']}\nType 'yes' to confirm: ")
+        confirmed = answer.strip().lower() == "yes"
+        result = _daemon_api(
+            "/api/steering/confirm",
+            method="POST",
+            body={
+                "confirmation_id": preview["confirmation_id"],
+                "confirmed": confirmed,
+            },
+            timeout=12,
+        )
+    except (EOFError, KeyboardInterrupt):
+        print("\nhuginn: steering cancelled", file=sys.stderr)
+        return 1
+    except RuntimeError as e:
+        print(f"huginn: {e}", file=sys.stderr)
+        return 1
+    if not confirmed or result.get("cancelled"):
+        print("huginn: steering cancelled", file=sys.stderr)
+        return 1
+    print(f"{action} confirmed for @{session['name']}")
+    return 0
+
+
+def cmd_send(args: argparse.Namespace) -> int:
+    return _confirmed_steering(args.target, "send", " ".join(args.instruction))
+
+
+def cmd_interrupt(args: argparse.Namespace) -> int:
+    return _confirmed_steering(args.target, "interrupt")
+
+
 def cmd_install_hooks(args: argparse.Namespace) -> int:
     from .hooks.install import install
     return install()
@@ -281,6 +347,20 @@ def main(argv: list[str] | None = None) -> int:
     sp = sub.add_parser("focus", help="focus a live session by name")
     sp.add_argument("target", help="session name, @name, or canonical key")
     sp.set_defaults(fn=cmd_focus)
+
+    sp = sub.add_parser("authority", help="set observe or steer authority for one session")
+    sp.add_argument("target", help="session name, @name, or canonical key")
+    sp.add_argument("level", choices=("observe", "steer"))
+    sp.set_defaults(fn=cmd_authority)
+
+    sp = sub.add_parser("send", help="confirm and send one exact line to a steer-authorized session")
+    sp.add_argument("target", help="session name, @name, or canonical key")
+    sp.add_argument("instruction", nargs="+", help="one line of terminal input")
+    sp.set_defaults(fn=cmd_send)
+
+    sp = sub.add_parser("interrupt", help="confirm Ctrl-C for a steer-authorized session")
+    sp.add_argument("target", help="session name, @name, or canonical key")
+    sp.set_defaults(fn=cmd_interrupt)
 
     sub.add_parser("install-hooks", help="install Claude Code + Codex hooks").set_defaults(fn=cmd_install_hooks)
     sub.add_parser("uninstall-hooks", help="remove huginn hooks").set_defaults(fn=cmd_uninstall_hooks)

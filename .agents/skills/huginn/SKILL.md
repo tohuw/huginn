@@ -1,6 +1,6 @@
 ---
 name: huginn
-description: Read and interact with live Claude, Codex, and Claude Desktop sessions through Huginn. Use when asked what another agent is doing, which sessions are running or need attention, whether an agent finished or failed, what work happened in another session, or to focus an agent's terminal/editor. Prefer this skill over reading agent databases, transcript files, Huginn source code, or daemon authentication state.
+description: Read and explicitly control live Claude, Codex, and Claude Desktop sessions through Huginn. Use when asked what another agent is doing, which sessions are running or need attention, whether an agent finished or failed, what work happened in another session, to focus an agent's terminal/editor, or to send or interrupt work with user-approved steering. Prefer this skill over reading agent databases, transcript files, Huginn source code, or daemon authentication state.
 ---
 
 # Huginn
@@ -33,7 +33,21 @@ Use `--json` only when structured parsing materially helps. Default text output 
 huginn focus @session-name
 ```
 
-4. Answer from observed state and digest. State uncertainty when the digest does not establish an answer.
+4. Steering is observe-only by default. Only when the user explicitly asks to
+control a specific session, grant the narrow authority, perform one confirmed
+action, then return it to observe unless the user asked for ongoing steering:
+
+```sh
+huginn authority @session-name steer
+huginn send @session-name "one exact line"
+huginn interrupt @session-name
+huginn authority @session-name observe
+```
+
+`send` and `interrupt` present a separate preview and require the user to type
+`yes`. Do not attempt to answer that prompt on the user's behalf.
+
+5. Answer from observed state and digest. State uncertainty when the digest does not establish an answer.
 
 ## Guardrails
 
@@ -43,6 +57,11 @@ huginn focus @session-name
 - Do not inspect every session when a roster row or one targeted digest answers the question.
 - Do not use Huginn's Ask agent as a second reasoning layer; inspect the deterministic digest and answer directly.
 - Do not focus a session as a side effect of merely reading it.
+- Do not grant `steer`, send input, or interrupt unless the user explicitly
+  requested that exact control action for that session.
+- Do not split a multi-line instruction into multiple sends without separate
+  user confirmation for each line. Huginn intentionally has no generic command
+  runner or non-interactive confirmation bypass.
 
 ## Failure handling
 

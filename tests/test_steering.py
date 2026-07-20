@@ -1,6 +1,7 @@
 """Authority, exact-input validation, and one-use steering confirmation."""
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -56,7 +57,8 @@ class AuthorityTests(unittest.TestCase):
                 result = set_authority(_session(), "steer", path)
 
             self.assertEqual(result["level"], "steer")
-            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            if os.name != "nt":
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             self.assertEqual(authority_for(_session(), path), "steer")
             self.assertEqual(authority_for(_session("reused-process"), path), "observe")
 

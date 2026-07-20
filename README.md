@@ -123,7 +123,9 @@ sessions open the workspace; Windows Terminal currently focuses the owning windo
 top-right) that reads current per-session digests and answers questions about
 what's going on. Ask stays in that monitoring scope; it can also toggle blurbs,
 switch its provider, change cards/list view, title a card, and hide its own
-panel. The pencil edits a short ephemeral card title; absent a manual title,
+panel. Ask answers render headings, lists, emphasis, inline code, and fenced
+code blocks through DOM construction without HTML injection. The pencil edits a
+short ephemeral card title; absent a manual title,
 the configured LLM may guess one from current session evidence. Titles belong
 to that card only and disappear when it does. Dashboard settings persist across
 reloads and synchronize across open tabs.

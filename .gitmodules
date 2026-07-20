@@ -1,6 +1,0 @@
-[submodule "plugins/huginn-plugin-bedrock"]
-	path = plugins/huginn-plugin-bedrock
-	url = https://github.com/tohuw/huginn-plugin-bedrock.git
-[submodule "plugins/huginn-plugin-neo-cortex"]
-	path = plugins/huginn-plugin-neo-cortex
-	url = https://github.com/tohuw/huginn-plugin-neo-cortex.git

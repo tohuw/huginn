@@ -273,6 +273,11 @@ source checkout, install a plugin package into Huginn's environment (for example
 See [the plugin author guide](docs/plugins.md) for the contract and a minimal
 package example.
 
+The optional Bedrock provider and Neo-Cortex source are maintained as separate,
+pinned repositories under [`plugins/`](plugins/README.md). They are not bundled
+into core's runtime dependencies; initialize the submodules and explicitly
+install the capabilities you trust and need.
+
 ## Dev
 
 ```sh

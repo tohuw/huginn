@@ -14,7 +14,7 @@ import uuid
 from typing import TYPE_CHECKING
 
 from .. import config
-from .context import digest_for_session
+from .context import digest_for_session, evidence_text
 from .providers import compatible_model, get_provider
 
 if TYPE_CHECKING:
@@ -222,8 +222,8 @@ async def _run_chat(daemon: "Daemon", provider, question: str, request_id: str,
             digest_path.chmod(0o600)
             age = int(time.time() - s.state_since)
             roster_lines.append(
-                f"- {s.name} [{s.source}] state={s.state.value} ({age}s) "
-                f"cwd={s.cwd} -> {fname}")
+                f"- {evidence_text(s.name, 180)} [{evidence_text(s.source, 80)}] "
+                f"state={s.state.value} ({age}s) cwd={evidence_text(s.cwd, 500)} -> {fname}")
         if not roster_lines:
             broadcast("chat.delta", {"text": "No sessions to ask about."})
             broadcast("chat.done", {})

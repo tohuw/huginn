@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .. import config
 from ..model import Event, STATE_RANK
+from ..triage import build_triage
 from .sse import event_stream
 
 if TYPE_CHECKING:
@@ -121,7 +122,8 @@ def create_app(daemon: "Daemon") -> FastAPI:
         items = sorted(reducer.sessions.values(),
                        key=lambda s: (STATE_RANK[s.state], s.state_since))
         return {"sessions": [s.to_dict() for s in items],
-                "attention": reducer.attention_count()}
+                "attention": reducer.attention_count(),
+                "triage": build_triage(items)}
 
     @api.get("/activity")
     def activity():

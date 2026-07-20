@@ -41,6 +41,24 @@ class AgentCliTests(unittest.TestCase):
         self.assertIn("@huginn-abc", out.getvalue())
         self.assertNotIn("quiet", out.getvalue())
 
+    def test_triage_prints_worktree_contention(self):
+        payload = {
+            "triage": {
+                "verdict": {"level": "contention", "headline": "1 worktree has competing sessions"},
+                "contentions": [{
+                    "worktree": "/tmp/project",
+                    "sessions": [{"name": "alpha"}, {"name": "beta"}],
+                }],
+            },
+        }
+        out = io.StringIO()
+
+        with patch("huginn.cli._daemon_api", return_value=payload), redirect_stdout(out):
+            code = cli.cmd_triage(Namespace(json=False))
+
+        self.assertEqual(code, 0)
+        self.assertIn("@alpha, @beta", out.getvalue())
+
     def test_inspect_returns_distilled_tail(self):
         def api(path, method="GET"):
             if path == "/api/sessions":

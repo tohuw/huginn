@@ -39,6 +39,12 @@ label.ctl { display: flex; gap: 6px; align-items: center; }
 
 main { grid-area: main; position: relative; z-index: 0; overflow-y: auto; padding: 14px;
   container-type: inline-size; }
+#triage { margin: 0 0 12px; padding: 9px 12px; border: 1px solid var(--error);
+  border-left-width: 3px; border-radius: 7px; background: #c2678210; }
+#triage[hidden] { display: none; }
+.triage-head { color: var(--fg); font-weight: 600; }
+.triage-item { margin-top: 4px; color: var(--dim); overflow-wrap: anywhere; }
+.triage-item code { color: var(--fg); }
 #grid, #app-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
 #grid[data-view="list"], #app-grid[data-view="list"] { grid-template-columns: 1fr; gap: 5px; }
 #app-tiles { margin-top: 18px; padding-top: 10px; border-top: 1px solid var(--edge); }

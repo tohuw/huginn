@@ -44,6 +44,9 @@ that." Do not provide a recipe.
 Roster:
 {roster}
 
+Deterministic triage:
+{triage}
+
 Question: {question}
 """
 
@@ -226,7 +229,21 @@ async def _run_chat(daemon: "Daemon", provider, question: str, request_id: str,
             broadcast("chat.done", {})
             return
 
-        prompt = SYSTEM.format(roster="\n".join(roster_lines), question=question)
+        from ..triage import build_triage
+        triage = build_triage(daemon.reducer.sessions.values())
+        contention_lines = [
+            f"- {item['worktree']}: "
+            + ", ".join(session["name"] for session in item["sessions"])
+            for item in triage["contentions"]
+        ]
+        triage_text = triage["verdict"]["headline"]
+        if contention_lines:
+            triage_text += "\n" + "\n".join(contention_lines)
+        prompt = SYSTEM.format(
+            roster="\n".join(roster_lines),
+            triage=triage_text,
+            question=question,
+        )
         provider_name = provider_name or getattr(provider, "name", daemon.cfg.get("llm", "provider"))
         model = compatible_model(
             provider_name, daemon.cfg.get("llm", "chat_model"), daemon.plugins)

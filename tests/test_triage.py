@@ -78,12 +78,16 @@ class TriageTests(unittest.TestCase):
         self.assertEqual(result["contentions"], [])
 
     def test_non_git_sessions_contend_only_in_same_canonical_directory(self):
-        first = _session("one", "/tmp/project", SessionState.WORKING)
-        second = _session("two", "/tmp/project/../project", SessionState.WORKING, "claude")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "project"
+            root.mkdir()
+            first = _session("one", str(root), SessionState.WORKING)
+            second = _session(
+                "two", str(root / ".." / "project"), SessionState.WORKING, "claude")
 
-        result = build_triage([first, second], now=1000)
+            result = build_triage([first, second], now=1000)
 
-        self.assertEqual(result["contentions"][0]["worktree"], str(Path("/tmp/project").resolve()))
+        self.assertEqual(result["contentions"][0]["worktree"], str(root.resolve()))
 
     def test_relative_path_is_not_resolved_against_daemon_cwd(self):
         self.assertIsNone(worktree_root("relative/project"))

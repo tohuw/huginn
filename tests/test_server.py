@@ -166,13 +166,28 @@ class AuthTests(unittest.TestCase):
             "claude": FakeProvider(None),
             "codex": FakeProvider("embedded codex binary not found"),
         }
-        with patch("huginn.llm.providers.get_provider", side_effect=providers.get):
+        with patch("huginn.llm.providers.all_providers", return_value=providers):
             r = c.get("/api/providers", headers={"X-Huginn-Token": "secret-token"})
         self.assertEqual(r.status_code, 200)
         body = r.json()["providers"]
         self.assertTrue(body["claude"]["available"])
         self.assertFalse(body["codex"]["available"])
         self.assertEqual(body["codex"]["reason"], "embedded codex binary not found")
+
+    def test_plugins_reports_the_daemon_registry(self):
+        c, daemon = make_client_with_daemon()
+        daemon.plugins = type("Registry", (), {
+            "to_dict": lambda self: {
+                "api_version": 1,
+                "plugins": [{"name": "example", "version": "1"}],
+                "errors": [],
+            },
+        })()
+
+        r = c.get("/api/plugins", headers={"X-Huginn-Token": "secret-token"})
+
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["plugins"][0]["name"], "example")
 
     def test_settings_put_rejects_invalid_value_with_422(self):
         self._isolated_config_dir()

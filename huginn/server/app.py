@@ -157,8 +157,8 @@ def create_app(daemon: "Daemon") -> FastAPI:
         s = reducer.sessions.get(key)
         if s is None:
             raise HTTPException(404)
-        from ..llm.context import distill
-        return {"lines": distill(s.transcript_path or "", s.source, max_lines=n)}
+        from ..llm.context import evidence_for_session
+        return {"lines": evidence_for_session(s, max_lines=max(1, min(n, 100)))}
 
     @api.post("/sessions/{key}/focus")
     def focus(key: str):
@@ -227,12 +227,20 @@ def create_app(daemon: "Daemon") -> FastAPI:
 
     @api.get("/providers")
     def providers():
-        from ..llm.providers import get_provider
+        from ..llm.providers import all_providers
         result = {}
-        for name in ("claude", "codex"):
-            reason = get_provider(name).available()
-            result[name] = {"available": reason is None, "reason": reason}
+        for name, provider in all_providers(daemon.plugins).items():
+            reason = provider.available()
+            result[name] = {
+                "available": reason is None,
+                "reason": reason,
+                "label": str(getattr(provider, "label", name))[:80],
+            }
         return {"providers": result}
+
+    @api.get("/plugins")
+    def plugins():
+        return daemon.plugins.to_dict()
 
     @api.put("/settings")
     async def put_settings(request: Request):

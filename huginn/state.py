@@ -162,9 +162,9 @@ class Reducer:
         if s.blurb and (not s.blurb_ts or s.blurb_ts < s.state_since):
             s.blurb = None; s.blurb_ts = None; changed = True
         for attr in ("name", "model", "git_branch", "tokens", "cwd", "transcript_path",
-                    "last_prompt", "subagents"):
+                    "last_prompt", "source_summary", "subagents"):
             v = getattr(incoming, attr)
-            if v and v != getattr(s, attr):
+            if (v or attr == "source_summary") and v != getattr(s, attr):
                 setattr(s, attr, v); changed = True
         s.last_activity = max(s.last_activity, incoming.last_activity)
         # Poll evidence is allowed to correct stale hook/transcript states;
@@ -216,6 +216,16 @@ class Reducer:
     # Claude Desktop tile updates share the codex upsert semantics
     def _on_desktop_tile(self, ev: Event, now: float) -> list[Session]:
         return self._on_codex_thread(ev, now)
+
+    def _on_plugin_session(self, ev: Event, now: float) -> list[Session]:
+        """Upsert a session emitted through the public plugin source context."""
+        return self._on_codex_thread(ev, now)
+
+    def _on_plugin_remove(self, ev: Event, now: float) -> list[Session]:
+        s = self.sessions.pop(ev.session_key or "", None)
+        if s is not None:
+            self.removed.append(s.key)
+        return []
 
     # hook events (installed in M3; reducer rules live here from the start)
     def _on_hook_claude(self, ev: Event, now: float) -> list[Session]:

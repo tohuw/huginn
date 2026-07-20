@@ -156,7 +156,7 @@ async def start_chat(daemon: "Daemon", body: dict) -> dict:
         return {"ok": True, "request_id": request_id,
                 "settings": daemon.cfg.to_dict()}
     provider_name = body.get("provider") or daemon.cfg.get("llm", "provider")
-    provider = get_provider(provider_name)
+    provider = get_provider(provider_name, daemon.plugins)
     unavailable = provider.available()
     if unavailable:
         return {"ok": False, "error": unavailable}
@@ -228,7 +228,8 @@ async def _run_chat(daemon: "Daemon", provider, question: str, request_id: str,
 
         prompt = SYSTEM.format(roster="\n".join(roster_lines), question=question)
         provider_name = provider_name or getattr(provider, "name", daemon.cfg.get("llm", "provider"))
-        model = compatible_model(provider_name, daemon.cfg.get("llm", "chat_model"))
+        model = compatible_model(
+            provider_name, daemon.cfg.get("llm", "chat_model"), daemon.plugins)
         got_any = False
         async for chunk in provider.stream(
                 prompt, model=model, cwd=str(chat_dir), allowed_tools="Read,Grep"):

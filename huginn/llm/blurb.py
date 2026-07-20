@@ -113,8 +113,9 @@ class BlurbWorker:
             from .. import config as _config
             _config.ensure_state_dirs()
             provider_name = cfg.get("llm", "provider")
-            text = await get_provider(provider_name).run_text(
-                prompt, model=compatible_model(provider_name, cfg.get("llm", "blurb_model")),
+            text = await get_provider(provider_name, self.daemon.plugins).run_text(
+                prompt, model=compatible_model(
+                    provider_name, cfg.get("llm", "blurb_model"), self.daemon.plugins),
                 timeout=cfg.get("llm", "blurb_timeout_s"),
                 cwd=str(_config.CACHE_DIR))
             self.daemon.diagnostics.ok("blurb")

@@ -74,7 +74,6 @@ _POSITIVE_NUMERIC_KEYS = {
     ("wsl", "poll_s"),
 }
 _ENUM_KEYS: dict[tuple[str, str], set[str]] = {
-    ("llm", "provider"): {"claude", "codex"},
     ("ui", "view"): {"cards", "list"},
     ("ui", "sort"): {"state", "alpha", "newest", "oldest"},
     ("ui", "chat_span"): {"vertical", "horizontal"},
@@ -89,6 +88,14 @@ def validate_setting(section: str, key: str, value: Any) -> str | None:
     if section not in DEFAULTS or key not in DEFAULTS[section]:
         return f"unknown setting: {section}.{key}"
     default = DEFAULTS[section][key]
+
+    if (section, key) == ("llm", "provider"):
+        if not isinstance(value, str):
+            return "llm.provider must be a string"
+        from .llm.providers import all_providers
+        if value not in all_providers():
+            return f"llm.provider must name an installed provider: {value}"
+        return None
 
     enum = _ENUM_KEYS.get((section, key))
     if enum is not None:

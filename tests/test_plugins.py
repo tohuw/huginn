@@ -240,6 +240,25 @@ class PluginSourceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "safe characters"):
             self.context.key("../escape")
 
+    def test_existing_keys_are_filtered_to_exact_source_namespace(self):
+        context = SourceContext(
+            plugin_name="neo-cortex",
+            source_name="workers",
+            config=Config({}),
+            bus=self.bus,
+            diagnostics=Diagnostics(),
+            _existing_keys=lambda: (
+                "plugin:neo-cortex.workers:run-1",
+                "plugin:neo-cortex.other:run-2",
+                "codex:thread-1",
+            ),
+        )
+
+        self.assertEqual(
+            context.existing_keys(),
+            ("plugin:neo-cortex.workers:run-1",),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -356,6 +356,7 @@ class Daemon:
             config=self.cfg,
             bus=self.bus,
             diagnostics=self.diagnostics,
+            _existing_keys=lambda: tuple(self.reducer.sessions),
         )
         try:
             await source.run(context)

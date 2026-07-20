@@ -84,6 +84,12 @@ evidence in `Session.source_summary`; Peek and Ask use it when there is no local
 transcript. Keep it factual, current, and free of credentials. The session's
 `source` must equal the source capability's `name`.
 
+At startup, `context.existing_keys()` returns only keys in this exact
+plugin/source namespace, including records restored from Huginn's private
+snapshot. Seed reconciliation state from those keys so a record removed while
+Huginn was stopped can age out after successful upstream polls. No other
+source's keys or session contents are exposed through this capability.
+
 ## Submodules
 
 Submodules under core's `plugins/` directory are a convenient way to pin reviewed

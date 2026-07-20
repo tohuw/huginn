@@ -13,7 +13,7 @@ import logging
 from dataclasses import dataclass, field
 from functools import lru_cache
 from importlib import metadata
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Callable, Protocol
 
 from .model import Event, Session
 
@@ -238,6 +238,9 @@ class SourceContext:
     config: "Config"
     bus: "Bus" = field(repr=False)
     diagnostics: "Diagnostics" = field(repr=False)
+    _existing_keys: Callable[[], tuple[str, ...]] = field(
+        default=lambda: (), repr=False
+    )
 
     @property
     def namespace(self) -> str:
@@ -252,6 +255,14 @@ class SourceContext:
         if not isinstance(external_id, str) or not _EXTERNAL_ID_RE.fullmatch(external_id):
             raise ValueError("plugin session IDs must be 1-160 safe characters")
         return f"plugin:{self.namespace}:{external_id}"
+
+    def existing_keys(self) -> tuple[str, ...]:
+        """Return only this source's restored/current keys for reconciliation."""
+        expected = f"plugin:{self.namespace}:"
+        return tuple(
+            key for key in self._existing_keys()
+            if isinstance(key, str) and key.startswith(expected)
+        )
 
     def upsert(self, session: Session) -> None:
         expected = f"plugin:{self.namespace}:"

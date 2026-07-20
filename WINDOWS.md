@@ -60,3 +60,7 @@ For a source checkout, install Huginn into the active Windows Python environment
 - [ ] Add an installer and promote ARM64 after the portable build is stable.
 
 Exact Windows Terminal tab selection remains the main known risk. Window-level focus and VS Code reopening can ship first; Huginn must not silently open an unrelated terminal tab when exact focus is unavailable.
+
+Steering and Ctrl-C therefore fail closed on Windows. Observe, inspect, and
+window focus remain available; foreground-window keystroke synthesis is not an
+acceptable substitute for a verified exact-tab target.

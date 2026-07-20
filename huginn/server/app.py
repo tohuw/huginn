@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .. import config
 from ..model import Event, STATE_RANK
+from ..steering import authority_for, execute_pending, set_authority
 from ..triage import build_triage
 from .sse import event_stream
 
@@ -169,6 +170,67 @@ def create_app(daemon: "Daemon") -> FastAPI:
             raise HTTPException(404)
         from ..focus import focus_session
         return focus_session(s)
+
+    @api.get("/sessions/{key}/authority")
+    def get_authority(key: str):
+        s = reducer.sessions.get(key)
+        if s is None:
+            raise HTTPException(404)
+        return {"key": s.key, "session_id": s.session_id, "level": authority_for(s)}
+
+    @api.put("/sessions/{key}/authority")
+    async def put_authority(key: str, request: Request):
+        s = reducer.sessions.get(key)
+        if s is None:
+            raise HTTPException(404)
+        try:
+            body = await request.json()
+            level = body.get("level") if isinstance(body, dict) else None
+            return set_authority(s, level)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @api.post("/sessions/{key}/steering/preview")
+    async def preview_steering(key: str, request: Request):
+        s = reducer.sessions.get(key)
+        if s is None:
+            raise HTTPException(404)
+        try:
+            body = await request.json()
+            if not isinstance(body, dict):
+                raise ValueError("request body must be an object")
+            pending = daemon.steering_confirmations.create(
+                s,
+                body.get("action"),
+                body.get("instruction"),
+            )
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+        except (ValueError, RuntimeError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return {
+            "confirmation_id": pending.confirmation_id,
+            "summary": pending.summary,
+            "expires_in": 60,
+        }
+
+    @api.post("/steering/confirm")
+    async def confirm_steering(request: Request):
+        try:
+            body = await request.json()
+            if not isinstance(body, dict) or not isinstance(body.get("confirmed"), bool):
+                raise ValueError("confirmed must be a boolean")
+            pending = daemon.steering_confirmations.consume(body.get("confirmation_id"))
+            if not body["confirmed"]:
+                return {"ok": False, "cancelled": True}
+            s = reducer.sessions.get(pending.session_key)
+            if s is None:
+                raise ValueError("session ended after preview")
+            return execute_pending(pending, s)
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+        except (ValueError, RuntimeError) as exc:
+            raise HTTPException(422, str(exc)) from exc
 
     @api.put("/sessions/{key}/title")
     async def set_title(key: str, request: Request):

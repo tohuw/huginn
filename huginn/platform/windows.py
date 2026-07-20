@@ -152,6 +152,18 @@ class WindowsPlatform(Platform):
         detail = "Windows Terminal focused; exact tab unavailable" if ok else "Windows Terminal window not found"
         return FocusResult(ok, "Windows Terminal" if ok else None, detail)
 
+    def send_terminal_text(self, pid: int | None, tty: str | None, text: str) -> FocusResult:
+        return FocusResult(
+            False,
+            detail="safe exact-tab steering is not available on Windows Terminal",
+        )
+
+    def interrupt_terminal(self, pid: int | None, tty: str | None) -> FocusResult:
+        return FocusResult(
+            False,
+            detail="safe exact-tab interruption is not available on Windows Terminal",
+        )
+
     def focus_vscode(self, cwd: str) -> FocusResult:
         executable = shutil.which("code") or shutil.which("code.cmd")
         if not executable:

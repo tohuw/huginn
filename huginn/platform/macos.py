@@ -58,6 +58,45 @@ on run argv
 end run
 '''
 
+_OSA_SEND_TTY = '''
+on run argv
+  set targetTty to item 1 of argv
+  set instructionText to item 2 of argv
+  tell application "iTerm2"
+    repeat with w in windows
+      repeat with t in tabs of w
+        repeat with s in sessions of t
+          if tty of s is targetTty then
+            tell s to write text instructionText
+            return "ok"
+          end if
+        end repeat
+      end repeat
+    end repeat
+  end tell
+  return "notfound"
+end run
+'''
+
+_OSA_INTERRUPT_TTY = '''
+on run argv
+  set targetTty to item 1 of argv
+  tell application "iTerm2"
+    repeat with w in windows
+      repeat with t in tabs of w
+        repeat with s in sessions of t
+          if tty of s is targetTty then
+            tell s to write text (ASCII character 3) newline no
+            return "ok"
+          end if
+        end repeat
+      end repeat
+    end repeat
+  end tell
+  return "notfound"
+end run
+'''
+
 
 class _ProcBSDInfo(ctypes.Structure):
     _fields_ = [
@@ -147,6 +186,20 @@ class MacOSPlatform(Platform):
             return FocusResult(False, detail="terminal tty not found")
         dev = tty if tty.startswith("/dev/") else f"/dev/{tty}"
         ok = run(["osascript", "-e", _OSA_FOCUS_TTY, dev], timeout=10) == "ok"
+        return FocusResult(ok, "iTerm2" if ok else None, None if ok else "iTerm2 tab not found")
+
+    def send_terminal_text(self, pid: int | None, tty: str | None, text: str) -> FocusResult:
+        if not tty:
+            return FocusResult(False, detail="terminal tty not found")
+        dev = tty if tty.startswith("/dev/") else f"/dev/{tty}"
+        ok = run(["osascript", "-e", _OSA_SEND_TTY, dev, text], timeout=10) == "ok"
+        return FocusResult(ok, "iTerm2" if ok else None, None if ok else "iTerm2 tab not found")
+
+    def interrupt_terminal(self, pid: int | None, tty: str | None) -> FocusResult:
+        if not tty:
+            return FocusResult(False, detail="terminal tty not found")
+        dev = tty if tty.startswith("/dev/") else f"/dev/{tty}"
+        ok = run(["osascript", "-e", _OSA_INTERRUPT_TTY, dev], timeout=10) == "ok"
         return FocusResult(ok, "iTerm2" if ok else None, None if ok else "iTerm2 tab not found")
 
     def focus_vscode(self, cwd: str) -> FocusResult:

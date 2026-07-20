@@ -101,6 +101,70 @@ class AgentCliTests(unittest.TestCase):
             self.assertEqual(cli.cmd_focus(Namespace(target="@huginn-abc")), 0)
         self.assertEqual(calls[-1], ("/api/sessions/codex%3Aabc/focus", "POST"))
 
+    def test_authority_targets_resolved_session(self):
+        calls = []
+
+        def api(path, method="GET", body=None, **_kwargs):
+            calls.append((path, method, body))
+            if path == "/api/sessions":
+                return {"sessions": [SESSION]}
+            return {"level": "steer"}
+
+        args = Namespace(target="@huginn-abc", level="steer")
+        with patch("huginn.cli._daemon_api", side_effect=api), redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_authority(args), 0)
+
+        self.assertEqual(calls[-1], (
+            "/api/sessions/codex%3Aabc/authority",
+            "PUT",
+            {"level": "steer"},
+        ))
+
+    def test_send_requires_yes_and_confirms_exact_preview(self):
+        calls = []
+
+        def api(path, method="GET", body=None, **_kwargs):
+            calls.append((path, method, body))
+            if path == "/api/sessions":
+                return {"sessions": [SESSION]}
+            if path.endswith("/steering/preview"):
+                return {"confirmation_id": "confirm-1", "summary": "Send exact line"}
+            return {"ok": True, "action": "send"}
+
+        args = Namespace(target="@huginn-abc", instruction=["  exact input  "])
+        with patch("huginn.cli._daemon_api", side_effect=api), \
+             patch("builtins.input", return_value="yes"), \
+             redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_send(args), 0)
+
+        self.assertEqual(calls[1][2], {
+            "action": "send",
+            "instruction": "  exact input  ",
+        })
+        self.assertEqual(calls[2][2], {
+            "confirmation_id": "confirm-1",
+            "confirmed": True,
+        })
+
+    def test_send_cancellation_is_consumed_server_side(self):
+        calls = []
+
+        def api(path, method="GET", body=None, **_kwargs):
+            calls.append((path, method, body))
+            if path == "/api/sessions":
+                return {"sessions": [SESSION]}
+            if path.endswith("/steering/preview"):
+                return {"confirmation_id": "confirm-1", "summary": "Send exact line"}
+            return {"ok": False, "cancelled": True}
+
+        args = Namespace(target="@huginn-abc", instruction=["continue"])
+        with patch("huginn.cli._daemon_api", side_effect=api), \
+             patch("builtins.input", return_value="no"), \
+             redirect_stderr(io.StringIO()):
+            self.assertEqual(cli.cmd_send(args), 1)
+
+        self.assertEqual(calls[2][2]["confirmed"], False)
+
 
 if __name__ == "__main__":
     unittest.main()

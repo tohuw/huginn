@@ -18,6 +18,7 @@ from .plugins import SourceContext, get_registry
 from .sources import claude_code, codex
 from .sources.transcript import ClaudeAnalyzer, CodexAnalyzer, Tail
 from .state import Reducer
+from .steering import ConfirmationStore
 from .triage import build_triage
 
 
@@ -39,6 +40,7 @@ class Daemon:
         # Owned here (not a chat.py module global) so multiple Daemon
         # instances in one process never share chat state -- issue #17.
         self.active_chat: asyncio.Task | None = None
+        self.steering_confirmations = ConfirmationStore()
         self.diagnostics = Diagnostics()   # issue #15
         self.plugins = get_registry()
         from .llm.blurb import BlurbWorker

@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from huginn import config as config_module
 from huginn.config import Config
 from huginn.daemon import Daemon
+from huginn.model import Session
 from huginn.server.app import create_app
 
 
@@ -29,6 +30,19 @@ def make_client_with_daemon(token: str = "secret-token") -> tuple[TestClient, Da
 
 
 class AuthTests(unittest.TestCase):
+    @staticmethod
+    def _add_terminal_session(daemon: Daemon) -> Session:
+        session = Session(
+            key="codex:thread-1",
+            source="codex",
+            session_id="thread-1",
+            cwd="/tmp/project",
+            name="project-thread",
+            entrypoint="cli",
+        )
+        daemon.reducer.sessions[session.key] = session
+        return session
+
     def test_sessions_requires_token(self):
         c = make_client()
         self.assertEqual(c.get("/api/sessions").status_code, 401)
@@ -134,6 +148,89 @@ class AuthTests(unittest.TestCase):
         c = make_client()
         r = c.get("/static/app.js")
         self.assertEqual(r.status_code, 200)
+
+    def test_steering_preview_fails_closed_for_observe_only_session(self):
+        c, daemon = make_client_with_daemon()
+        self._add_terminal_session(daemon)
+        headers = {"X-Huginn-Token": "secret-token"}
+
+        with patch("huginn.steering.authority_for", return_value="observe"):
+            r = c.post(
+                "/api/sessions/codex%3Athread-1/steering/preview",
+                json={"action": "send", "instruction": "continue"},
+                headers=headers,
+            )
+
+        self.assertEqual(r.status_code, 403)
+
+    def test_authority_update_is_explicit_and_session_scoped(self):
+        c, daemon = make_client_with_daemon()
+        session = self._add_terminal_session(daemon)
+        headers = {"X-Huginn-Token": "secret-token"}
+        with patch(
+            "huginn.server.app.set_authority",
+            return_value={"key": session.key, "session_id": session.session_id, "level": "steer"},
+        ) as update:
+            r = c.put(
+                "/api/sessions/codex%3Athread-1/authority",
+                json={"level": "steer"},
+                headers=headers,
+            )
+
+        self.assertEqual(r.status_code, 200)
+        update.assert_called_once_with(session, "steer")
+
+    def test_cancelled_steering_confirmation_is_one_use(self):
+        c, daemon = make_client_with_daemon()
+        self._add_terminal_session(daemon)
+        headers = {"X-Huginn-Token": "secret-token"}
+        with patch("huginn.steering.authority_for", return_value="steer"), \
+             patch("huginn.steering._terminal_target", return_value=(None, "ttys001")):
+            preview = c.post(
+                "/api/sessions/codex%3Athread-1/steering/preview",
+                json={"action": "send", "instruction": "  exact input  "},
+                headers=headers,
+            )
+        confirmation_id = preview.json()["confirmation_id"]
+
+        cancelled = c.post(
+            "/api/steering/confirm",
+            json={"confirmation_id": confirmation_id, "confirmed": False},
+            headers=headers,
+        )
+        repeated = c.post(
+            "/api/steering/confirm",
+            json={"confirmation_id": confirmation_id, "confirmed": True},
+            headers=headers,
+        )
+
+        self.assertEqual(cancelled.json(), {"ok": False, "cancelled": True})
+        self.assertEqual(repeated.status_code, 422)
+
+    def test_confirmed_steering_executes_the_previewed_action(self):
+        c, daemon = make_client_with_daemon()
+        session = self._add_terminal_session(daemon)
+        headers = {"X-Huginn-Token": "secret-token"}
+        with patch("huginn.steering.authority_for", return_value="steer"), \
+             patch("huginn.steering._terminal_target", return_value=(None, "ttys001")):
+            preview = c.post(
+                "/api/sessions/codex%3Athread-1/steering/preview",
+                json={"action": "interrupt"},
+                headers=headers,
+            ).json()
+        with patch(
+            "huginn.server.app.execute_pending",
+            return_value={"ok": True, "action": "interrupt"},
+        ) as execute:
+            confirmed = c.post(
+                "/api/steering/confirm",
+                json={"confirmation_id": preview["confirmation_id"], "confirmed": True},
+                headers=headers,
+            )
+
+        self.assertEqual(confirmed.status_code, 200)
+        self.assertEqual(confirmed.json()["action"], "interrupt")
+        self.assertIs(execute.call_args.args[1], session)
 
     def _isolated_config_dir(self):
         """PUT /api/settings calls config.save(), which writes to the real

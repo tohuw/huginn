@@ -22,7 +22,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "llm": {
         "enabled": True,
         "provider": "claude",              # claude | codex
-        "blurb_model": "claude-haiku-4-5",
+        "blurb_model": "claude-haiku-4-5-20251001",
         "chat_model": "",                  # empty = provider default
         "blurb_debounce_s": 3.0,
         "blurb_max_per_min": 12,

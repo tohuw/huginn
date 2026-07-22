@@ -257,11 +257,16 @@ def create_app(daemon: "Daemon") -> FastAPI:
         daemon.record_hook_hit(source, event)
         if event == "Notification" and cfg.section("patterns").get("debug_log"):
             _log_notification(source, data.get("message") or "", daemon.diagnostics)
-        if source == "claude" and event == "Stop":
-            # Disambiguate DONE vs WAITING_INPUT from the transcript tail.
+        if source == "claude" and event in ("Stop", "Notification"):
+            # Disambiguate from the transcript tail: Stop is DONE vs
+            # WAITING_INPUT; Notification is a real permission prompt vs an
+            # AskUserQuestion (which Claude reports permission-shaped).
             sid = data.get("session_id", "")
             s = reducer.find_by_session_id(sid)
             if s is not None:
+                if not s.transcript_path and data.get("transcript_path"):
+                    s.transcript_path = data["transcript_path"]
+                daemon.ensure_tail(s)
                 pair = daemon.tails.get(s.key)
                 if pair:
                     tail_obj, analyzer = pair

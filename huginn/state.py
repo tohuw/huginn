@@ -267,6 +267,13 @@ class Reducer:
                 target = SessionState.WAITING_PERMISSION
             else:
                 target = SessionState.WAITING_INPUT
+            # AskUserQuestion arrives as a permission-shaped notification, but
+            # it's the agent asking the user a question, not a tool approval.
+            # The hook endpoint disambiguates from the transcript tail (same
+            # mechanism as Stop's asked_question).
+            if (target is SessionState.WAITING_PERMISSION
+                    and ev.payload.get("asked_question")):
+                target = SessionState.WAITING_INPUT
             changed |= self._set_state(s, target, "hook", now)
         elif event == "Stop":
             target = SessionState.WAITING_INPUT if ev.payload.get("asked_question") \

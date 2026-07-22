@@ -379,15 +379,30 @@ class Daemon:
 
         config.ensure_state_dirs()
         self._restore_snapshot()
+        # Restored sessions whose transcripts never change again (e.g. an
+        # agent parked on a question) never reach _on_transcript_change, so
+        # without this their analyzers stay unseeded: stale restored state is
+        # never corrected and hook-time tail disambiguation is blind.
+        for s in list(self.reducer.sessions.values()):
+            self.ensure_tail(s)
         host = self.cfg.get("server", "host")
         port = self.cfg.get("server", "port")
-        # Do this before rotating credentials or publishing daemon.json. A
-        # losing second launch used to clobber the healthy daemon's ownership
-        # files and then enter a restart loop after Uvicorn reported EADDRINUSE.
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-            probe.settimeout(0.2)
-            if probe.connect_ex((host, port)) == 0:
-                raise OSError("address already in use")
+        # Own the port before rotating credentials or publishing daemon.json.
+        # A connect-probe is not enough: ownership files used to be written
+        # before serve() bound the socket, so during a restart two daemons
+        # could both pass the probe -- the loser then clobbered the winner's
+        # files and deleted daemon.json on exit, leaving a healthy daemon the
+        # CLI could not discover. Binding is atomic; exactly one process wins.
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        # POSIX: avoid TIME_WAIT bind failures on quick restart. Not on
+        # Windows, where SO_REUSEADDR would let a second bind steal the port.
+        if os.name != "nt":
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind((host, port))
+        except OSError:
+            sock.close()
+            raise OSError("address already in use") from None
         self.token = config.write_token()
         self.refresh_token = config.get_or_create_refresh_token()
         app = create_app(self)
@@ -420,7 +435,7 @@ class Daemon:
             asyncio.get_event_loop().call_later(
                 0.8, webbrowser.open, f"http://{host}:{port}/#t={self.token}")
         try:
-            await server.serve()
+            await server.serve(sockets=[sock])
         finally:
             for t in tasks:
                 t.cancel()

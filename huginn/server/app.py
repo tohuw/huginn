@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .. import config
-from ..model import Event, STATE_RANK
+from ..model import Event, STATE_RANK, SessionState
 from ..steering import authority_for, execute_pending, set_authority
 from ..triage import build_triage
 from .sse import event_stream
@@ -170,6 +170,19 @@ def create_app(daemon: "Daemon") -> FastAPI:
             raise HTTPException(404)
         from ..focus import focus_session
         return focus_session(s)
+
+    @api.post("/sessions/{key}/dismiss")
+    def dismiss(key: str):
+        s = reducer.sessions.get(key)
+        if s is None:
+            raise HTTPException(404)
+        if s.state != SessionState.ENDED:
+            raise HTTPException(409, "only ended sessions can be dismissed")
+        del reducer.sessions[key]
+        daemon.tails.pop(key, None)
+        daemon.mark_dirty()
+        bus.broadcast("session.remove", {"key": key})
+        return {"ok": True}
 
     @api.get("/sessions/{key}/authority")
     def get_authority(key: str):

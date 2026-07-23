@@ -14,6 +14,7 @@ import uuid
 from typing import TYPE_CHECKING
 
 from .. import config
+from ..model import SessionState
 from .context import digest_for_session, evidence_text
 from .providers import compatible_model, get_provider
 
@@ -132,6 +133,25 @@ def _apply_title_control(daemon: "Daemon", question: str) -> str | None:
     return f"Title {'set to ' + title if title else 'cleared'} for @{s.name}."
 
 
+def _apply_dismiss_control(daemon: "Daemon", question: str) -> str | None:
+    match = re.search(r"\bdismiss\b.{0,20}@([\w-]+)", question, re.I)
+    if not match:
+        return None
+    needle = match.group(1).lower()
+    matches = [s for s in daemon.reducer.sessions.values()
+               if s.name.lower() == needle or s.name.lower().startswith(needle)]
+    if len(matches) != 1:
+        return f"Could not uniquely match @{match.group(1)}."
+    s = matches[0]
+    if s.state != SessionState.ENDED:
+        return f"@{s.name} is still live -- only ended sessions can be dismissed."
+    del daemon.reducer.sessions[s.key]
+    daemon.tails.pop(s.key, None)
+    daemon.mark_dirty()
+    daemon.bus.broadcast("session.remove", {"key": s.key})
+    return f"Dismissed @{s.name}."
+
+
 async def start_chat(daemon: "Daemon", body: dict) -> dict:
     # Concurrency is per-daemon, not per-client (issue #17): one chat
     # subprocess in flight at a time, whole-daemon-wide, so a second tab
@@ -149,6 +169,12 @@ async def start_chat(daemon: "Daemon", body: dict) -> dict:
         request_id = uuid.uuid4().hex[:12]
         daemon.active_chat = asyncio.create_task(
             _confirm_controls(daemon, [title_reply], request_id))
+        return {"ok": True, "request_id": request_id}
+    dismiss_reply = _apply_dismiss_control(daemon, question)
+    if dismiss_reply:
+        request_id = uuid.uuid4().hex[:12]
+        daemon.active_chat = asyncio.create_task(
+            _confirm_controls(daemon, [dismiss_reply], request_id))
         return {"ok": True, "request_id": request_id}
     actions = _control_actions(question)
     if actions:

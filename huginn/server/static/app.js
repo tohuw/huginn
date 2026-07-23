@@ -212,6 +212,14 @@ function demoAnswer(question) {
     target.title = titleMatch[2].trim(); target.title_origin = "manual"; upsertCard(target);
     return `Set @${target.name}’s title to “${target.title}”.`;
   }
+  const dismissMatch = question.match(/\bdismiss\b.{0,20}@([^\s]+)/i);
+  if (dismissMatch) {
+    const target = demoMention(`@${dismissMatch[1]}`);
+    if (!target) return `I can’t find @${dismissMatch[1]} in the demo roster.`;
+    if (target.state !== "ended") return `@${target.name} is still live -- only ended sessions can be dismissed.`;
+    removeCard(target.key);
+    return `Dismissed @${target.name}.`;
+  }
   if (mentioned) {
     const work = fmtWork(mentioned);
     return `@${mentioned.name} is ${mentioned.state.replaceAll("_", " ")}. `
@@ -282,6 +290,7 @@ const SOURCE_META = {
   "claude-desktop": { label: "claude app", family: "claude" },
   codex: { label: "codex", family: "openai" },
   "chatgpt-desktop": { label: "chatgpt", family: "openai" },
+  "neo-cortex": { label: "NeoCortex", family: "other" },
 };
 
 function upsertCard(s) {
@@ -295,6 +304,7 @@ function upsertCard(s) {
     card.querySelector(".peek-btn").onclick = () => peek(s.key);
     card.querySelector(".ask").onclick = () => askAbout(s.key);
     card.querySelector(".edit-title").onclick = () => editTitle(s.key);
+    card.querySelector(".dismiss").onclick = () => dismiss(s.key);
     cards.set(s.key, card);
   }
   card.dataset.state = s.state;
@@ -358,8 +368,18 @@ async function editTitle(key) {
     if (e.key === "Enter") { e.preventDefault(); finish(true); }
     if (e.key === "Escape") { e.preventDefault(); finish(false); }
   };
-  input.onblur = () => finish(true);
+  // Reparenting this input during reorder() (every SSE/poll roster update,
+  // for any session) disconnects it from the document for an instant, which
+  // fires a real blur event -- not a user action. Committing on that would
+  // silently end the rename mid-keystroke, so reorder() sets `reordering`
+  // around the move and this handler ignores blur while it's set.
+  input.onblur = () => { if (!reordering) finish(true); };
 }
+
+// Reparenting a card (via a documentFragment, below) disconnects its focused
+// title-rename <input> for an instant and fires a real blur event. editTitle()
+// checks this flag so that blur doesn't read as the user finishing the rename.
+let reordering = false;
 
 function reorder() {
   const mode = document.getElementById("sort").value || "state";
@@ -372,9 +392,15 @@ function reorder() {
     oldest: (a, b) => byClass(a, b) || a.last_activity - b.last_activity || byName(a, b),
   }[mode];
   const sorted = [...sessions.values()].sort(compare);
+  const active = document.activeElement;
+  const restore = (grid.contains(active) || appGrid.contains(active))
+    ? { el: active, range: typeof active.selectionStart === "number"
+          ? [active.selectionStart, active.selectionEnd] : null }
+    : null;
   const sessionFrag = document.createDocumentFragment();
   const appFrag = document.createDocumentFragment();
   let appCount = 0;
+  reordering = true;
   for (const s of sorted) {
     if (s.source.endsWith("-desktop")) {
       appFrag.appendChild(cards.get(s.key)); appCount += 1;
@@ -384,7 +410,12 @@ function reorder() {
   }
   grid.replaceChildren(sessionFrag);
   appGrid.replaceChildren(appFrag);
+  reordering = false;
   appTiles.hidden = !desktopVisible || appCount === 0;
+  if (restore) {
+    restore.el.focus();
+    if (restore.range) restore.el.setSelectionRange(...restore.range);
+  }
   renderEmpty();
 }
 
@@ -474,6 +505,13 @@ async function jump(key) {
     return;
   }
   if (!r.ok) console.warn("focus failed", await r.text());
+}
+
+async function dismiss(key) {
+  if (DEMO_MODE) { removeCard(key); return; }
+  const r = await apiFetch(`/api/sessions/${encodeURIComponent(key)}/dismiss`, { method: "POST" });
+  if (r.ok || r.status === 404) removeCard(key);
+  else console.warn("dismiss failed", await r.text());
 }
 
 async function peek(key) {

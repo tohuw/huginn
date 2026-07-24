@@ -154,6 +154,12 @@ state — enough topic signal to pick the right digest file(s) to read without
 opening every one. That cached label is never treated as evidence of current
 state or a blocker; only the transcript and live state are.
 
+Ask can also drive the jump and peek buttons directly — "jump @session-name"
+focuses that session's terminal exactly as clicking jump would, and "peek
+@session-name" expands that card's transcript tail (also echoed in the chat
+reply). Both resolve @name the same way titling does: an exact match, or a
+unique prefix.
+
 ## Session states
 
 | state | meaning | derived from |

@@ -113,6 +113,66 @@ class ChatCorrelationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.title, "release cleanup")
         self.assertEqual(session.title_origin, "manual")
 
+    async def test_ask_jump_focuses_the_named_session(self):
+        daemon = Daemon(Config({}))
+        events = []
+        daemon.bus.broadcast = lambda event, data: events.append((event, data))
+        session = Session(key="codex:test", source="codex", session_id="test",
+                          cwd="/tmp", name="test-agent")
+        daemon.reducer.sessions[session.key] = session
+        with patch("huginn.focus.focus_session", return_value={"ok": True, "target": "iTerm2"}) as mock_focus:
+            result = await start_chat(daemon, {"question": "jump @test-agent"})
+        self.assertTrue(result["ok"])
+        await daemon.active_chat
+        mock_focus.assert_called_once_with(session)
+        self.assertTrue(any(event == "session.focused" and data["key"] == session.key
+                             for event, data in events))
+
+    async def test_ask_jump_reports_focus_failure(self):
+        daemon = Daemon(Config({}))
+        daemon.bus.broadcast = lambda *a, **k: None
+        session = Session(key="codex:test", source="codex", session_id="test",
+                          cwd="/tmp", name="test-agent")
+        daemon.reducer.sessions[session.key] = session
+        answers = []
+        with patch("huginn.focus.focus_session", return_value={"ok": False, "error": "no tty"}), \
+             patch("huginn.llm.chat.get_provider") as get_provider:
+            daemon.bus.broadcast = lambda event, data: answers.append((event, data))
+            result = await start_chat(daemon, {"question": "jump @test-agent"})
+            await daemon.active_chat
+        get_provider.assert_not_called()
+        self.assertTrue(result["ok"])
+        self.assertTrue(any("no tty" in data.get("text", "") for _e, data in answers))
+
+    async def test_ask_peek_shows_and_returns_the_transcript_tail(self):
+        daemon = Daemon(Config({}))
+        events = []
+        daemon.bus.broadcast = lambda event, data: events.append((event, data))
+        session = Session(key="codex:test", source="codex", session_id="test",
+                          cwd="/tmp", name="test-agent")
+        daemon.reducer.sessions[session.key] = session
+        with patch("huginn.llm.chat.evidence_for_session", return_value=["assistant: done"]):
+            result = await start_chat(daemon, {"question": "peek @test-agent"})
+        self.assertTrue(result["ok"])
+        await daemon.active_chat
+        peeks = [data for event, data in events if event == "session.peek"]
+        self.assertEqual(peeks, [{"key": session.key, "lines": ["assistant: done"]}])
+        self.assertTrue(any("assistant: done" in data.get("text", "")
+                             for event, data in events if event == "chat.delta"))
+
+    async def test_jump_and_peek_report_ambiguous_names(self):
+        daemon = Daemon(Config({}))
+        events = []
+        daemon.bus.broadcast = lambda event, data: events.append((event, data))
+        daemon.reducer.sessions["codex:a"] = Session(
+            key="codex:a", source="codex", session_id="a", cwd="/tmp", name="dup-one")
+        daemon.reducer.sessions["codex:b"] = Session(
+            key="codex:b", source="codex", session_id="b", cwd="/tmp", name="dup-two")
+        result = await start_chat(daemon, {"question": "jump @dup"})
+        self.assertTrue(result["ok"])
+        await daemon.active_chat
+        self.assertTrue(any("uniquely match" in data.get("text", "") for _e, data in events))
+
     async def test_roster_includes_title_or_blurb_for_open_ended_search(self):
         daemon = Daemon(Config({}))
         daemon.bus.broadcast = lambda *a, **k: None

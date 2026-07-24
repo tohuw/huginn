@@ -491,6 +491,25 @@ async function peek(key) {
   pre.hidden = false;
 }
 
+// Ask-driven equivalents of the jump/peek buttons above -- "jump @name" and
+// "peek @name" perform the same action a click would, not just describe it.
+function flashFocused(key) {
+  const card = cards.get(key);
+  if (!card) return;
+  card.classList.remove("demo-focused");
+  void card.offsetWidth;
+  card.classList.add("demo-focused");
+  setTimeout(() => card.classList.remove("demo-focused"), 1200);
+}
+
+function showPeek({ key, lines }) {
+  const card = cards.get(key);
+  if (!card) return;
+  const pre = card.querySelector(".peek");
+  pre.textContent = (lines || []).join("\n") || "(no transcript yet)";
+  pre.hidden = false;
+}
+
 function askAbout(key) {
   const s = sessions.get(key);
   openChat(true, true);
@@ -996,6 +1015,8 @@ function connect() {
   es.addEventListener("attention.count", (e) => setAttention(JSON.parse(e.data).count));
   es.addEventListener("triage.changed", (e) => setTriage(JSON.parse(e.data)));
   es.addEventListener("settings.changed", (e) => applySettings(JSON.parse(e.data)));
+  es.addEventListener("session.focused", (e) => flashFocused(JSON.parse(e.data).key));
+  es.addEventListener("session.peek", (e) => showPeek(JSON.parse(e.data)));
   es.addEventListener("chat.delta", (e) => {
     const data = JSON.parse(e.data);
     if (currentAnswer && data.request_id === currentRequestId) {

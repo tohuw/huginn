@@ -45,10 +45,18 @@ main { grid-area: main; position: relative; z-index: 0; overflow-y: auto; paddin
 .triage-head { color: var(--fg); font-weight: 600; }
 .triage-item { margin-top: 4px; color: var(--dim); overflow-wrap: anywhere; }
 .triage-item code { color: var(--fg); }
-#grid, #app-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
-#grid[data-view="list"], #app-grid[data-view="list"] { grid-template-columns: 1fr; gap: 5px; }
+#grid, #app-grid, .plugin-group-grid {
+  display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+}
+#grid[data-view="list"], #app-grid[data-view="list"], .plugin-group-grid[data-view="list"] {
+  grid-template-columns: 1fr; gap: 5px;
+}
 #app-tiles { margin-top: 18px; padding-top: 10px; border-top: 1px solid var(--edge); }
 #app-tiles[hidden] { display: none; }
+.plugin-group { margin-top: 18px; padding-top: 10px; border-top: 1px solid var(--edge); }
+.plugin-group[hidden] { display: none; }
+.plugin-group-head { margin-bottom: 8px; }
+.plugin-group-toggle { display: flex; align-items: center; gap: 6px; cursor: pointer; margin: 0; }
 .section-label { margin: 0 0 8px 2px; color: var(--dim); font-size: 10px;
   letter-spacing: .1em; text-transform: uppercase; }
 #empty { color: var(--dim); text-align: center; margin-top: 40vh; }

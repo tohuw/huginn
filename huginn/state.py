@@ -162,7 +162,7 @@ class Reducer:
         if s.blurb and (not s.blurb_ts or s.blurb_ts < s.state_since):
             s.blurb = None; s.blurb_ts = None; changed = True
         for attr in ("name", "model", "git_branch", "tokens", "cwd", "transcript_path",
-                    "last_prompt", "source_summary", "subagents"):
+                    "last_prompt", "source_summary", "subagents", "group", "group_label"):
             v = getattr(incoming, attr)
             if (v or attr == "source_summary") and v != getattr(s, attr):
                 setattr(s, attr, v); changed = True

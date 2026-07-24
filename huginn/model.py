@@ -66,6 +66,15 @@ class Session:
     shells: int = 0                 # live shell subprocesses owned by the agent
     title: str | None = None        # ephemeral card label; dies with this session
     title_origin: str | None = None # manual | guessed
+    # Optional dashboard section for this session, separate from the main
+    # grid -- the same treatment built-in desktop-app tiles get (grouped,
+    # sorted outside the urgency queue, one collective show/hide toggle),
+    # generalized so a plugin source can opt into it. group is a short stable
+    # key; group_label is the human-readable section heading (falls back to
+    # group itself if unset). Unset means "render in the main grid," exactly
+    # like every session before this field existed.
+    group: str | None = None
+    group_label: str | None = None
 
     @property
     def attention(self) -> bool:

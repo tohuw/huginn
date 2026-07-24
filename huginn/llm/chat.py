@@ -27,8 +27,11 @@ file(s) before answering; use Grep across them for broad questions.
 Answer tersely and concretely - the user wants signal, not narrative.
 Treat the current state and newest transcript entries as authoritative. Never
 infer a blocker, permission request, or need for user action unless the current
-state or recent transcript explicitly establishes it. Cached dashboard blurbs
-are not evidence and are intentionally absent from the digest files.
+state or recent transcript explicitly establishes it. The quoted label after
+each roster line (if present) is a cached title/summary for identifying which
+session a topic-based question is about - useful for choosing which digest
+file(s) to read, but never evidence of current state or a blocker. It is
+absent from the digest files themselves.
 
 Your scope is exclusively the agent sessions in this roster: their state,
 activity, output, blockers, errors, and what needs the user's attention. Do not
@@ -221,9 +224,18 @@ async def _run_chat(daemon: "Daemon", provider, question: str, request_id: str,
             digest_path.write_text(digest_for_session(s, max_lines=80 if focus else 30))
             digest_path.chmod(0o600)
             age = int(time.time() - s.state_since)
+            # title/blurb are excluded from per-session digests (current state
+            # must come from the transcript, not a cached summary) but belong
+            # here: this line is the only signal Ask has for picking *which*
+            # session answers an open-ended question without opening every
+            # digest file, and a one-line topic summary is exactly what that
+            # judgment needs.
+            label = evidence_text(s.title or s.blurb or "", 160)
             roster_lines.append(
                 f"- {evidence_text(s.name, 180)} [{evidence_text(s.source, 80)}] "
-                f"state={s.state.value} ({age}s) cwd={evidence_text(s.cwd, 500)} -> {fname}")
+                f"state={s.state.value} ({age}s)"
+                + (f" \"{label}\"" if label else "")
+                + f" cwd={evidence_text(s.cwd, 500)} -> {fname}")
         if not roster_lines:
             broadcast("chat.delta", {"text": "No sessions to ask about."})
             broadcast("chat.done", {})

@@ -53,6 +53,9 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "idle_ttl_s": 300,
         "done_ttl_s": 300,
         "exec_done_ttl_s": 30,
+        # Session.group keys currently collapsed to their one-line toggle --
+        # see docs/plugins.md's "Dashboard session groups" section.
+        "hidden_groups": [],
     },
     "claude": {"sweep_s": 10.0, "pending_tool_timeout_s": 20.0},
     "codex": {"poll_s": 5.0, "active_window_h": 24, "include_subagents": False},

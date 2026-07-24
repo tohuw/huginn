@@ -39,9 +39,12 @@ const cards = new Map();      // key -> card element
 const grid = document.getElementById("grid");
 const appGrid = document.getElementById("app-grid");
 const appTiles = document.getElementById("app-tiles");
+const pluginGroupsContainer = document.getElementById("plugin-groups");
+const pluginGroupSections = new Map();   // group key -> { section, grid, count }
 const tpl = document.getElementById("card-tpl");
 let llmEnabled = true;
 let desktopVisible = true;
+let hiddenGroups = new Set();
 // Startup and daemon restarts are indeterminate until both the roster and the
 // cheap activity probe answer.  Begin with the honest state instead of briefly
 // claiming there are no sessions.
@@ -361,6 +364,47 @@ async function editTitle(key) {
   input.onblur = () => finish(true);
 }
 
+// A plugin-contributed Session.group renders in its own section below the
+// main grid and desktop tiles -- same treatment as desktop presence, but
+// keyed dynamically since Huginn doesn't know a group's key or label until
+// a plugin source's first session declares them. Sections are created once
+// and reused; toggling one persists to ui.hidden_groups (a set of group
+// keys, not a boolean per key, so an unrelated settings write from another
+// tab can't silently un-hide a group this tab hid).
+function getOrCreatePluginGroupSection(groupKey, groupLabel) {
+  let entry = pluginGroupSections.get(groupKey);
+  if (entry) return entry;
+  const section = document.createElement("section");
+  section.className = "plugin-group";
+  const head = document.createElement("div");
+  head.className = "plugin-group-head";
+  const label = document.createElement("label");
+  label.className = "section-label plugin-group-toggle";
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.checked = !hiddenGroups.has(groupKey);
+  checkbox.onchange = async (e) => {
+    const previous = !hiddenGroups.has(groupKey);
+    if (e.target.checked) hiddenGroups.delete(groupKey); else hiddenGroups.add(groupKey);
+    reorder();
+    const r = await saveSettings({ ui: { hidden_groups: [...hiddenGroups] } });
+    if (!r.ok) {
+      if (previous) hiddenGroups.delete(groupKey); else hiddenGroups.add(groupKey);
+      e.target.checked = previous;
+      reorder();
+    }
+  };
+  label.append(checkbox, document.createTextNode(groupLabel));
+  head.appendChild(label);
+  const groupGrid = document.createElement("div");
+  groupGrid.className = "plugin-group-grid";
+  section.append(head, groupGrid);
+  pluginGroupsContainer.appendChild(section);
+  entry = { section, grid: groupGrid, count: 0 };
+  pluginGroupSections.set(groupKey, entry);
+  return entry;
+}
+
 function reorder() {
   const mode = document.getElementById("sort").value || "state";
   const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
@@ -374,9 +418,17 @@ function reorder() {
   const sorted = [...sessions.values()].sort(compare);
   const sessionFrag = document.createDocumentFragment();
   const appFrag = document.createDocumentFragment();
+  const groupFrags = new Map();   // group key -> { frag, label, view }
   let appCount = 0;
   for (const s of sorted) {
-    if (s.source.endsWith("-desktop")) {
+    if (s.group) {
+      let g = groupFrags.get(s.group);
+      if (!g) {
+        g = { frag: document.createDocumentFragment(), label: s.group_label || s.group, count: 0 };
+        groupFrags.set(s.group, g);
+      }
+      g.frag.appendChild(cards.get(s.key)); g.count += 1;
+    } else if (s.source.endsWith("-desktop")) {
       appFrag.appendChild(cards.get(s.key)); appCount += 1;
     } else {
       sessionFrag.appendChild(cards.get(s.key));
@@ -385,6 +437,16 @@ function reorder() {
   grid.replaceChildren(sessionFrag);
   appGrid.replaceChildren(appFrag);
   appTiles.hidden = !desktopVisible || appCount === 0;
+  const view = document.getElementById("view").value || "cards";
+  for (const [groupKey, g] of groupFrags) {
+    const entry = getOrCreatePluginGroupSection(groupKey, g.label);
+    entry.grid.dataset.view = view;
+    entry.grid.replaceChildren(g.frag);
+    entry.section.hidden = hiddenGroups.has(groupKey) || g.count === 0;
+  }
+  for (const [groupKey, entry] of pluginGroupSections) {
+    if (!groupFrags.has(groupKey)) entry.section.hidden = true;
+  }
   renderEmpty();
 }
 
@@ -875,6 +937,10 @@ function applySettings(cfg) {
   document.getElementById("llm-toggle").checked = llmEnabled;
   desktopVisible = cfg.ui.show_desktop !== false;
   document.getElementById("desktop-toggle").checked = desktopVisible;
+  hiddenGroups = new Set(cfg.ui.hidden_groups || []);
+  for (const [groupKey, entry] of pluginGroupSections) {
+    entry.section.querySelector(".plugin-group-toggle input").checked = !hiddenGroups.has(groupKey);
+  }
   providerSelect.value = cfg.llm.provider;
   rememberProvider(cfg.llm.provider);
   const view = cfg.ui.view || "cards";

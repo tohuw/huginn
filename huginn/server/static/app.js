@@ -442,7 +442,12 @@ function reorder() {
     const entry = getOrCreatePluginGroupSection(groupKey, g.label);
     entry.grid.dataset.view = view;
     entry.grid.replaceChildren(g.frag);
-    entry.section.hidden = hiddenGroups.has(groupKey) || g.count === 0;
+    // Hiding the whole section (including its toggle) is only correct when
+    // there's nothing to show. A user-hidden group still needs its checkbox
+    // visible so they can turn it back on -- see issue where unchecking a
+    // group's toggle hid the toggle itself along with the cards.
+    entry.section.hidden = g.count === 0;
+    entry.grid.hidden = hiddenGroups.has(groupKey);
   }
   for (const [groupKey, entry] of pluginGroupSections) {
     if (!groupFrags.has(groupKey)) entry.section.hidden = true;
@@ -940,6 +945,7 @@ function applySettings(cfg) {
   hiddenGroups = new Set(cfg.ui.hidden_groups || []);
   for (const [groupKey, entry] of pluginGroupSections) {
     entry.section.querySelector(".plugin-group-toggle input").checked = !hiddenGroups.has(groupKey);
+    entry.grid.hidden = hiddenGroups.has(groupKey);
   }
   providerSelect.value = cfg.llm.provider;
   rememberProvider(cfg.llm.provider);

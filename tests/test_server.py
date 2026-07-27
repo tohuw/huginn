@@ -53,6 +53,17 @@ class AuthTests(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json()["triage"]["verdict"]["level"], "clear")
 
+    def test_sessions_reports_a_stable_boot_id(self):
+        # The Ask transcript persists in the browser across a refresh, keyed
+        # to this id, but must clear on a new daemon process (restart/quit)
+        # -- so the same daemon instance must report the same id every call.
+        c, daemon = make_client_with_daemon()
+        first = c.get("/api/sessions", headers={"X-Huginn-Token": "secret-token"}).json()
+        second = c.get("/api/sessions", headers={"X-Huginn-Token": "secret-token"}).json()
+        self.assertTrue(first["boot_id"])
+        self.assertEqual(first["boot_id"], second["boot_id"])
+        self.assertEqual(first["boot_id"], daemon.boot_id)
+
     def test_activity_probes_sources_when_roster_is_empty(self):
         c = make_client()
         with patch("huginn.sources.claude_code.scan", return_value=[]), \

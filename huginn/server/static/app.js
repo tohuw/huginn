@@ -576,6 +576,65 @@ const CHAT_SIZE_KEYS = {
   vertical: "huginn.chat.width",
   horizontal: "huginn.chat.height",
 };
+
+// The transcript persists across a browser refresh (localStorage), but not
+// across a daemon restart or quit: boot_id is a fresh id the daemon hands
+// out every process start (see /api/sessions), unrelated to the API token,
+// so a stale transcript from a previous daemon life is never mistaken for
+// this one's -- restarting/quitting Huginn is what should end a
+// conversation, not the tab happening to reload.
+const CHAT_TRANSCRIPT_KEY = "huginn.chat.transcript";
+const CHAT_TRANSCRIPT_MAX_MESSAGES = 200;
+let chatBootId = null;
+let restoringTranscript = false;
+
+function loadStoredTranscript() {
+  if (DEMO_MODE) return null;
+  try {
+    const raw = localStorage.getItem(CHAT_TRANSCRIPT_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (_) { return null; }
+}
+function clearStoredTranscript() {
+  if (DEMO_MODE) return;
+  try { localStorage.removeItem(CHAT_TRANSCRIPT_KEY); } catch (_) { /* optional */ }
+}
+function persistTranscript() {
+  if (DEMO_MODE || !chatBootId || restoringTranscript) return;
+  try {
+    const log = document.getElementById("chat-log");
+    const messages = [...log.children].slice(-CHAT_TRANSCRIPT_MAX_MESSAGES).map((div) => ({
+      kind: div.classList.contains("q") ? "q" : "a",
+      text: div.classList.contains("a") ? (div.dataset.raw ?? div.textContent) : div.textContent,
+    }));
+    localStorage.setItem(CHAT_TRANSCRIPT_KEY, JSON.stringify({ boot_id: chatBootId, messages }));
+  } catch (_) { /* optional: private browsing, quota, etc. */ }
+}
+// Called from every /api/sessions response (initial load and the periodic
+// reconciliation poll), which is also the only place the daemon's current
+// boot_id is available.
+function syncChatBoot(bootId) {
+  if (!bootId || DEMO_MODE) return;
+  if (chatBootId === null) {
+    chatBootId = bootId;
+    const stored = loadStoredTranscript();
+    if (stored && stored.boot_id === bootId && Array.isArray(stored.messages)) {
+      restoringTranscript = true;
+      for (const m of stored.messages) addMsg(m.kind, m.text);
+      restoringTranscript = false;
+    } else {
+      clearStoredTranscript();
+    }
+    return;
+  }
+  if (chatBootId !== bootId) {
+    // A new daemon process (restart, or relaunch after quit) took over
+    // while this tab stayed open -- its predecessor's conversation is over.
+    chatBootId = bootId;
+    document.getElementById("chat-log").replaceChildren();
+    clearStoredTranscript();
+  }
+}
 async function saveSettings(body) {
   if (DEMO_MODE) return { ok: true };
   return apiFetch("/api/settings", {
@@ -696,6 +755,7 @@ document.getElementById("chat-form").onsubmit = async (e) => {
     currentAnswer.textContent = `chat unavailable (${err.message})`;
     setChatBusy(false);
     currentAnswer = null;
+    persistTranscript();
     return;
   }
   const body = await r.json().catch(() => ({}));
@@ -706,6 +766,7 @@ document.getElementById("chat-form").onsubmit = async (e) => {
     }
     currentAnswer = null;
     setChatBusy(false);
+    persistTranscript();
   } else {
     currentRequestId = body.request_id || null;
     if (body.settings) applySettings(body.settings);
@@ -720,6 +781,7 @@ function addMsg(kind, text) {
   const log = document.getElementById("chat-log");
   log.appendChild(div);
   log.scrollTop = log.scrollHeight;
+  persistTranscript();
   return div;
 }
 
@@ -1035,6 +1097,7 @@ async function snapshot() {
     for (const s of data.sessions) upsertCard(s);
     setAttention(data.attention);
     setTriage(data.triage);
+    syncChatBoot(data.boot_id);
     if (!data.sessions.length) {
       const activity = await (await apiFetch("/api/activity")).json();
       rosterLoading = activity.agents_running;
@@ -1080,6 +1143,7 @@ function connect() {
     if (JSON.parse(e.data).request_id === currentRequestId) {
       setChatBusy(false);
       currentAnswer = null;
+      persistTranscript();
     }
   });
   es.addEventListener("chat.error", (e) => {
@@ -1089,6 +1153,7 @@ function connect() {
       currentAnswer.textContent += `\n[${data.error}]`;
       setChatBusy(false);
       currentAnswer = null;
+      persistTranscript();
     }
   });
   es.onopen = snapshot;   // resync after every (re)connect

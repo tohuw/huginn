@@ -124,7 +124,8 @@ def create_app(daemon: "Daemon") -> FastAPI:
                        key=lambda s: (STATE_RANK[s.state], s.state_since))
         return {"sessions": [s.to_dict() for s in items],
                 "attention": reducer.attention_count(),
-                "triage": build_triage(items)}
+                "triage": build_triage(items),
+                "boot_id": daemon.boot_id}
 
     @api.get("/activity")
     def activity():

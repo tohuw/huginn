@@ -7,6 +7,7 @@ import json
 import os
 import socket
 import time
+import uuid
 import webbrowser
 from pathlib import Path
 
@@ -25,6 +26,11 @@ from .triage import build_triage
 class Daemon:
     def __init__(self, cfg: config.Config):
         self.cfg = cfg
+        # Fresh per-process-start id, unrelated to the API token: exposed to
+        # the dashboard so it can tell "still talking to the daemon that had
+        # this conversation" apart from "a new daemon started" (restart or
+        # quit) without that distinction depending on session/window state.
+        self.boot_id = uuid.uuid4().hex
         self.bus = Bus()
         self.reducer = Reducer(cfg)
         # session key -> (Tail, analyzer)

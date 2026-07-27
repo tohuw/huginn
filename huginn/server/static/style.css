@@ -48,6 +48,10 @@ main { grid-area: main; position: relative; z-index: 0; overflow-y: auto; paddin
 #grid, #app-grid, .plugin-group-grid {
   display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
 }
+/* .plugin-group-grid's class selector outranks the UA [hidden] rule's
+   specificity, so display:grid was winning and a hidden group's cards
+   never actually hid -- same issue as aside#chat[hidden] below. */
+.plugin-group-grid[hidden] { display: none; }
 #grid[data-view="list"], #app-grid[data-view="list"], .plugin-group-grid[data-view="list"] {
   grid-template-columns: 1fr; gap: 5px;
 }

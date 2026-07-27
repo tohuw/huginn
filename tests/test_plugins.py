@@ -345,6 +345,27 @@ class PluginSourceTests(unittest.TestCase):
         changed = reducer.apply(self.bus.events.get_nowait())
         self.assertEqual(changed, [])   # unchanged group is not a spurious update
 
+    def test_reducer_picks_up_source_label_on_repeated_upsert(self):
+        # A session that already exists in the reducer's in-memory state
+        # (e.g. surviving a daemon restart) must still pick up source_label
+        # from a later upsert -- the merge loop for an existing key touches
+        # a fixed attribute list, and a newly added Session field silently
+        # never applies to already-known sessions unless it's in that list.
+        key = self.context.key("run-1")
+        reducer = Reducer(Config({}))
+        self.context.upsert(Session(
+            key=key, source="workers", session_id="run-1", cwd="node/repo", name="run-1",
+        ))
+        reducer.apply(self.bus.events.get_nowait())
+        self.assertIsNone(reducer.sessions[key].source_label)
+
+        self.context.upsert(Session(
+            key=key, source="workers", session_id="run-1", cwd="node/repo", name="run-1",
+            source_label="Workers",
+        ))
+        reducer.apply(self.bus.events.get_nowait())
+        self.assertEqual(reducer.sessions[key].source_label, "Workers")
+
     def test_external_id_is_bounded_and_allowlisted(self):
         with self.assertRaisesRegex(ValueError, "safe characters"):
             self.context.key("../escape")

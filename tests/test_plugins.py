@@ -231,6 +231,44 @@ class PluginSourceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "limited to 60"):
             self.context.upsert(session)
 
+    def test_context_accepts_a_valid_source_label(self):
+        session = Session(
+            key=self.context.key("run-2"),
+            source="workers",
+            session_id="run-2",
+            cwd="worker-1/repo",
+            name="worker-1-run-2",
+            source_label="NeoCortex",
+        )
+
+        self.context.upsert(session)   # must not raise
+
+    def test_context_rejects_blank_source_label(self):
+        session = Session(
+            key=self.context.key("run-2"),
+            source="workers",
+            session_id="run-2",
+            cwd="worker-1/repo",
+            name="worker-1-run-2",
+            source_label="   ",
+        )
+
+        with self.assertRaisesRegex(ValueError, "source_label must be non-empty"):
+            self.context.upsert(session)
+
+    def test_context_rejects_oversized_source_label(self):
+        session = Session(
+            key=self.context.key("run-2"),
+            source="workers",
+            session_id="run-2",
+            cwd="worker-1/repo",
+            name="worker-1-run-2",
+            source_label="x" * 41,
+        )
+
+        with self.assertRaisesRegex(ValueError, "limited to 40"):
+            self.context.upsert(session)
+
     def test_context_rejects_foreign_session_key(self):
         session = Session(
             key="codex:existing",

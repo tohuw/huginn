@@ -75,6 +75,12 @@ class Session:
     # like every session before this field existed.
     group: str | None = None
     group_label: str | None = None
+    # Display text for the per-card source badge (falls back to `source`
+    # itself if unset, same convention as group/group_label). Lets a plugin's
+    # internal source name -- lowercase, hyphenated, matched against
+    # SourceContext.upsert()'s validation regex -- differ from what a user
+    # sees on the card, e.g. source="neo-cortex" but source_label="NeoCortex".
+    source_label: str | None = None
 
     @property
     def attention(self) -> bool:

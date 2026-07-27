@@ -29,6 +29,7 @@ _NAME_RE = re.compile(r"^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$")
 _EXTERNAL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$")
 MAX_SOURCE_SUMMARY_CHARS = 4000
 MAX_GROUP_LABEL_CHARS = 60
+MAX_SOURCE_LABEL_CHARS = 40
 _RESERVED_PROVIDER_NAMES = frozenset({"claude", "codex"})
 LOG = logging.getLogger("huginn.plugins")
 
@@ -289,6 +290,13 @@ class SourceContext:
                 )
         if session.group_label is not None and session.group is None:
             raise ValueError("session group_label requires group to be set")
+        if session.source_label is not None:
+            if not isinstance(session.source_label, str) or not session.source_label.strip():
+                raise ValueError("session source_label must be non-empty text")
+            if len(session.source_label) > MAX_SOURCE_LABEL_CHARS:
+                raise ValueError(
+                    f"session source_label is limited to {MAX_SOURCE_LABEL_CHARS} characters"
+                )
         self.bus.emit(Event(
             "plugin.session",
             session.key,
@@ -320,6 +328,7 @@ __all__ = [
     "ENTRY_POINT_GROUP",
     "LLMProvider",
     "MAX_GROUP_LABEL_CHARS",
+    "MAX_SOURCE_LABEL_CHARS",
     "MAX_SOURCE_SUMMARY_CHARS",
     "PluginRegistry",
     "PluginSpec",

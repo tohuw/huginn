@@ -305,7 +305,7 @@ function upsertCard(s) {
   card.dataset.since = s.state_since;
   const source = SOURCE_META[s.source] || { label: s.source || "unknown", family: "other" };
   card.dataset.sourceFamily = source.family;
-  card.querySelector(".src").textContent = source.label;
+  card.querySelector(".src").textContent = s.source_label || source.label;
   card.querySelector(".name").textContent = s.name;
   card.querySelector(".name").title = s.session_id;
   card.querySelector(".badge").textContent = BADGES[s.state] || s.state;

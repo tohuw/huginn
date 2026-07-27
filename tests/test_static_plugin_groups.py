@@ -21,6 +21,11 @@ class PluginGroupRenderingTests(unittest.TestCase):
         self.assertIn("s.group_label", source)
         self.assertIn("hidden_groups", source)
 
+    def test_app_js_renders_plugin_source_label_on_the_card_badge(self):
+        source = APP_JS.read_text(encoding="utf-8")
+
+        self.assertIn("s.source_label", source)
+
 
 if __name__ == "__main__":
     unittest.main()

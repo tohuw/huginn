@@ -325,10 +325,13 @@ class Reducer:
         # rather than a separate client-side filter (issue #19).
         ended_ttl = self.cfg.get("ui", "ended_ttl_s") if self.cfg.get("ui", "show_ended") else 0
         for key, s in list(self.sessions.items()):
-            # a tool_use stuck without result while not busy = permission prompt
+            # a tool_use stuck without result while not busy = permission prompt.
+            # WORKING must stay out of this check (issue #33): a slow tool call
+            # or a long-running dispatched subagent leaves pending_tools non-empty
+            # for as long as it runs, which is normal activity, not a stuck prompt.
             age = ev.payload.get("pending_ages", {}).get(key)
             if (age is not None and age > pending_timeout
-                    and s.state in (SessionState.IDLE, SessionState.WORKING)):
+                    and s.state is SessionState.IDLE):
                 if self._set_state(s, SessionState.WAITING_PERMISSION, "transcript", now):
                     changed.append(s)
             if s.state == SessionState.ENDED and now - s.state_since >= ended_ttl:

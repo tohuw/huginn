@@ -298,6 +298,7 @@ function upsertCard(s) {
     card.querySelector(".peek-btn").onclick = () => peek(s.key);
     card.querySelector(".ask").onclick = () => askAbout(s.key);
     card.querySelector(".edit-title").onclick = () => editTitle(s.key);
+    card.querySelector(".blurb-toggle").onclick = () => toggleBlurb(s.key);
     cards.set(s.key, card);
   }
   card.dataset.state = s.state;
@@ -316,13 +317,36 @@ function upsertCard(s) {
   const title = card.querySelector(".card-title");
   title.textContent = s.title || "";
   title.dataset.origin = s.title_origin || "";
-  const summary = card.querySelector(".blurb");
+  const wrap = card.querySelector(".blurb-wrap");
+  const summary = wrap.querySelector(".blurb");
   const usingBlurb = llmEnabled && Boolean(s.blurb);
-  summary.textContent = usingBlurb ? s.blurb : (s.last_prompt || "");
+  const text = usingBlurb ? s.blurb : (s.last_prompt || "");
+  summary.textContent = text;
+  summary.title = text;
   summary.dataset.kind = usingBlurb ? "blurb" : (s.last_prompt ? "prompt" : "");
+  wrap.classList.remove("expanded");
   card.querySelector(".subagents").textContent = fmtWork(s);
   card.querySelector(".tokens").textContent = s.tokens ? `${(s.tokens / 1000).toFixed(0)}k tok` : "";
   reorder();
+  updateBlurbToggle(s.key);
+}
+
+function updateBlurbToggle(key) {
+  const card = cards.get(key);
+  const wrap = card.querySelector(".blurb-wrap");
+  const summary = wrap.querySelector(".blurb");
+  const toggle = wrap.querySelector(".blurb-toggle");
+  const expanded = wrap.classList.contains("expanded");
+  toggle.textContent = expanded ? "less ▴" : "more ▾";
+  const truncated = expanded || summary.scrollHeight > summary.clientHeight + 1;
+  toggle.toggleAttribute("data-empty", !truncated);
+  toggle.disabled = !truncated;
+}
+
+function toggleBlurb(key) {
+  const card = cards.get(key);
+  card.querySelector(".blurb-wrap").classList.toggle("expanded");
+  updateBlurbToggle(key);
 }
 
 async function editTitle(key) {

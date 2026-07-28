@@ -207,6 +207,15 @@ class ReducerTests(unittest.TestCase):
         self.feed("tick", None, {"pending_ages": {s.key: 25.0}})
         self.assertEqual(s.state, SessionState.WAITING_PERMISSION)
 
+    def test_pending_tool_timeout_does_not_fire_while_working(self):
+        # issue #33: a slow tool call or a long-running dispatched subagent
+        # keeps a WORKING session's oldest pending tool "old" for as long as
+        # it runs -- that's normal activity, not a stuck permission prompt.
+        s = claude_session(state=SessionState.WORKING)
+        self.r.sessions[s.key] = s
+        self.feed("tick", None, {"pending_ages": {s.key: 25.0}})
+        self.assertEqual(s.state, SessionState.WORKING)
+
     def test_ended_ttl_removal(self):
         s = claude_session(state=SessionState.ENDED,
                            state_origin="timeout", state_since=NOW - 400)

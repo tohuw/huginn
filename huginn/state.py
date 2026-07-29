@@ -162,7 +162,8 @@ class Reducer:
         if s.blurb and (not s.blurb_ts or s.blurb_ts < s.state_since):
             s.blurb = None; s.blurb_ts = None; changed = True
         for attr in ("name", "model", "git_branch", "tokens", "cwd", "transcript_path",
-                    "last_prompt", "source_summary", "subagents"):
+                    "last_prompt", "source_summary", "subagents", "group", "group_label",
+                    "source_label"):
             v = getattr(incoming, attr)
             if (v or attr == "source_summary") and v != getattr(s, attr):
                 setattr(s, attr, v); changed = True
@@ -267,6 +268,13 @@ class Reducer:
                 target = SessionState.WAITING_PERMISSION
             else:
                 target = SessionState.WAITING_INPUT
+            # AskUserQuestion arrives as a permission-shaped notification, but
+            # it's the agent asking the user a question, not a tool approval.
+            # The hook endpoint disambiguates from the transcript tail (same
+            # mechanism as Stop's asked_question).
+            if (target is SessionState.WAITING_PERMISSION
+                    and ev.payload.get("asked_question")):
+                target = SessionState.WAITING_INPUT
             changed |= self._set_state(s, target, "hook", now)
         elif event == "Stop":
             target = SessionState.WAITING_INPUT if ev.payload.get("asked_question") \
@@ -317,10 +325,13 @@ class Reducer:
         # rather than a separate client-side filter (issue #19).
         ended_ttl = self.cfg.get("ui", "ended_ttl_s") if self.cfg.get("ui", "show_ended") else 0
         for key, s in list(self.sessions.items()):
-            # a tool_use stuck without result while not busy = permission prompt
+            # a tool_use stuck without result while not busy = permission prompt.
+            # WORKING must stay out of this check (issue #33): a slow tool call
+            # or a long-running dispatched subagent leaves pending_tools non-empty
+            # for as long as it runs, which is normal activity, not a stuck prompt.
             age = ev.payload.get("pending_ages", {}).get(key)
             if (age is not None and age > pending_timeout
-                    and s.state in (SessionState.IDLE, SessionState.WORKING)):
+                    and s.state is SessionState.IDLE):
                 if self._set_state(s, SessionState.WAITING_PERMISSION, "transcript", now):
                     changed.append(s)
             if s.state == SessionState.ENDED and now - s.state_since >= ended_ttl:

@@ -106,6 +106,35 @@ class DaemonSnapshotTests(unittest.TestCase):
         write.assert_called_once_with()
         self.assertFalse(d._dirty)
 
+    def test_restored_question_session_corrects_via_tail_seed(self):
+        # A session restored as waiting_permission whose agent is parked on an
+        # AskUserQuestion never touches its transcript again, so only the
+        # startup tail seed can correct the stale state (the "PERMIT?" badge
+        # surviving a daemon restart).
+        import json as _json
+        import time
+        transcript = Path(self.tmp.name) / "s1.jsonl"
+        transcript.write_text(_json.dumps({
+            "type": "assistant",
+            "message": {"content": [
+                {"type": "tool_use", "id": "t1", "name": "AskUserQuestion",
+                 "input": {}},
+            ]},
+        }) + "\n")
+        d = Daemon(Config({}))
+        d.reducer.sessions["claude:1"] = Session(
+            key="claude:1", source="claude", session_id="s1", cwd="/tmp",
+            name="p", state=SessionState.WAITING_PERMISSION,
+            state_since=time.time() - 3600, state_origin="hook",
+            last_activity=time.time() - 3600,
+            transcript_path=str(transcript))
+        for s in list(d.reducer.sessions.values()):
+            d.ensure_tail(s)   # what run() does right after restore
+        while not d.bus.events.empty():
+            d.reducer.apply(d.bus.events.get_nowait())
+        self.assertEqual(d.reducer.sessions["claude:1"].state,
+                         SessionState.WAITING_INPUT)
+
     def test_second_daemon_does_not_rotate_live_credentials(self):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
             listener.bind(("127.0.0.1", 0))

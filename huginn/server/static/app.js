@@ -39,9 +39,12 @@ const cards = new Map();      // key -> card element
 const grid = document.getElementById("grid");
 const appGrid = document.getElementById("app-grid");
 const appTiles = document.getElementById("app-tiles");
+const pluginGroupsContainer = document.getElementById("plugin-groups");
+const pluginGroupSections = new Map();   // group key -> { section, grid, count }
 const tpl = document.getElementById("card-tpl");
 let llmEnabled = true;
 let desktopVisible = true;
+let hiddenGroups = new Set();
 // Startup and daemon restarts are indeterminate until both the roster and the
 // cheap activity probe answer.  Begin with the honest state instead of briefly
 // claiming there are no sessions.
@@ -304,6 +307,7 @@ function upsertCard(s) {
     card.querySelector(".ask").onclick = () => askAbout(s.key);
     card.querySelector(".edit-title").onclick = () => editTitle(s.key);
     card.querySelector(".dismiss").onclick = () => dismiss(s.key);
+    card.querySelector(".blurb-toggle").onclick = () => toggleBlurb(s.key);
     cards.set(s.key, card);
   }
   card.dataset.state = s.state;
@@ -311,7 +315,7 @@ function upsertCard(s) {
   card.dataset.since = s.state_since;
   const source = SOURCE_META[s.source] || { label: s.source || "unknown", family: "other" };
   card.dataset.sourceFamily = source.family;
-  card.querySelector(".src").textContent = source.label;
+  card.querySelector(".src").textContent = s.source_label || source.label;
   card.querySelector(".name").textContent = s.name;
   card.querySelector(".name").title = s.session_id;
   card.querySelector(".badge").textContent = BADGES[s.state] || s.state;
@@ -322,13 +326,36 @@ function upsertCard(s) {
   const title = card.querySelector(".card-title");
   title.textContent = s.title || "";
   title.dataset.origin = s.title_origin || "";
-  const summary = card.querySelector(".blurb");
+  const wrap = card.querySelector(".blurb-wrap");
+  const summary = wrap.querySelector(".blurb");
   const usingBlurb = llmEnabled && Boolean(s.blurb);
-  summary.textContent = usingBlurb ? s.blurb : (s.last_prompt || "");
+  const text = usingBlurb ? s.blurb : (s.last_prompt || "");
+  summary.textContent = text;
+  summary.title = text;
   summary.dataset.kind = usingBlurb ? "blurb" : (s.last_prompt ? "prompt" : "");
+  wrap.classList.remove("expanded");
   card.querySelector(".subagents").textContent = fmtWork(s);
   card.querySelector(".tokens").textContent = s.tokens ? `${(s.tokens / 1000).toFixed(0)}k tok` : "";
   reorder();
+  updateBlurbToggle(s.key);
+}
+
+function updateBlurbToggle(key) {
+  const card = cards.get(key);
+  const wrap = card.querySelector(".blurb-wrap");
+  const summary = wrap.querySelector(".blurb");
+  const toggle = wrap.querySelector(".blurb-toggle");
+  const expanded = wrap.classList.contains("expanded");
+  toggle.textContent = expanded ? "less ▴" : "more ▾";
+  const truncated = expanded || summary.scrollHeight > summary.clientHeight + 1;
+  toggle.toggleAttribute("data-empty", !truncated);
+  toggle.disabled = !truncated;
+}
+
+function toggleBlurb(key) {
+  const card = cards.get(key);
+  card.querySelector(".blurb-wrap").classList.toggle("expanded");
+  updateBlurbToggle(key);
 }
 
 async function editTitle(key) {
@@ -380,6 +407,47 @@ async function editTitle(key) {
 // checks this flag so that blur doesn't read as the user finishing the rename.
 let reordering = false;
 
+// A plugin-contributed Session.group renders in its own section below the
+// main grid and desktop tiles -- same treatment as desktop presence, but
+// keyed dynamically since Huginn doesn't know a group's key or label until
+// a plugin source's first session declares them. Sections are created once
+// and reused; toggling one persists to ui.hidden_groups (a set of group
+// keys, not a boolean per key, so an unrelated settings write from another
+// tab can't silently un-hide a group this tab hid).
+function getOrCreatePluginGroupSection(groupKey, groupLabel) {
+  let entry = pluginGroupSections.get(groupKey);
+  if (entry) return entry;
+  const section = document.createElement("section");
+  section.className = "plugin-group";
+  const head = document.createElement("div");
+  head.className = "plugin-group-head";
+  const label = document.createElement("label");
+  label.className = "section-label plugin-group-toggle";
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.checked = !hiddenGroups.has(groupKey);
+  checkbox.onchange = async (e) => {
+    const previous = !hiddenGroups.has(groupKey);
+    if (e.target.checked) hiddenGroups.delete(groupKey); else hiddenGroups.add(groupKey);
+    reorder();
+    const r = await saveSettings({ ui: { hidden_groups: [...hiddenGroups] } });
+    if (!r.ok) {
+      if (previous) hiddenGroups.delete(groupKey); else hiddenGroups.add(groupKey);
+      e.target.checked = previous;
+      reorder();
+    }
+  };
+  label.append(checkbox, document.createTextNode(groupLabel));
+  head.appendChild(label);
+  const groupGrid = document.createElement("div");
+  groupGrid.className = "plugin-group-grid";
+  section.append(head, groupGrid);
+  pluginGroupsContainer.appendChild(section);
+  entry = { section, grid: groupGrid, count: 0 };
+  pluginGroupSections.set(groupKey, entry);
+  return entry;
+}
+
 function reorder() {
   const mode = document.getElementById("sort").value || "state";
   const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
@@ -392,16 +460,24 @@ function reorder() {
   }[mode];
   const sorted = [...sessions.values()].sort(compare);
   const active = document.activeElement;
-  const restore = (grid.contains(active) || appGrid.contains(active))
+  const restore = (grid.contains(active) || appGrid.contains(active) || pluginGroupsContainer.contains(active))
     ? { el: active, range: typeof active.selectionStart === "number"
           ? [active.selectionStart, active.selectionEnd] : null }
     : null;
   const sessionFrag = document.createDocumentFragment();
   const appFrag = document.createDocumentFragment();
+  const groupFrags = new Map();   // group key -> { frag, label, view }
   let appCount = 0;
   reordering = true;
   for (const s of sorted) {
-    if (s.source.endsWith("-desktop")) {
+    if (s.group) {
+      let g = groupFrags.get(s.group);
+      if (!g) {
+        g = { frag: document.createDocumentFragment(), label: s.group_label || s.group, count: 0 };
+        groupFrags.set(s.group, g);
+      }
+      g.frag.appendChild(cards.get(s.key)); g.count += 1;
+    } else if (s.source.endsWith("-desktop")) {
       appFrag.appendChild(cards.get(s.key)); appCount += 1;
     } else {
       sessionFrag.appendChild(cards.get(s.key));
@@ -409,8 +485,23 @@ function reorder() {
   }
   grid.replaceChildren(sessionFrag);
   appGrid.replaceChildren(appFrag);
-  reordering = false;
   appTiles.hidden = !desktopVisible || appCount === 0;
+  const view = document.getElementById("view").value || "cards";
+  for (const [groupKey, g] of groupFrags) {
+    const entry = getOrCreatePluginGroupSection(groupKey, g.label);
+    entry.grid.dataset.view = view;
+    entry.grid.replaceChildren(g.frag);
+    // Hiding the whole section (including its toggle) is only correct when
+    // there's nothing to show. A user-hidden group still needs its checkbox
+    // visible so they can turn it back on -- see issue where unchecking a
+    // group's toggle hid the toggle itself along with the cards.
+    entry.section.hidden = g.count === 0;
+    entry.grid.hidden = hiddenGroups.has(groupKey);
+  }
+  for (const [groupKey, entry] of pluginGroupSections) {
+    if (!groupFrags.has(groupKey)) entry.section.hidden = true;
+  }
+  reordering = false;
   if (restore) {
     restore.el.focus();
     if (restore.range) restore.el.setSelectionRange(...restore.range);
@@ -546,6 +637,65 @@ const CHAT_SIZE_KEYS = {
   vertical: "huginn.chat.width",
   horizontal: "huginn.chat.height",
 };
+
+// The transcript persists across a browser refresh (localStorage), but not
+// across a daemon restart or quit: boot_id is a fresh id the daemon hands
+// out every process start (see /api/sessions), unrelated to the API token,
+// so a stale transcript from a previous daemon life is never mistaken for
+// this one's -- restarting/quitting Huginn is what should end a
+// conversation, not the tab happening to reload.
+const CHAT_TRANSCRIPT_KEY = "huginn.chat.transcript";
+const CHAT_TRANSCRIPT_MAX_MESSAGES = 200;
+let chatBootId = null;
+let restoringTranscript = false;
+
+function loadStoredTranscript() {
+  if (DEMO_MODE) return null;
+  try {
+    const raw = localStorage.getItem(CHAT_TRANSCRIPT_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (_) { return null; }
+}
+function clearStoredTranscript() {
+  if (DEMO_MODE) return;
+  try { localStorage.removeItem(CHAT_TRANSCRIPT_KEY); } catch (_) { /* optional */ }
+}
+function persistTranscript() {
+  if (DEMO_MODE || !chatBootId || restoringTranscript) return;
+  try {
+    const log = document.getElementById("chat-log");
+    const messages = [...log.children].slice(-CHAT_TRANSCRIPT_MAX_MESSAGES).map((div) => ({
+      kind: div.classList.contains("q") ? "q" : "a",
+      text: div.classList.contains("a") ? (div.dataset.raw ?? div.textContent) : div.textContent,
+    }));
+    localStorage.setItem(CHAT_TRANSCRIPT_KEY, JSON.stringify({ boot_id: chatBootId, messages }));
+  } catch (_) { /* optional: private browsing, quota, etc. */ }
+}
+// Called from every /api/sessions response (initial load and the periodic
+// reconciliation poll), which is also the only place the daemon's current
+// boot_id is available.
+function syncChatBoot(bootId) {
+  if (!bootId || DEMO_MODE) return;
+  if (chatBootId === null) {
+    chatBootId = bootId;
+    const stored = loadStoredTranscript();
+    if (stored && stored.boot_id === bootId && Array.isArray(stored.messages)) {
+      restoringTranscript = true;
+      for (const m of stored.messages) addMsg(m.kind, m.text);
+      restoringTranscript = false;
+    } else {
+      clearStoredTranscript();
+    }
+    return;
+  }
+  if (chatBootId !== bootId) {
+    // A new daemon process (restart, or relaunch after quit) took over
+    // while this tab stayed open -- its predecessor's conversation is over.
+    chatBootId = bootId;
+    document.getElementById("chat-log").replaceChildren();
+    clearStoredTranscript();
+  }
+}
 async function saveSettings(body) {
   if (DEMO_MODE) return { ok: true };
   return apiFetch("/api/settings", {
@@ -666,6 +816,7 @@ document.getElementById("chat-form").onsubmit = async (e) => {
     currentAnswer.textContent = `chat unavailable (${err.message})`;
     setChatBusy(false);
     currentAnswer = null;
+    persistTranscript();
     return;
   }
   const body = await r.json().catch(() => ({}));
@@ -676,6 +827,7 @@ document.getElementById("chat-form").onsubmit = async (e) => {
     }
     currentAnswer = null;
     setChatBusy(false);
+    persistTranscript();
   } else {
     currentRequestId = body.request_id || null;
     if (body.settings) applySettings(body.settings);
@@ -690,6 +842,7 @@ function addMsg(kind, text) {
   const log = document.getElementById("chat-log");
   log.appendChild(div);
   log.scrollTop = log.scrollHeight;
+  persistTranscript();
   return div;
 }
 
@@ -912,6 +1065,11 @@ function applySettings(cfg) {
   document.getElementById("llm-toggle").checked = llmEnabled;
   desktopVisible = cfg.ui.show_desktop !== false;
   document.getElementById("desktop-toggle").checked = desktopVisible;
+  hiddenGroups = new Set(cfg.ui.hidden_groups || []);
+  for (const [groupKey, entry] of pluginGroupSections) {
+    entry.section.querySelector(".plugin-group-toggle input").checked = !hiddenGroups.has(groupKey);
+    entry.grid.hidden = hiddenGroups.has(groupKey);
+  }
   providerSelect.value = cfg.llm.provider;
   rememberProvider(cfg.llm.provider);
   const view = cfg.ui.view || "cards";
@@ -1000,6 +1158,7 @@ async function snapshot() {
     for (const s of data.sessions) upsertCard(s);
     setAttention(data.attention);
     setTriage(data.triage);
+    syncChatBoot(data.boot_id);
     if (!data.sessions.length) {
       const activity = await (await apiFetch("/api/activity")).json();
       rosterLoading = activity.agents_running;
@@ -1045,6 +1204,7 @@ function connect() {
     if (JSON.parse(e.data).request_id === currentRequestId) {
       setChatBusy(false);
       currentAnswer = null;
+      persistTranscript();
     }
   });
   es.addEventListener("chat.error", (e) => {
@@ -1054,6 +1214,7 @@ function connect() {
       currentAnswer.textContent += `\n[${data.error}]`;
       setChatBusy(false);
       currentAnswer = null;
+      persistTranscript();
     }
   });
   es.onopen = snapshot;   // resync after every (re)connect

@@ -126,6 +126,37 @@ class ReducerTests(unittest.TestCase):
             }))
             self.assertEqual(s.state, expected, msg=notification_type)
 
+    def test_ask_user_question_notification_is_waiting_input(self):
+        # AskUserQuestion arrives as a permission-shaped Notification; the
+        # hook endpoint attaches asked_question from the transcript tail and
+        # the reducer must classify it as WAITING_INPUT, not
+        # WAITING_PERMISSION (the "PERMIT?" badge bug).
+        for data in (
+                {"session_id": "sid-100", "message": "",
+                 "notification_type": "permission_prompt"},
+                {"session_id": "sid-100",
+                 "message": "Claude needs your permission to use AskUserQuestion"},
+        ):
+            r = Reducer(Config({}))
+            s = claude_session(state=SessionState.WORKING)
+            r.sessions[s.key] = s
+            r.apply(Event("hook.claude", None, time.time(), "test", {
+                "event": "Notification", "data": data,
+                "asked_question": True,
+            }))
+            self.assertEqual(s.state, SessionState.WAITING_INPUT, msg=data)
+
+    def test_real_permission_prompt_unaffected_by_asked_question_false(self):
+        s = claude_session(state=SessionState.WORKING)
+        self.r.sessions[s.key] = s
+        self.feed("hook.claude", None, {
+            "event": "Notification",
+            "data": {"session_id": "sid-100",
+                     "notification_type": "permission_prompt"},
+            "asked_question": False,
+        })
+        self.assertEqual(s.state, SessionState.WAITING_PERMISSION)
+
     def test_delayed_idle_prompt_clears_false_attention(self):
         r = Reducer(Config({}))
         s = claude_session(state=SessionState.WAITING_INPUT)
@@ -175,6 +206,15 @@ class ReducerTests(unittest.TestCase):
         self.r.sessions[s.key] = s
         self.feed("tick", None, {"pending_ages": {s.key: 25.0}})
         self.assertEqual(s.state, SessionState.WAITING_PERMISSION)
+
+    def test_pending_tool_timeout_does_not_fire_while_working(self):
+        # issue #33: a slow tool call or a long-running dispatched subagent
+        # keeps a WORKING session's oldest pending tool "old" for as long as
+        # it runs -- that's normal activity, not a stuck permission prompt.
+        s = claude_session(state=SessionState.WORKING)
+        self.r.sessions[s.key] = s
+        self.feed("tick", None, {"pending_ages": {s.key: 25.0}})
+        self.assertEqual(s.state, SessionState.WORKING)
 
     def test_ended_ttl_removal(self):
         s = claude_session(state=SessionState.ENDED,

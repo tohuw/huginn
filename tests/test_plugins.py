@@ -178,6 +178,97 @@ class PluginSourceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "limited to 4000"):
             self.context.upsert(session)
 
+    def test_context_accepts_a_valid_group_and_label(self):
+        session = Session(
+            key=self.context.key("run-2"),
+            source="workers",
+            session_id="run-2",
+            cwd="worker-1/repo",
+            name="worker-1-run-2",
+            group="neo-cortex",
+            group_label="Neo-Cortex workers",
+        )
+
+        self.context.upsert(session)   # must not raise
+
+    def test_context_rejects_malformed_group_key(self):
+        session = Session(
+            key=self.context.key("run-2"),
+            source="workers",
+            session_id="run-2",
+            cwd="worker-1/repo",
+            name="worker-1-run-2",
+            group="Not Valid!",
+        )
+
+        with self.assertRaisesRegex(ValueError, "session group must match"):
+            self.context.upsert(session)
+
+    def test_context_rejects_group_label_without_group(self):
+        session = Session(
+            key=self.context.key("run-2"),
+            source="workers",
+            session_id="run-2",
+            cwd="worker-1/repo",
+            name="worker-1-run-2",
+            group_label="Neo-Cortex workers",
+        )
+
+        with self.assertRaisesRegex(ValueError, "group_label requires group"):
+            self.context.upsert(session)
+
+    def test_context_rejects_oversized_group_label(self):
+        session = Session(
+            key=self.context.key("run-2"),
+            source="workers",
+            session_id="run-2",
+            cwd="worker-1/repo",
+            name="worker-1-run-2",
+            group="neo-cortex",
+            group_label="x" * 61,
+        )
+
+        with self.assertRaisesRegex(ValueError, "limited to 60"):
+            self.context.upsert(session)
+
+    def test_context_accepts_a_valid_source_label(self):
+        session = Session(
+            key=self.context.key("run-2"),
+            source="workers",
+            session_id="run-2",
+            cwd="worker-1/repo",
+            name="worker-1-run-2",
+            source_label="NeoCortex",
+        )
+
+        self.context.upsert(session)   # must not raise
+
+    def test_context_rejects_blank_source_label(self):
+        session = Session(
+            key=self.context.key("run-2"),
+            source="workers",
+            session_id="run-2",
+            cwd="worker-1/repo",
+            name="worker-1-run-2",
+            source_label="   ",
+        )
+
+        with self.assertRaisesRegex(ValueError, "source_label must be non-empty"):
+            self.context.upsert(session)
+
+    def test_context_rejects_oversized_source_label(self):
+        session = Session(
+            key=self.context.key("run-2"),
+            source="workers",
+            session_id="run-2",
+            cwd="worker-1/repo",
+            name="worker-1-run-2",
+            source_label="x" * 41,
+        )
+
+        with self.assertRaisesRegex(ValueError, "limited to 40"):
+            self.context.upsert(session)
+
     def test_context_rejects_foreign_session_key(self):
         session = Session(
             key="codex:existing",
@@ -235,6 +326,45 @@ class PluginSourceTests(unittest.TestCase):
 
         self.assertNotIn(key, reducer.sessions)
         self.assertEqual(reducer.removed, [key])
+
+    def test_reducer_refreshes_group_on_repeated_upsert(self):
+        key = self.context.key("run-1")
+        reducer = Reducer(Config({}))
+        self.context.upsert(Session(
+            key=key, source="workers", session_id="run-1", cwd="node/repo",
+            name="run-1", group="neo-cortex", group_label="Neo-Cortex workers",
+        ))
+        reducer.apply(self.bus.events.get_nowait())
+        self.assertEqual(reducer.sessions[key].group, "neo-cortex")
+        self.assertEqual(reducer.sessions[key].group_label, "Neo-Cortex workers")
+
+        self.context.upsert(Session(
+            key=key, source="workers", session_id="run-1", cwd="node/repo",
+            name="run-1", group="neo-cortex", group_label="Neo-Cortex workers",
+        ))
+        changed = reducer.apply(self.bus.events.get_nowait())
+        self.assertEqual(changed, [])   # unchanged group is not a spurious update
+
+    def test_reducer_picks_up_source_label_on_repeated_upsert(self):
+        # A session that already exists in the reducer's in-memory state
+        # (e.g. surviving a daemon restart) must still pick up source_label
+        # from a later upsert -- the merge loop for an existing key touches
+        # a fixed attribute list, and a newly added Session field silently
+        # never applies to already-known sessions unless it's in that list.
+        key = self.context.key("run-1")
+        reducer = Reducer(Config({}))
+        self.context.upsert(Session(
+            key=key, source="workers", session_id="run-1", cwd="node/repo", name="run-1",
+        ))
+        reducer.apply(self.bus.events.get_nowait())
+        self.assertIsNone(reducer.sessions[key].source_label)
+
+        self.context.upsert(Session(
+            key=key, source="workers", session_id="run-1", cwd="node/repo", name="run-1",
+            source_label="Workers",
+        ))
+        reducer.apply(self.bus.events.get_nowait())
+        self.assertEqual(reducer.sessions[key].source_label, "Workers")
 
     def test_external_id_is_bounded_and_allowlisted(self):
         with self.assertRaisesRegex(ValueError, "safe characters"):

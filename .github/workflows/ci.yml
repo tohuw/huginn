@@ -1,9 +1,12 @@
 name: CI
 
+# Manual-only: the CI floor runs locally on pre-push (.githooks/pre-push) so no
+# metered Actions minutes are spent on every push/PR (this matrix is macOS +
+# Windows, the expensive 10x/2x multipliers). Trigger this by hand when you want
+# the full cross-OS matrix — e.g. before a release or after touching anything
+# portability-sensitive (LaunchAgent, iTerm focus, the Windows tray).
 on:
-  push:
-    branches: [master]
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read

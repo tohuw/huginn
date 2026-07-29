@@ -1,0 +1,70 @@
+#!/bin/sh
+# Huginn CI floor — runs locally on every push so no GitHub Actions minutes are
+# spent (the CI workflow is manual-only; its matrix is macOS + Windows, the
+# expensive 10x/2x multipliers). Blocks the push if lint, tests, the wheel
+# build, or the smoke test fail.
+#
+# Activate once per clone:  git config core.hooksPath .githooks
+#
+# This runs on the pushing developer's OS only. The Windows tray build
+# (dotnet / build.ps1) can only run on Windows, so it is guarded and skipped
+# elsewhere. When you need the full cross-OS matrix, trigger the ci workflow by
+# hand (Actions → CI → Run workflow) before a release.
+
+echo "huginn pre-push: lint + tests + wheel build + smoke (local CI)..."
+
+if ! command -v uv >/dev/null 2>&1; then
+	echo "huginn pre-push: WARNING — uv not found; skipping all checks. Install uv (https://astral.sh/uv) to run the floor."
+	exit 0
+fi
+
+uv sync --locked || {
+	echo "huginn pre-push: dependency sync failed (lockfile drift?) — push blocked. (--no-verify to override)"
+	exit 1
+}
+
+uv run ruff check . || {
+	echo "huginn pre-push: ruff lint failed — push blocked. (--no-verify to override)"
+	exit 1
+}
+
+uv run pytest -q || {
+	echo "huginn pre-push: pytest failed — push blocked. (--no-verify to override)"
+	exit 1
+}
+
+uv build || {
+	echo "huginn pre-push: wheel build failed — push blocked. (--no-verify to override)"
+	exit 1
+}
+
+# Smoke-test the freshly built wheel in a clean venv (matches the CI macOS job).
+if command -v python3 >/dev/null 2>&1; then
+	SMOKE_VENV=".git/huginn-smoke-venv"
+	rm -rf "$SMOKE_VENV"
+	python3 -m venv "$SMOKE_VENV" && \
+	"$SMOKE_VENV/bin/pip" install --quiet dist/*.whl && \
+	"$SMOKE_VENV/bin/python" -c "import huginn; print('import ok')" && \
+	"$SMOKE_VENV/bin/huginn" --help >/dev/null && \
+	"$SMOKE_VENV/bin/huginn" status >/dev/null
+	SMOKE_RC=$?
+	rm -rf "$SMOKE_VENV"
+	if [ "$SMOKE_RC" -ne 0 ]; then
+		echo "huginn pre-push: wheel smoke test failed — push blocked. (--no-verify to override)"
+		exit 1
+	fi
+else
+	echo "huginn pre-push: WARNING — python3 not found; skipped wheel smoke test."
+fi
+
+# Windows tray build is Windows-only; skip with a note on other platforms.
+if command -v dotnet >/dev/null 2>&1; then
+	dotnet build windows/Huginn.Tray/Huginn.Tray.csproj --configuration Release || {
+		echo "huginn pre-push: Windows tray build failed — push blocked. (--no-verify to override)"
+		exit 1
+	}
+else
+	echo "huginn pre-push: NOTE — dotnet not found; skipped Windows tray build (runs only on Windows / in the manual CI matrix)."
+fi
+
+echo "huginn pre-push: green."

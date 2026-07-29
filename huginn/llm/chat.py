@@ -14,8 +14,8 @@ import uuid
 from typing import TYPE_CHECKING
 
 from .. import config
-from ..model import SessionState
-from .context import digest_for_session, evidence_text
+from ..model import Session, SessionState
+from .context import digest_for_session, evidence_for_session, evidence_text
 from .providers import compatible_model, get_provider
 
 if TYPE_CHECKING:
@@ -112,6 +112,19 @@ def _control_actions(question: str) -> list[tuple[str, str, object, str]]:
     return actions
 
 
+def _resolve_named_session(daemon: "Daemon", needle: str) -> tuple[Session | None, str | None]:
+    """Match @name the same way the dashboard's @mention autocomplete would:
+    exact name first, then a unique prefix. Returns (session, None) or
+    (None, error) -- never both, so callers can propagate the error verbatim."""
+    lowered = needle.lower()
+    matches = [s for s in daemon.reducer.sessions.values() if s.name.lower() == lowered]
+    if len(matches) != 1:
+        matches = [s for s in daemon.reducer.sessions.values() if s.name.lower().startswith(lowered)]
+    if len(matches) == 1:
+        return matches[0], None
+    return None, f"Could not uniquely match @{needle}."
+
+
 def _apply_title_control(daemon: "Daemon", question: str) -> str | None:
     clear = re.search(r"\bclear\s+(?:the\s+)?title\s+(?:for\s+)?@([\w-]+)", question, re.I)
     setting = re.search(
@@ -120,12 +133,9 @@ def _apply_title_control(daemon: "Daemon", question: str) -> str | None:
     match = clear or setting
     if not match:
         return None
-    needle = match.group(1).lower()
-    matches = [s for s in daemon.reducer.sessions.values()
-               if s.name.lower() == needle or s.name.lower().startswith(needle)]
-    if len(matches) != 1:
-        return f"Could not uniquely match @{match.group(1)}."
-    s = matches[0]
+    s, error = _resolve_named_session(daemon, match.group(1))
+    if error:
+        return error
     title = "" if clear else setting.group(2).strip().strip('"')[:60]
     s.title = title or None
     s.title_origin = "manual" if title else None
@@ -136,16 +146,45 @@ def _apply_title_control(daemon: "Daemon", question: str) -> str | None:
     return f"Title {'set to ' + title if title else 'cleared'} for @{s.name}."
 
 
+def _apply_jump_control(daemon: "Daemon", question: str) -> str | None:
+    """"jump @name" drives the same focus_session() the dashboard's jump
+    button calls -- Ask performs the action, not just describes it."""
+    match = re.search(r"\bjump\s+(?:to\s+)?@([\w-]+)", question, re.I)
+    if not match:
+        return None
+    s, error = _resolve_named_session(daemon, match.group(1))
+    if error:
+        return error
+    from ..focus import focus_session
+    result = focus_session(s)
+    if result.get("ok"):
+        daemon.bus.broadcast("session.focused", {"key": s.key})
+        return f"Jumped to @{s.name}."
+    return f"Could not jump to @{s.name}: {result.get('error') or 'unknown error'}"
+
+
+def _apply_peek_control(daemon: "Daemon", question: str) -> str | None:
+    """"peek @name" expands that card's peek pane on the dashboard (like
+    clicking peek) and returns the same tail text in the chat reply."""
+    match = re.search(r"\bpeek\s+(?:at\s+)?@([\w-]+)", question, re.I)
+    if not match:
+        return None
+    s, error = _resolve_named_session(daemon, match.group(1))
+    if error:
+        return error
+    lines = evidence_for_session(s, max_lines=15)
+    daemon.bus.broadcast("session.peek", {"key": s.key, "lines": lines})
+    tail = "\n".join(lines) if lines else "(no transcript yet)"
+    return f"@{s.name}:\n```\n{tail}\n```"
+
+
 def _apply_dismiss_control(daemon: "Daemon", question: str) -> str | None:
     match = re.search(r"\bdismiss\b.{0,20}@([\w-]+)", question, re.I)
     if not match:
         return None
-    needle = match.group(1).lower()
-    matches = [s for s in daemon.reducer.sessions.values()
-               if s.name.lower() == needle or s.name.lower().startswith(needle)]
-    if len(matches) != 1:
-        return f"Could not uniquely match @{match.group(1)}."
-    s = matches[0]
+    s, error = _resolve_named_session(daemon, match.group(1))
+    if error:
+        return error
     if s.state != SessionState.ENDED:
         return f"@{s.name} is still live -- only ended sessions can be dismissed."
     del daemon.reducer.sessions[s.key]
@@ -167,17 +206,14 @@ async def start_chat(daemon: "Daemon", body: dict) -> dict:
         return {"ok": False, "error": "empty question"}
     if daemon.active_chat and not daemon.active_chat.done():
         return {"ok": False, "error": "a chat is already running"}
-    title_reply = _apply_title_control(daemon, question)
-    if title_reply:
+    session_reply = (_apply_title_control(daemon, question)
+                      or _apply_jump_control(daemon, question)
+                      or _apply_peek_control(daemon, question)
+                      or _apply_dismiss_control(daemon, question))
+    if session_reply:
         request_id = uuid.uuid4().hex[:12]
         daemon.active_chat = asyncio.create_task(
-            _confirm_controls(daemon, [title_reply], request_id))
-        return {"ok": True, "request_id": request_id}
-    dismiss_reply = _apply_dismiss_control(daemon, question)
-    if dismiss_reply:
-        request_id = uuid.uuid4().hex[:12]
-        daemon.active_chat = asyncio.create_task(
-            _confirm_controls(daemon, [dismiss_reply], request_id))
+            _confirm_controls(daemon, [session_reply], request_id))
         return {"ok": True, "request_id": request_id}
     actions = _control_actions(question)
     if actions:

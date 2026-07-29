@@ -110,6 +110,7 @@ huginn roster --attention
 huginn triage
 huginn inspect @session-name
 huginn focus @session-name
+huginn history @session-name   # recorded state transitions, e.g. a brief wrong-state flip
 ```
 
 Local terminal sessions are observe-only by default. Steering is a separate,

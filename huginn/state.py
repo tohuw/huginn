@@ -7,12 +7,18 @@ by a hook holds for a grace window against lower-priority contradictions
 from __future__ import annotations
 
 import time
+from collections import deque
 
 from .config import Config
 from .model import ATTENTION_STATES, Event, Session, SessionState
 
 _ORIGIN_PRIORITY = {"hook": 3, "transcript": 2, "statusfile": 1, "poll": 1, "timeout": 0, "init": 0}
 HOOK_GRACE_S = 3.0
+# A card that flips state and flips back before anyone looks (e.g. a codex
+# poll briefly crossing a staleness threshold) leaves no trace once the next
+# transition overwrites it -- keep a short per-session history so a report
+# of "I saw it wrong" can be checked against what actually happened.
+MAX_TRANSITION_HISTORY = 50
 
 
 class Reducer:
@@ -20,6 +26,7 @@ class Reducer:
         self.cfg = cfg
         self.sessions: dict[str, Session] = {}
         self.removed: list[str] = []          # keys removed on last apply
+        self.transitions: dict[str, deque[dict]] = {}
 
     # ------------------------------------------------------------------ util
     def _set_state(self, s: Session, state: SessionState, origin: str, now: float) -> bool:
@@ -37,6 +44,7 @@ class Reducer:
             # allow lower-priority evidence only once the current state has aged
             if now - s.state_since < 30:
                 return False
+        prev_state = s.state
         s.state = state
         s.state_origin = origin
         s.state_since = now
@@ -44,6 +52,9 @@ class Reducer:
         # transition turns a once-correct blocker into false current context.
         s.blurb = None
         s.blurb_ts = None
+        self.transitions.setdefault(s.key, deque(maxlen=MAX_TRANSITION_HISTORY)).append({
+            "ts": now, "from": prev_state.value, "to": state.value, "origin": origin,
+        })
         return True
 
     def find_by_session_id(self, session_id: str) -> Session | None:
@@ -126,9 +137,14 @@ class Reducer:
         if s is None:
             return []
         died_mid_work = s.source == "claude" and s.state == SessionState.WORKING
-        s.state = SessionState.ERROR if died_mid_work else SessionState.ENDED
+        prev_state = s.state
+        target = SessionState.ERROR if died_mid_work else SessionState.ENDED
+        s.state = target
         s.state_origin = "timeout"
         s.state_since = now
+        self.transitions.setdefault(s.key, deque(maxlen=MAX_TRANSITION_HISTORY)).append({
+            "ts": now, "from": prev_state.value, "to": target.value, "origin": "timeout",
+        })
         return [s]
 
     def _on_transcript_activity(self, ev: Event, now: float) -> list[Session]:
@@ -204,6 +220,7 @@ class Reducer:
         if s is None:
             return []
         del self.sessions[s.key]
+        self.transitions.pop(s.key, None)
         self.removed.append(s.key)
         return []
 
@@ -211,6 +228,7 @@ class Reducer:
         """Remove a source record that still exists but aged out of the roster."""
         s = self.sessions.pop(ev.session_key or "", None)
         if s is not None:
+            self.transitions.pop(s.key, None)
             self.removed.append(s.key)
         return []
 
@@ -225,6 +243,7 @@ class Reducer:
     def _on_plugin_remove(self, ev: Event, now: float) -> list[Session]:
         s = self.sessions.pop(ev.session_key or "", None)
         if s is not None:
+            self.transitions.pop(s.key, None)
             self.removed.append(s.key)
         return []
 
@@ -336,5 +355,6 @@ class Reducer:
                     changed.append(s)
             if s.state == SessionState.ENDED and now - s.state_since >= ended_ttl:
                 del self.sessions[key]
+                self.transitions.pop(key, None)
                 self.removed.append(key)
         return changed

@@ -148,6 +148,12 @@ the configured LLM may guess one from current session evidence. Titles belong
 to that card only and disappear when it does. Dashboard settings persist across
 reloads and synchronize across open tabs.
 
+For open-ended questions ("which session is fixing the login bug?"), Ask's
+roster includes each session's current title or blurb alongside its name and
+state — enough topic signal to pick the right digest file(s) to read without
+opening every one. That cached label is never treated as evidence of current
+state or a blocker; only the transcript and live state are.
+
 ## Session states
 
 | state | meaning | derived from |

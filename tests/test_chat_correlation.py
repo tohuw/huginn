@@ -113,6 +113,23 @@ class ChatCorrelationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.title, "release cleanup")
         self.assertEqual(session.title_origin, "manual")
 
+    async def test_roster_includes_title_or_blurb_for_open_ended_search(self):
+        daemon = Daemon(Config({}))
+        daemon.bus.broadcast = lambda *a, **k: None
+        titled = Session(key="codex:titled", source="codex", session_id="titled",
+                          cwd="/tmp", name="titled-agent", title="release cleanup")
+        blurbed = Session(key="codex:blurbed", source="codex", session_id="blurbed",
+                           cwd="/tmp", name="blurbed-agent", blurb="Debugging flaky test")
+        daemon.reducer.sessions[titled.key] = titled
+        daemon.reducer.sessions[blurbed.key] = blurbed
+        provider = _CapturingProvider()
+        with patch("huginn.llm.chat.get_provider", return_value=provider):
+            result = await start_chat(daemon, {"question": "which session is about flaky tests?"})
+        self.assertTrue(result["ok"])
+        await daemon.active_chat
+        self.assertIn('"release cleanup"', provider.prompt)
+        self.assertIn('"Debugging flaky test"', provider.prompt)
+
     async def test_ask_can_dismiss_an_ended_session(self):
         daemon = Daemon(Config({}))
         events = []

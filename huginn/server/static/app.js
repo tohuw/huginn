@@ -290,7 +290,6 @@ const SOURCE_META = {
   "claude-desktop": { label: "claude app", family: "claude" },
   codex: { label: "codex", family: "openai" },
   "chatgpt-desktop": { label: "chatgpt", family: "openai" },
-  "neo-cortex": { label: "NeoCortex", family: "other" },
 };
 
 function upsertCard(s) {

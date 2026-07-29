@@ -90,6 +90,52 @@ class AgentCliTests(unittest.TestCase):
             self.assertEqual(cli.cmd_inspect(args), 2)
         self.assertIn("requires @name or --attention", err.getvalue())
 
+    def test_history_prints_recorded_transitions(self):
+        def api(path, method="GET"):
+            if path == "/api/sessions":
+                return {"sessions": [SESSION]}
+            return {"key": "codex:abc", "transitions": [
+                {"ts": 100.0, "from": "working", "to": "done", "origin": "poll"},
+                {"ts": 105.0, "from": "done", "to": "working", "origin": "poll"},
+            ]}
+
+        out = io.StringIO()
+        args = Namespace(target="@huginn-abc", json=False)
+        with patch("huginn.cli._daemon_api", side_effect=api), redirect_stdout(out):
+            code = cli.cmd_history(args)
+        self.assertEqual(code, 0)
+        lines = out.getvalue().splitlines()
+        self.assertEqual(len(lines), 2)
+        self.assertIn("working", lines[0])
+        self.assertIn("done", lines[0])
+
+    def test_history_json_is_machine_readable(self):
+        def api(path, method="GET"):
+            if path == "/api/sessions":
+                return {"sessions": [SESSION]}
+            return {"key": "codex:abc", "transitions": [
+                {"ts": 100.0, "from": "working", "to": "done", "origin": "poll"},
+            ]}
+
+        out = io.StringIO()
+        args = Namespace(target="huginn-abc", json=True)
+        with patch("huginn.cli._daemon_api", side_effect=api), redirect_stdout(out):
+            self.assertEqual(cli.cmd_history(args), 0)
+        body = json.loads(out.getvalue())
+        self.assertEqual(body["key"], "codex:abc")
+        self.assertEqual(body["transitions"][0]["to"], "done")
+
+    def test_history_reports_no_transitions(self):
+        def api(path, method="GET"):
+            return {"sessions": [SESSION]} if path == "/api/sessions" else {"transitions": []}
+
+        out = io.StringIO()
+        args = Namespace(target="@huginn-abc", json=False)
+        with patch("huginn.cli._daemon_api", side_effect=api), redirect_stdout(out):
+            code = cli.cmd_history(args)
+        self.assertEqual(code, 0)
+        self.assertIn("no recorded transitions", out.getvalue())
+
     def test_focus_resolves_name_before_posting(self):
         calls = []
 

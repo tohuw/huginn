@@ -261,6 +261,65 @@ class ReducerTests(unittest.TestCase):
         self.assertNotIn("claude:1", r2.sessions)
 
 
+class TransitionHistoryTests(unittest.TestCase):
+    """A card that flips state and self-corrects before anyone looks (e.g. a
+    codex poll briefly crossing a staleness threshold) should still leave a
+    trace -- see huginn.state.MAX_TRANSITION_HISTORY."""
+
+    def setUp(self):
+        self.r = Reducer(Config({}))
+
+    def feed(self, kind, key, payload, ts=None):
+        return self.r.apply(Event(kind, key, ts or time.time(), "test", payload))
+
+    def test_records_a_transition_with_from_to_and_origin(self):
+        s = claude_session(state=SessionState.WORKING)
+        self.r.sessions[s.key] = s
+        self.feed("claude.file", s.key,
+                  {"session": claude_session(state=SessionState.IDLE)})
+        history = list(self.r.transitions[s.key])
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["from"], "working")
+        self.assertEqual(history[0]["to"], "idle")
+        self.assertEqual(history[0]["origin"], "statusfile")
+
+    def test_flip_and_revert_both_appear_in_order(self):
+        s = claude_session(state=SessionState.WORKING)
+        self.r.sessions[s.key] = s
+        self.feed("claude.file", s.key,
+                  {"session": claude_session(state=SessionState.IDLE)})
+        self.feed("claude.file", s.key,
+                  {"session": claude_session(state=SessionState.WORKING)})
+        history = list(self.r.transitions[s.key])
+        self.assertEqual([(h["from"], h["to"]) for h in history],
+                         [("working", "idle"), ("idle", "working")])
+
+    def test_no_op_transition_does_not_record(self):
+        s = claude_session(state=SessionState.WORKING)
+        self.r.sessions[s.key] = s
+        self.feed("claude.file", s.key,
+                  {"session": claude_session(state=SessionState.WORKING)})
+        self.assertNotIn(s.key, self.r.transitions)
+
+    def test_history_is_bounded(self):
+        from huginn.state import MAX_TRANSITION_HISTORY
+        s = claude_session(state=SessionState.WORKING)
+        self.r.sessions[s.key] = s
+        for i in range(MAX_TRANSITION_HISTORY + 10):
+            target = SessionState.IDLE if i % 2 == 0 else SessionState.WORKING
+            self.feed("claude.file", s.key, {"session": claude_session(state=target)})
+        self.assertEqual(len(self.r.transitions[s.key]), MAX_TRANSITION_HISTORY)
+
+    def test_history_is_discarded_when_session_is_removed(self):
+        s = claude_session(state=SessionState.WORKING, pid=100)
+        self.r.sessions[s.key] = s
+        self.feed("claude.file", s.key,
+                  {"session": claude_session(state=SessionState.IDLE)})
+        self.assertIn(s.key, self.r.transitions)
+        self.feed("codex.missing", s.key, {})
+        self.assertNotIn(s.key, self.r.transitions)
+
+
 class ClaudeAnalyzerTests(unittest.TestCase):
     def test_pending_tools_and_question(self):
         an = ClaudeAnalyzer()

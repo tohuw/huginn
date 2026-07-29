@@ -22,7 +22,12 @@ STATE_DB = CODEX_DIR / "state_5.sqlite"
 LOGS_WAL = CODEX_DIR / "logs_2.sqlite-wal"
 
 # Rollout files touched within this window count as "actively working".
-ACTIVE_ROLLOUT_S = 60
+# A single tool call or reasoning burst under a slow/high-effort model can
+# leave the rollout file untouched for several minutes without the session
+# actually being done -- observed gaps up to ~210s on gpt-5.6-sol at xhigh
+# effort. 240s clears that with margin while staying well under the 600s
+# DONE->IDLE boundary below.
+ACTIVE_ROLLOUT_S = 240
 
 _THREAD_COLS = [
     "id", "rollout_path", "cwd", "title", "first_user_message", "preview",

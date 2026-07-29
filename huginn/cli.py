@@ -216,6 +216,30 @@ def cmd_inspect(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_history(args: argparse.Namespace) -> int:
+    """State-transition history for one session -- issue: a card seen
+    briefly in the wrong state (e.g. a codex poll crossing a staleness
+    threshold) self-corrects before you can screenshot it. This is the
+    evidence trail that survives that."""
+    try:
+        session = _resolve_session(args.target, _live_sessions())
+        key = urllib.parse.quote(session["key"], safe="")
+        transitions = _daemon_api(f"/api/sessions/{key}/transitions").get("transitions", [])
+    except RuntimeError as e:
+        print(f"huginn: {e}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps({"key": session["key"], "transitions": transitions}, indent=2))
+        return 0
+    if not transitions:
+        print(f"no recorded transitions for @{session['name']}")
+        return 0
+    for t in transitions:
+        when = time.strftime("%H:%M:%S", time.localtime(t["ts"]))
+        print(f"{when}  {t['from']:>18} -> {t['to']:<18} ({t['origin']})")
+    return 0
+
+
 def cmd_focus(args: argparse.Namespace) -> int:
     try:
         session = _resolve_session(args.target, _live_sessions())
@@ -347,6 +371,11 @@ def main(argv: list[str] | None = None) -> int:
     sp = sub.add_parser("focus", help="focus a live session by name")
     sp.add_argument("target", help="session name, @name, or canonical key")
     sp.set_defaults(fn=cmd_focus)
+
+    sp = sub.add_parser("history", help="show a session's recorded state-transition history")
+    sp.add_argument("target", help="session name, @name, or canonical key")
+    sp.add_argument("--json", action="store_true", help="emit structured JSON")
+    sp.set_defaults(fn=cmd_history)
 
     sp = sub.add_parser("authority", help="set observe or steer authority for one session")
     sp.add_argument("target", help="session name, @name, or canonical key")

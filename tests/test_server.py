@@ -192,6 +192,30 @@ class AuthTests(unittest.TestCase):
 
         self.assertEqual(r.status_code, 404)
 
+    def test_transitions_reports_recorded_history(self):
+        from huginn.model import Event
+
+        c, daemon = make_client_with_daemon()
+        session = self._add_terminal_session(daemon)   # starts IDLE
+        headers = {"X-Huginn-Token": "secret-token"}
+        updated = Session(**{**session.__dict__, "state": SessionState.DONE})
+        daemon.reducer.apply(Event("codex.thread", session.key, 1, "poll",
+                                   {"session": updated}))
+
+        r = c.get("/api/sessions/codex%3Athread-1/transitions", headers=headers)
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual(body["key"], "codex:thread-1")
+        self.assertEqual(body["transitions"], [
+            {"ts": 1, "from": "idle", "to": "done", "origin": "poll"},
+        ])
+
+    def test_transitions_404s_for_unknown_session(self):
+        c = make_client()
+        headers = {"X-Huginn-Token": "secret-token"}
+        r = c.get("/api/sessions/codex%3Anope/transitions", headers=headers)
+        self.assertEqual(r.status_code, 404)
+
     def test_steering_preview_fails_closed_for_observe_only_session(self):
         c, daemon = make_client_with_daemon()
         self._add_terminal_session(daemon)

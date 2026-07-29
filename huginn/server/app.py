@@ -164,6 +164,17 @@ def create_app(daemon: "Daemon") -> FastAPI:
         from ..llm.context import evidence_for_session
         return {"lines": evidence_for_session(s, max_lines=max(1, min(n, 100)))}
 
+    @api.get("/sessions/{key}/transitions")
+    def transitions(key: str):
+        """Bounded state-change history (huginn.state.MAX_TRANSITION_HISTORY
+        entries) so a card seen briefly in the wrong state -- e.g. a poll
+        crossing a staleness threshold and correcting on the next cycle --
+        leaves evidence after the fact instead of vanishing once it flips
+        back."""
+        if key not in reducer.sessions:
+            raise HTTPException(404)
+        return {"key": key, "transitions": list(reducer.transitions.get(key, []))}
+
     @api.post("/sessions/{key}/focus")
     def focus(key: str):
         s = reducer.sessions.get(key)
@@ -180,6 +191,7 @@ def create_app(daemon: "Daemon") -> FastAPI:
         if s.state != SessionState.ENDED:
             raise HTTPException(409, "only ended sessions can be dismissed")
         del reducer.sessions[key]
+        reducer.transitions.pop(key, None)
         daemon.tails.pop(key, None)
         daemon.mark_dirty()
         bus.broadcast("session.remove", {"key": key})

@@ -215,6 +215,14 @@ function demoAnswer(question) {
     target.title = titleMatch[2].trim(); target.title_origin = "manual"; upsertCard(target);
     return `Set @${target.name}’s title to “${target.title}”.`;
   }
+  const dismissMatch = question.match(/\bdismiss\b.{0,20}@([^\s]+)/i);
+  if (dismissMatch) {
+    const target = demoMention(`@${dismissMatch[1]}`);
+    if (!target) return `I can’t find @${dismissMatch[1]} in the demo roster.`;
+    if (target.state !== "ended") return `@${target.name} is still live -- only ended sessions can be dismissed.`;
+    removeCard(target.key);
+    return `Dismissed @${target.name}.`;
+  }
   if (mentioned) {
     const work = fmtWork(mentioned);
     return `@${mentioned.name} is ${mentioned.state.replaceAll("_", " ")}. `
@@ -298,6 +306,7 @@ function upsertCard(s) {
     card.querySelector(".peek-btn").onclick = () => peek(s.key);
     card.querySelector(".ask").onclick = () => askAbout(s.key);
     card.querySelector(".edit-title").onclick = () => editTitle(s.key);
+    card.querySelector(".dismiss").onclick = () => dismiss(s.key);
     card.querySelector(".blurb-toggle").onclick = () => toggleBlurb(s.key);
     cards.set(s.key, card);
   }
@@ -385,8 +394,18 @@ async function editTitle(key) {
     if (e.key === "Enter") { e.preventDefault(); finish(true); }
     if (e.key === "Escape") { e.preventDefault(); finish(false); }
   };
-  input.onblur = () => finish(true);
+  // Reparenting this input during reorder() (every SSE/poll roster update,
+  // for any session) disconnects it from the document for an instant, which
+  // fires a real blur event -- not a user action. Committing on that would
+  // silently end the rename mid-keystroke, so reorder() sets `reordering`
+  // around the move and this handler ignores blur while it's set.
+  input.onblur = () => { if (!reordering) finish(true); };
 }
+
+// Reparenting a card (via a documentFragment, below) disconnects its focused
+// title-rename <input> for an instant and fires a real blur event. editTitle()
+// checks this flag so that blur doesn't read as the user finishing the rename.
+let reordering = false;
 
 // A plugin-contributed Session.group renders in its own section below the
 // main grid and desktop tiles -- same treatment as desktop presence, but
@@ -440,10 +459,16 @@ function reorder() {
     oldest: (a, b) => byClass(a, b) || a.last_activity - b.last_activity || byName(a, b),
   }[mode];
   const sorted = [...sessions.values()].sort(compare);
+  const active = document.activeElement;
+  const restore = (grid.contains(active) || appGrid.contains(active) || pluginGroupsContainer.contains(active))
+    ? { el: active, range: typeof active.selectionStart === "number"
+          ? [active.selectionStart, active.selectionEnd] : null }
+    : null;
   const sessionFrag = document.createDocumentFragment();
   const appFrag = document.createDocumentFragment();
   const groupFrags = new Map();   // group key -> { frag, label, view }
   let appCount = 0;
+  reordering = true;
   for (const s of sorted) {
     if (s.group) {
       let g = groupFrags.get(s.group);
@@ -475,6 +500,11 @@ function reorder() {
   }
   for (const [groupKey, entry] of pluginGroupSections) {
     if (!groupFrags.has(groupKey)) entry.section.hidden = true;
+  }
+  reordering = false;
+  if (restore) {
+    restore.el.focus();
+    if (restore.range) restore.el.setSelectionRange(...restore.range);
   }
   renderEmpty();
 }
@@ -565,6 +595,13 @@ async function jump(key) {
     return;
   }
   if (!r.ok) console.warn("focus failed", await r.text());
+}
+
+async function dismiss(key) {
+  if (DEMO_MODE) { removeCard(key); return; }
+  const r = await apiFetch(`/api/sessions/${encodeURIComponent(key)}/dismiss`, { method: "POST" });
+  if (r.ok || r.status === 404) removeCard(key);
+  else console.warn("dismiss failed", await r.text());
 }
 
 async function peek(key) {

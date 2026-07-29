@@ -10,7 +10,7 @@ from unittest.mock import patch
 from huginn.config import Config
 from huginn.daemon import Daemon
 from huginn.llm.chat import _control_actions, start_chat
-from huginn.model import Session
+from huginn.model import Session, SessionState
 
 
 class _AvailableProvider:
@@ -112,6 +112,30 @@ class ChatCorrelationTests(unittest.IsolatedAsyncioTestCase):
         await daemon.active_chat
         self.assertEqual(session.title, "release cleanup")
         self.assertEqual(session.title_origin, "manual")
+
+    async def test_ask_can_dismiss_an_ended_session(self):
+        daemon = Daemon(Config({}))
+        events = []
+        daemon.bus.broadcast = lambda event, data: events.append((event, data))
+        session = Session(key="codex:test", source="codex", session_id="test",
+                          cwd="/tmp", name="test-agent", state=SessionState.ENDED)
+        daemon.reducer.sessions[session.key] = session
+        result = await start_chat(daemon, {"question": "dismiss @test-agent"})
+        self.assertTrue(result["ok"])
+        await daemon.active_chat
+        self.assertNotIn(session.key, daemon.reducer.sessions)
+        self.assertIn(("session.remove", {"key": session.key}), events)
+
+    async def test_ask_refuses_to_dismiss_a_live_session(self):
+        daemon = Daemon(Config({}))
+        daemon.bus.broadcast = lambda *a, **k: None
+        session = Session(key="codex:test", source="codex", session_id="test",
+                          cwd="/tmp", name="test-agent")
+        daemon.reducer.sessions[session.key] = session
+        result = await start_chat(daemon, {"question": "dismiss @test-agent"})
+        self.assertTrue(result["ok"])
+        await daemon.active_chat
+        self.assertIn(session.key, daemon.reducer.sessions)
 
     async def test_prompt_restricts_ask_agent_to_session_questions(self):
         daemon = Daemon(Config({}))

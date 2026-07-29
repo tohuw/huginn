@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from huginn import config as config_module
 from huginn.config import Config
 from huginn.daemon import Daemon
-from huginn.model import Session
+from huginn.model import Session, SessionState
 from huginn.server.app import create_app
 
 
@@ -52,6 +52,17 @@ class AuthTests(unittest.TestCase):
         r = c.get("/api/sessions", headers={"X-Huginn-Token": "secret-token"})
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json()["triage"]["verdict"]["level"], "clear")
+
+    def test_sessions_reports_a_stable_boot_id(self):
+        # The Ask transcript persists in the browser across a refresh, keyed
+        # to this id, but must clear on a new daemon process (restart/quit)
+        # -- so the same daemon instance must report the same id every call.
+        c, daemon = make_client_with_daemon()
+        first = c.get("/api/sessions", headers={"X-Huginn-Token": "secret-token"}).json()
+        second = c.get("/api/sessions", headers={"X-Huginn-Token": "secret-token"}).json()
+        self.assertTrue(first["boot_id"])
+        self.assertEqual(first["boot_id"], second["boot_id"])
+        self.assertEqual(first["boot_id"], daemon.boot_id)
 
     def test_activity_probes_sources_when_roster_is_empty(self):
         c = make_client()
@@ -148,6 +159,38 @@ class AuthTests(unittest.TestCase):
         c = make_client()
         r = c.get("/static/app.js")
         self.assertEqual(r.status_code, 200)
+
+    def test_dismiss_removes_an_ended_session_and_broadcasts_removal(self):
+        c, daemon = make_client_with_daemon()
+        session = self._add_terminal_session(daemon)
+        session.state = SessionState.ENDED
+        events = []
+        daemon.bus.broadcast = lambda event, data: events.append((event, data))
+        headers = {"X-Huginn-Token": "secret-token"}
+
+        r = c.post("/api/sessions/codex%3Athread-1/dismiss", headers=headers)
+
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn(session.key, daemon.reducer.sessions)
+        self.assertIn(("session.remove", {"key": session.key}), events)
+
+    def test_dismiss_rejects_a_live_session(self):
+        c, daemon = make_client_with_daemon()
+        session = self._add_terminal_session(daemon)
+        headers = {"X-Huginn-Token": "secret-token"}
+
+        r = c.post("/api/sessions/codex%3Athread-1/dismiss", headers=headers)
+
+        self.assertEqual(r.status_code, 409)
+        self.assertIn(session.key, daemon.reducer.sessions)
+
+    def test_dismiss_missing_session_is_404(self):
+        c = make_client()
+        headers = {"X-Huginn-Token": "secret-token"}
+
+        r = c.post("/api/sessions/codex%3Anonexistent/dismiss", headers=headers)
+
+        self.assertEqual(r.status_code, 404)
 
     def test_steering_preview_fails_closed_for_observe_only_session(self):
         c, daemon = make_client_with_daemon()

@@ -90,6 +90,35 @@ snapshot. Seed reconciliation state from those keys so a record removed while
 Huginn was stopped can age out after successful upstream polls. No other
 source's keys or session contents are exposed through this capability.
 
+## Dashboard session groups
+
+Set `Session.group` (and, optionally, `Session.group_label`) to have every
+session your source contributes render in its own dashboard section instead
+of the main grid, with one collective show/hide toggle -- the same treatment
+built-in desktop-app tiles get, generalized for plugins:
+
+```python
+session = Session(
+    key=context.key(external_id),
+    source=self.name,
+    session_id=external_id,
+    cwd="example/project",
+    name="example-session",
+    group="example",                     # short, stable key
+    group_label="Example workers",       # human-readable section heading
+)
+```
+
+`group` must match the same name pattern as a plugin/provider/source name
+(lowercase, `[a-z][a-z0-9._-]*`). `group_label` is optional -- it falls back
+to `group` itself -- but if you set it, keep it under 60 characters and
+non-empty. Every session sharing a `group` key renders together; the
+dashboard creates that section the first time a session declares it, and
+hides it entirely once no live session claims it. The toggle state persists
+per-browser through the existing settings sync (`ui.hidden_groups`), same as
+every other dashboard control. Leaving both fields unset (the default)
+renders sessions in the main grid exactly as before this existed.
+
 ## Installing a plugin
 
 Install a plugin package into Huginn's active environment, for example:

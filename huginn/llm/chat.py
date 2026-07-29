@@ -14,7 +14,7 @@ import uuid
 from typing import TYPE_CHECKING
 
 from .. import config
-from ..model import Session
+from ..model import Session, SessionState
 from .context import digest_for_session, evidence_for_session, evidence_text
 from .providers import compatible_model, get_provider
 
@@ -178,6 +178,22 @@ def _apply_peek_control(daemon: "Daemon", question: str) -> str | None:
     return f"@{s.name}:\n```\n{tail}\n```"
 
 
+def _apply_dismiss_control(daemon: "Daemon", question: str) -> str | None:
+    match = re.search(r"\bdismiss\b.{0,20}@([\w-]+)", question, re.I)
+    if not match:
+        return None
+    s, error = _resolve_named_session(daemon, match.group(1))
+    if error:
+        return error
+    if s.state != SessionState.ENDED:
+        return f"@{s.name} is still live -- only ended sessions can be dismissed."
+    del daemon.reducer.sessions[s.key]
+    daemon.tails.pop(s.key, None)
+    daemon.mark_dirty()
+    daemon.bus.broadcast("session.remove", {"key": s.key})
+    return f"Dismissed @{s.name}."
+
+
 async def start_chat(daemon: "Daemon", body: dict) -> dict:
     # Concurrency is per-daemon, not per-client (issue #17): one chat
     # subprocess in flight at a time, whole-daemon-wide, so a second tab
@@ -192,7 +208,8 @@ async def start_chat(daemon: "Daemon", body: dict) -> dict:
         return {"ok": False, "error": "a chat is already running"}
     session_reply = (_apply_title_control(daemon, question)
                       or _apply_jump_control(daemon, question)
-                      or _apply_peek_control(daemon, question))
+                      or _apply_peek_control(daemon, question)
+                      or _apply_dismiss_control(daemon, question))
     if session_reply:
         request_id = uuid.uuid4().hex[:12]
         daemon.active_chat = asyncio.create_task(

@@ -233,6 +233,12 @@ kept separate even when their repositories share the same basename.
   the captured local rollout fixtures. Therefore Codex still has a documented
   worst-case 20-second pending-tool fallback when those events are absent.
 
+See [docs/hooks.md](docs/hooks.md) for the implementation-level walkthrough:
+the forwarder's fail-open design, the append-only/idempotent install strategy,
+exactly which hook event maps to which `SessionState`, and how hook evidence
+is arbitrated against transcript/status-file/poll evidence (origin priority +
+grace window) when they disagree.
+
 ## Gotchas
 
 - Hooks fire only in sessions started *after* `install-hooks` (settings load at

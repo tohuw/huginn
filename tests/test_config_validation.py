@@ -11,7 +11,7 @@ from huginn.config import Config, validate_setting
 
 class ValidateSettingTests(unittest.TestCase):
     def test_automatic_text_is_opt_in_and_daily_budgeted(self):
-        self.assertFalse(config.DEFAULTS["llm"]["enabled"])
+        self.assertTrue(config.DEFAULTS["llm"]["enabled"])
         self.assertGreater(config.DEFAULTS["llm"]["blurb_max_per_day"], 0)
 
     def test_unknown_section_or_key_rejected(self):

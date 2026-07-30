@@ -51,9 +51,19 @@ class DiagnosticsRegistryTests(unittest.TestCase):
         d = Diagnostics()
         with self.assertLogs("huginn.diagnostics", level="ERROR") as logs:
             d.error("codex_poller", RuntimeError("first"))
-            d.sources["codex_poller"]._last_logged -= 31   # simulate window elapsed
+            d.sources["codex_poller"]._last_logged -= 61   # exponential second window
             d.error("codex_poller", RuntimeError("second"))
         self.assertEqual(len(logs.records), 2)
+
+    def test_repeated_failure_log_interval_backs_off(self):
+        d = Diagnostics()
+        with self.assertLogs("huginn.diagnostics", level="ERROR"):
+            d.error("source", RuntimeError("first"))
+        first_interval = d.sources["source"]._log_interval
+        d.sources["source"]._last_logged -= first_interval + 1
+        with self.assertLogs("huginn.diagnostics", level="ERROR"):
+            d.error("source", RuntimeError("second"))
+        self.assertGreater(d.sources["source"]._log_interval, first_interval)
 
 
 class BackgroundLoopFailureVisibilityTests(unittest.IsolatedAsyncioTestCase):

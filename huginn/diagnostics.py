@@ -21,7 +21,8 @@ import traceback
 from dataclasses import dataclass, field
 
 LOG = logging.getLogger("huginn.diagnostics")
-LOG_INTERVAL_S = 30.0   # rate limit: at most one traceback per source per window
+LOG_INTERVAL_S = 30.0
+MAX_LOG_INTERVAL_S = 3600.0
 
 
 @dataclass
@@ -31,6 +32,7 @@ class SourceHealth:
     last_error_ts: float | None = None
     error_count: int = 0
     _last_logged: float = field(default=0.0, repr=False, compare=False)
+    _log_interval: float = field(default=LOG_INTERVAL_S, repr=False, compare=False)
 
     def to_dict(self) -> dict:
         return {
@@ -46,7 +48,12 @@ class Diagnostics:
         self.sources: dict[str, SourceHealth] = {}
 
     def ok(self, source: str) -> None:
-        self.sources.setdefault(source, SourceHealth()).last_success = time.time()
+        h = self.sources.setdefault(source, SourceHealth())
+        now = time.time()
+        if h.last_error_ts and (h.last_success is None or h.last_success < h.last_error_ts):
+            h._last_logged = 0.0
+            h._log_interval = LOG_INTERVAL_S
+        h.last_success = now
 
     def error(self, source: str, exc: BaseException) -> None:
         now = time.time()
@@ -54,10 +61,11 @@ class Diagnostics:
         h.last_error_class = type(exc).__name__
         h.last_error_ts = now
         h.error_count += 1
-        if now - h._last_logged >= LOG_INTERVAL_S:
+        if now - h._last_logged >= h._log_interval:
             h._last_logged = now
             tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
             LOG.error("%s failed (%d total so far): %s", source, h.error_count, tb)
+            h._log_interval = min(h._log_interval * 2, MAX_LOG_INTERVAL_S)
 
     def snapshot(self) -> dict:
         """Redacted: class name + counts + timestamps only, no message text."""

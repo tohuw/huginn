@@ -40,11 +40,16 @@ A provider has a lowercase `name`, `available()`, `run_text()`, and asynchronous
 `stream()` with the same keyword contract as the built-in providers. An optional
 `label` is shown in the dashboard. An optional `compatible_model(value)` method
 can accept or reject a configured model name; returning an empty string asks the
-provider to use its default.
+provider to use its default. Providers whose automatic-title model identifiers
+differ from Claude's may implement `resolve_blurb_model(configured)` to map a
+generic Haiku preference to their own backend identifier.
 
 Providers should keep credentials outside source and configuration files, bound
 subprocess lifetimes and output, and return a short availability reason instead
-of failing during discovery.
+of failing during discovery. Provider exceptions may carry a boolean
+`retryable` attribute (or use `LLMProviderError`) so automatic work can
+circuit-break permanent configuration/authentication failures without parsing
+message text.
 
 ## Session sources
 

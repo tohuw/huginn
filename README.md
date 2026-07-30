@@ -324,6 +324,12 @@ Install a plugin package into Huginn's active environment (for example,
 [the plugin author guide](docs/plugins.md) for the contract and a minimal
 package example.
 
+## Versioning
+
+Huginn uses calendar versioning. Package versions follow `YYYY.MM.DD`, with a
+numeric `.MICRO` suffix for additional releases on the same day. Annotated Git
+tags add a leading `v`, for example `v2026.07.29.2`.
+
 ## Dev
 
 ```sh

@@ -82,7 +82,7 @@ function demoSessions() {
       blurb: "Splitting the indexer into resumable stages and running regression tests.",
       tokens: 184000, shells: 2, subagents: { running: 2, done: 1 } },
     { ...base, key: "demo:codex-lantern", source: "codex", session_id: "lantern",
-      cwd: "/Users/demo/Projects/lantern", name: "lantern-b19f", entrypoint: "cli",
+      cwd: "/Users/demo/Projects/atlas", name: "atlas-b19f", entrypoint: "cli",
       state: "waiting_permission", rank: 0, attention: true,
       state_since: now - 38, last_activity: now - 38, model: "gpt-5.6-codex",
       title: "Ship Database Migration", blurb: "Ready to apply the migration after approval.",
@@ -124,6 +124,35 @@ function demoSessions() {
       state_since: now - 307, last_activity: now - 307, model: "",
       title: "", title_origin: null, blurb: "" },
   ];
+}
+
+function demoTriage(roster) {
+  const activeStates = new Set(["working", "waiting_input", "waiting_permission"]);
+  const byWorktree = new Map();
+  for (const session of roster) {
+    if (!["claude", "codex"].includes(session.source)
+        || !activeStates.has(session.state) || !session.cwd) continue;
+    if (!byWorktree.has(session.cwd)) byWorktree.set(session.cwd, []);
+    byWorktree.get(session.cwd).push(session);
+  }
+  const contentions = [...byWorktree]
+    .filter(([, group]) => group.length > 1)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([worktree, group]) => ({
+      worktree,
+      count: group.length,
+      sessions: [...group].sort((left, right) => left.name.localeCompare(right.name)),
+    }));
+  const count = contentions.length;
+  return {
+    verdict: {
+      level: count ? "contention" : "clear",
+      headline: count
+        ? `${count} worktree${count === 1 ? " has" : "s have"} competing sessions`
+        : "Nothing needs you right now",
+    },
+    contentions,
+  };
 }
 
 const DEMO_TRANSCRIPTS = {
@@ -1254,7 +1283,9 @@ if (DEMO_MODE) {
     llm: { enabled: true, provider: "codex" },
     ui: { show_desktop: true, view: "cards", sort: "state", chat_span: "vertical", chat_open: true },
   });
-  for (const session of demoSessions()) upsertCard(session);
+  const roster = demoSessions();
+  for (const session of roster) upsertCard(session);
+  setTriage(demoTriage(roster));
   if (DEMO_TOUR) startDemoTour();
   else addMsg("a", "Demo roster loaded. Try Peek, Jump, editing a title, or ask what needs your attention.");
   setAttention(3);

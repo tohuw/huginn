@@ -53,11 +53,11 @@ uv run huginn doctor         # environment/hook/daemon health check
 ```
 
 `huginn demo` opens a self-contained product tour with fictional sessions,
-transcript tails, title editing, sorting, view controls, desktop tiles, and
-deterministic Ask answers. It never reads the live roster API, so it is safe for
-screenshots, recordings, and demonstrations; closing the tab discards all demo
-changes. The dashboard's **help** button opens the demo in a separate tab and
-starts a guided walkthrough in the Ask panel.
+transcript tails, worktree contention, title editing, sorting, view controls,
+desktop tiles, and deterministic Ask answers. It never reads the live roster
+API, so it is safe for screenshots, recordings, and demonstrations; closing the
+tab discards all demo changes. The dashboard's **help** button opens the demo in
+a separate tab and starts a guided walkthrough in the Ask panel.
 
 ### macOS menu-bar app
 

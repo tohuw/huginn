@@ -20,7 +20,7 @@ CACHE_DIR = STATE_DIR / "cache"
 DEFAULTS: dict[str, dict[str, Any]] = {
     "server": {"host": "127.0.0.1", "port": 47100},
     "llm": {
-        "enabled": False,
+        "enabled": True,
         "provider": "claude",              # claude | codex
         "blurb_model": "haiku",             # provider may translate this intent
         "chat_model": "",                  # empty = provider default

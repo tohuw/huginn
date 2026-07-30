@@ -183,8 +183,8 @@ The `apps` control—or Ask commands such as “hide desktop presence”—can r
 that section entirely when app-level context is not useful.
 
 Rule-based states are always on and cost nothing. Automatic LLM titles and
-one-line **blurbs** are opt-in; toggle "blurbs" in the top bar to enable or
-disable both while Ask remains available on demand. Automatic calls are
+one-line **blurbs** remain enabled by default; toggle "blurbs" in the top bar
+to disable or re-enable both while Ask remains available on demand. Automatic calls are
 coalesced per session, cached by exact evidence, limited to six per minute and
 200 per UTC day (the daily counter survives restarts), and stopped by a
 provider-wide failure circuit. Permanent model/authentication failures remain

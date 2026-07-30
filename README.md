@@ -182,11 +182,15 @@ visually separated, sorted outside the urgency queue, and never raise attention.
 The `apps` control—or Ask commands such as “hide desktop presence”—can remove
 that section entirely when app-level context is not useful.
 
-Rule-based states are always on and cost nothing. One-line LLM **blurbs** are
-generated only when a session hits a decision point (debounced and rate-capped)
-— toggle "blurbs" in the top bar to turn all LLM polling off; chat stays
-available on demand. Blurbs are cleared on state changes and are deliberately
-excluded from Ask's evidence so an old summary cannot invent a current blocker.
+Rule-based states are always on and cost nothing. Automatic LLM titles and
+one-line **blurbs** are opt-in; toggle "blurbs" in the top bar to enable or
+disable both while Ask remains available on demand. Automatic calls are
+coalesced per session, cached by exact evidence, limited to six per minute and
+200 per UTC day (the daily counter survives restarts), and stopped by a
+provider-wide failure circuit. Permanent model/authentication failures remain
+stopped until the provider/model setting changes or automatic text is toggled.
+Blurbs are cleared on state changes and are deliberately excluded from Ask's
+evidence so an old summary cannot invent a current blocker.
 
 The live roster expires non-actionable records, but never merely ages out an
 open terminal session. Claude CLI cards remain for the life of their process;
@@ -246,10 +250,12 @@ grace window) when they disagree.
 
 - Hooks fire only in sessions started *after* `install-hooks` (settings load at
   session start). Watcher-derived state covers older sessions at ~1–5s latency.
-- Headless `claude -p` runs (including Huginn's own blurb/chat calls) register
-  session files with entrypoint `sdk-cli` — filtered out. Provider children also
-  carry Huginn's owned `HUGINN_INTERNAL=1` marker and are tracked by PID, so the
-  recursion guard does not depend solely on Claude's entrypoint convention.
+- Huginn's headless `claude -p` calls use `--no-session-persistence`, so
+  automatic titles, blurbs, and Ask do not become fake conversation history.
+  Other headless SDK/CLI sessions are still filtered from the live roster by
+  entrypoint. Provider children also carry Huginn's owned
+  `HUGINN_INTERNAL=1` marker and are tracked by PID, so the recursion guard
+  does not depend solely on Claude's entrypoint convention.
 - Claude Code notifications use the structured `notification_type` field;
   `idle_prompt` settles to done rather than raising attention, while explicit
   elicitation remains waiting-input. Configurable message patterns remain as
@@ -303,9 +309,10 @@ prompts or agent output in the first place.
 
 ## Config
 
-`~/.config/huginn/config.toml` — server port, LLM enable/provider/models/caps,
-notification patterns, poll cadences, ended-card TTL. All editable from the
-dashboard settings too (PUT `/api/settings`).
+`~/.config/huginn/config.toml` — server port, automatic-text
+enable/provider/model/minute and daily budgets, Ask model, notification
+patterns, poll cadences, ended-card TTL. All editable from the dashboard
+settings too (PUT `/api/settings`).
 
 ## Plugins
 

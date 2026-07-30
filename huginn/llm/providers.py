@@ -16,6 +16,8 @@ import subprocess
 from pathlib import Path
 from typing import AsyncIterator
 
+from ..plugins import LLMProviderError
+
 CODEX_BIN = "/Applications/ChatGPT.app/Contents/Resources/codex"
 STDERR_CAP = 4096   # bounded: never let a runaway/hostile subprocess fill memory or logs
 
@@ -114,6 +116,7 @@ def _spawn_options() -> dict[str, object]:
 
 class ClaudeCLI:
     name = "claude"
+    default_blurb_model = "haiku"
 
     def available(self) -> str | None:
         return None if claude_binary() else "claude binary not found"
@@ -122,8 +125,8 @@ class ClaudeCLI:
                        cwd: str | None = None, allowed_tools: str | None = None) -> str:
         binary = claude_binary()
         if not binary:
-            raise RuntimeError("claude binary not found")
-        cmd = [binary, "-p"]
+            raise LLMProviderError("claude binary not found", retryable=False)
+        cmd = [binary, "-p", "--no-session-persistence"]
         if model:
             cmd += ["--model", model]
         if allowed_tools:
@@ -139,8 +142,13 @@ class ClaudeCLI:
             except asyncio.TimeoutError:
                 raise RuntimeError(f"claude -p timed out after {timeout}s")
             if proc.returncode != 0:
-                raise RuntimeError(
-                    f"claude -p failed: {err[:STDERR_CAP].decode(errors='replace')[:300]}")
+                detail = err[:STDERR_CAP].decode(errors="replace")[:300]
+                permanent = any(marker in detail.lower() for marker in (
+                    "model_not_found", "invalid model", "not logged in",
+                    "authentication", "unauthorized",
+                ))
+                raise LLMProviderError(
+                    f"claude -p failed: {detail}", retryable=not permanent)
             return out.decode().strip()
         finally:
             await _reap(proc)
@@ -150,8 +158,8 @@ class ClaudeCLI:
                      ) -> AsyncIterator[str]:
         binary = claude_binary()
         if not binary:
-            raise RuntimeError("claude binary not found")
-        cmd = [binary, "-p", "--output-format", "stream-json",
+            raise LLMProviderError("claude binary not found", retryable=False)
+        cmd = [binary, "-p", "--no-session-persistence", "--output-format", "stream-json",
                "--include-partial-messages", "--verbose"]
         if model:
             cmd += ["--model", model]
@@ -180,7 +188,13 @@ class ClaudeCLI:
             await proc.wait()
             if proc.returncode != 0:
                 err = await stderr_task
-                raise RuntimeError(f"claude -p failed: {err.decode(errors='replace')[:300]}")
+                detail = err.decode(errors="replace")[:300]
+                permanent = any(marker in detail.lower() for marker in (
+                    "model_not_found", "invalid model", "not logged in",
+                    "authentication", "unauthorized",
+                ))
+                raise LLMProviderError(
+                    f"claude -p failed: {detail}", retryable=not permanent)
         finally:
             await _reap(proc)
             stderr_task.cancel()
@@ -190,6 +204,7 @@ class ClaudeCLI:
 
 class CodexCLI:
     name = "codex"
+    default_blurb_model = ""
 
     def available(self) -> str | None:
         if not codex_binary():
@@ -286,5 +301,37 @@ def compatible_model(provider: str, model: str, registry=None) -> str:
     plugin_filter = getattr(selected, "compatible_model", None)
     if callable(plugin_filter):
         return str(plugin_filter(value) or "")
-    is_claude = value.lower().startswith("claude")
+    lowered = value.lower()
+    is_claude = lowered.startswith("claude") or lowered in {"haiku", "sonnet", "opus"}
     return value if (provider == "claude") == is_claude else ""
+
+
+def blurb_model(provider: str, model: str, registry=None) -> str:
+    """Resolve a cheap provider-specific model for automatic card text.
+
+    Providers may implement ``resolve_blurb_model(configured)`` when model
+    identifiers differ across backends (for example, Anthropic API names
+    versus Bedrock inference-profile IDs). Built-ins retain their existing
+    compatibility behavior while preferring Claude's stable ``haiku`` alias.
+    """
+    selected = get_provider(provider, registry)
+    configured = (model or "").strip()
+    resolver = getattr(selected, "resolve_blurb_model", None)
+    if callable(resolver):
+        resolved = str(resolver(configured) or "").strip()
+        if not resolved:
+            raise LLMProviderError(
+                f"{provider} has no compatible automatic-title model",
+                retryable=False,
+            )
+        return resolved
+    compatible = compatible_model(provider, configured, registry)
+    if compatible:
+        return compatible
+    default = str(getattr(selected, "default_blurb_model", "") or "").strip()
+    if configured and provider == "claude":
+        raise LLMProviderError(
+            "configured automatic-title model is incompatible with Claude",
+            retryable=False,
+        )
+    return default

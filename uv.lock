@@ -118,7 +118,7 @@ wheels = [
 
 [[package]]
 name = "huginn"
-version = "2026.7.29.3"
+version = "2026.7.30"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },

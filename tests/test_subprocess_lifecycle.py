@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from huginn.llm.providers import ClaudeCLI, CodexCLI, _clean_env
+from huginn.plugins import LLMProviderError
 
 
 def _script(tmp: Path, name: str, body: str) -> str:
@@ -68,12 +69,26 @@ class ClaudeRunTextLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_normal_completion_leaves_no_zombie(self):
         pidfile = self.tmp_path / "pid"
-        script = _script(self.tmp_path, "claude", f'echo $$ > {pidfile}\necho done\n')
+        argsfile = self.tmp_path / "args"
+        script = _script(
+            self.tmp_path,
+            "claude",
+            f'echo $$ > {pidfile}\nprintf "%s\\n" "$@" > {argsfile}\necho done\n',
+        )
         with patch("huginn.llm.providers.claude_binary", return_value=script):
             out = await ClaudeCLI().run_text("hi", timeout=5)
         self.assertEqual(out, "done")
+        self.assertIn("--no-session-persistence", argsfile.read_text().splitlines())
         pid = int(pidfile.read_text().strip())
         self.assertFalse(_alive(pid))
+
+    async def test_model_not_found_is_a_permanent_provider_failure(self):
+        script = _script(self.tmp_path, "claude",
+                         'echo "model_not_found" >&2\nexit 1\n')
+        with patch("huginn.llm.providers.claude_binary", return_value=script):
+            with self.assertRaises(LLMProviderError) as ctx:
+                await ClaudeCLI().run_text("hi", timeout=5)
+        self.assertFalse(ctx.exception.retryable)
 
 
 @unittest.skipIf(os.name == "nt", "POSIX fixture scripts; Windows tree-kill has adapter tests")
@@ -117,11 +132,17 @@ class ClaudeStreamLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_yields_text_deltas_and_leaves_no_zombie(self):
         pidfile = self.tmp_path / "pid"
+        argsfile = self.tmp_path / "args"
         event = '{"type":"stream_event","event":{"delta":{"type":"text_delta","text":"hi"}}}'
-        script = _script(self.tmp_path, "claude", f"echo $$ > {pidfile}\necho '{event}'\n")
+        script = _script(
+            self.tmp_path,
+            "claude",
+            f'echo $$ > {pidfile}\nprintf "%s\\n" "$@" > {argsfile}\necho \'{event}\'\n',
+        )
         with patch("huginn.llm.providers.claude_binary", return_value=script):
             chunks = [c async for c in ClaudeCLI().stream("hi")]
         self.assertEqual(chunks, ["hi"])
+        self.assertIn("--no-session-persistence", argsfile.read_text().splitlines())
         pid = int(pidfile.read_text().strip())
         self.assertFalse(_alive(pid))
 

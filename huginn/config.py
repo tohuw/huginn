@@ -20,12 +20,13 @@ CACHE_DIR = STATE_DIR / "cache"
 DEFAULTS: dict[str, dict[str, Any]] = {
     "server": {"host": "127.0.0.1", "port": 47100},
     "llm": {
-        "enabled": True,
+        "enabled": False,
         "provider": "claude",              # claude | codex
-        "blurb_model": "claude-haiku-4-5-20251001",
+        "blurb_model": "haiku",             # provider may translate this intent
         "chat_model": "",                  # empty = provider default
         "blurb_debounce_s": 3.0,
-        "blurb_max_per_min": 12,
+        "blurb_max_per_min": 6,
+        "blurb_max_per_day": 200,
         "blurb_timeout_s": 30.0,
     },
     # Compatibility fallback for Notification payloads that predate Claude
@@ -69,7 +70,8 @@ DEFAULTS: dict[str, dict[str, Any]] = {
 # Numeric settings that must be > 0 -- a zero/negative poll interval or
 # timeout doesn't fail loudly, it just wedges a background task forever.
 _POSITIVE_NUMERIC_KEYS = {
-    ("llm", "blurb_debounce_s"), ("llm", "blurb_max_per_min"), ("llm", "blurb_timeout_s"),
+    ("llm", "blurb_debounce_s"), ("llm", "blurb_max_per_min"),
+    ("llm", "blurb_max_per_day"), ("llm", "blurb_timeout_s"),
     ("ui", "ended_ttl_s"), ("ui", "idle_ttl_s"), ("ui", "done_ttl_s"),
     ("ui", "exec_done_ttl_s"), ("claude", "sweep_s"), ("claude", "pending_tool_timeout_s"),
     ("codex", "poll_s"), ("codex", "active_window_h"), ("claude_desktop", "poll_s"),

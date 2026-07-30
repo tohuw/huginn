@@ -34,6 +34,20 @@ _RESERVED_PROVIDER_NAMES = frozenset({"claude", "codex"})
 LOG = logging.getLogger("huginn.plugins")
 
 
+class LLMProviderError(RuntimeError):
+    """Provider failure with an explicit retry contract.
+
+    Plugin providers may raise this error, or any exception carrying a
+    ``retryable`` boolean attribute. Background workers can then distinguish
+    transient service trouble from configuration/authentication failures
+    without inspecting error-message text.
+    """
+
+    def __init__(self, message: str, *, retryable: bool = True):
+        super().__init__(message)
+        self.retryable = retryable
+
+
 class LLMProvider(Protocol):
     """Provider capability contributed by a plugin."""
 
@@ -327,6 +341,7 @@ __all__ = [
     "API_VERSION",
     "ENTRY_POINT_GROUP",
     "LLMProvider",
+    "LLMProviderError",
     "MAX_GROUP_LABEL_CHARS",
     "MAX_SOURCE_LABEL_CHARS",
     "MAX_SOURCE_SUMMARY_CHARS",

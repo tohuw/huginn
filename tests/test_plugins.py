@@ -7,7 +7,7 @@ from unittest.mock import patch
 from huginn.bus import Bus
 from huginn.config import Config, validate_setting
 from huginn.diagnostics import Diagnostics
-from huginn.llm.providers import all_providers, compatible_model
+from huginn.llm.providers import all_providers, blurb_model, compatible_model
 from huginn.llm.context import evidence_for_session
 from huginn.model import Session
 from huginn.plugins import (
@@ -42,6 +42,9 @@ class _Provider:
 
     def compatible_model(self, model):
         return model if model.startswith("anthropic.") else ""
+
+    def resolve_blurb_model(self, model):
+        return "anthropic.claude-haiku" if "haiku" in model else self.compatible_model(model)
 
 
 class _Source:
@@ -129,6 +132,12 @@ class PluginProviderTests(unittest.TestCase):
             "anthropic.claude-v1",
         )
         self.assertEqual(compatible_model("bedrock", "claude-cli-name", self.registry), "")
+
+    def test_plugin_translates_automatic_model_for_its_backend(self):
+        self.assertEqual(
+            blurb_model("bedrock", "claude-haiku-4-5", self.registry),
+            "anthropic.claude-haiku",
+        )
 
     def test_config_accepts_only_installed_plugin_provider(self):
         with patch("huginn.plugins.get_registry", return_value=self.registry):

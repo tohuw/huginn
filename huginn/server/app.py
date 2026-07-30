@@ -314,7 +314,10 @@ def create_app(daemon: "Daemon") -> FastAPI:
         dark shows up here instead of the dashboard just looking stale.
         Redacted by construction -- Diagnostics never stores exception
         message text, only the class name and counts."""
-        return {"sources": daemon.diagnostics.snapshot()}
+        return {
+            "sources": daemon.diagnostics.snapshot(),
+            "automatic_text": daemon.blurbs.status(),
+        }
 
     @api.get("/settings")
     def get_settings():
@@ -322,14 +325,22 @@ def create_app(daemon: "Daemon") -> FastAPI:
 
     @api.get("/providers")
     def providers():
-        from ..llm.providers import all_providers
+        from ..llm.providers import all_providers, blurb_model as resolve_blurb_model
         result = {}
         for name, provider in all_providers(daemon.plugins).items():
             reason = provider.available()
+            automatic_model = None
+            if reason is None:
+                try:
+                    automatic_model = resolve_blurb_model(
+                        name, cfg.get("llm", "blurb_model"), daemon.plugins)
+                except Exception:
+                    pass
             result[name] = {
                 "available": reason is None,
                 "reason": reason,
                 "label": str(getattr(provider, "label", name))[:80],
+                "automatic_model": automatic_model,
             }
         return {"providers": result}
 
@@ -354,6 +365,10 @@ def create_app(daemon: "Daemon") -> FastAPI:
         if errors:
             raise HTTPException(422, {"errors": errors})
         old_llm_enabled = cfg.get("llm", "enabled")
+        old_automatic_provider = (
+            cfg.get("llm", "provider"),
+            cfg.get("llm", "blurb_model"),
+        )
         for section, values in body.items():
             for key, value in values.items():
                 cfg.update(section, key, value)
@@ -361,6 +376,11 @@ def create_app(daemon: "Daemon") -> FastAPI:
         new_llm_enabled = cfg.get("llm", "enabled")
         if new_llm_enabled != old_llm_enabled:
             daemon.blurbs.set_enabled(new_llm_enabled)
+        elif new_llm_enabled and old_automatic_provider != (
+            cfg.get("llm", "provider"),
+            cfg.get("llm", "blurb_model"),
+        ):
+            daemon.blurbs.set_enabled(True)
         bus.broadcast("settings.changed", cfg.to_dict())
         return cfg.to_dict()
 

@@ -134,7 +134,9 @@ and editor-hosted sessions fail closed until an exact target can be guaranteed.
 Dashboard: session cards sort needs-you-first (permission → input → error →
 done → working → idle); ambient desktop-app tiles form a separate group below
 them. A persistent compact list view is available from the top bar. Tab title +
-favicon carry only actionable session attention, never app activity. Per session:
+favicon carry only actionable session attention, never app activity. Cards use
+native display scaling, show four lines of session evidence by default, preserve
+expanded evidence across roster polls, and keep their action rails aligned. Per session:
 **jump** focuses the exact iTerm2 tab on macOS (hotkey windows included; VS Code
 sessions open the workspace; Windows Terminal currently focuses the owning window),
 **peek** shows a distilled transcript tail,
@@ -328,7 +330,7 @@ package example.
 
 Huginn uses calendar versioning. Package versions follow `YYYY.MM.DD`, with a
 numeric `.MICRO` suffix for additional releases on the same day. Annotated Git
-tags add a leading `v`, for example `v2026.07.29.2`.
+tags add a leading `v`, for example `v2026.07.29.3`.
 
 ## Dev
 

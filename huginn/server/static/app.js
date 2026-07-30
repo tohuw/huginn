@@ -36,6 +36,7 @@ async function apiFetch(url, opts = {}) {
 
 const sessions = new Map();   // key -> session object
 const cards = new Map();      // key -> card element
+const expandedBlurbs = new Set();
 const grid = document.getElementById("grid");
 const appGrid = document.getElementById("app-grid");
 const appTiles = document.getElementById("app-tiles");
@@ -362,7 +363,7 @@ function upsertCard(s) {
   summary.textContent = text;
   summary.title = text;
   summary.dataset.kind = usingBlurb ? "blurb" : (s.last_prompt ? "prompt" : "");
-  wrap.classList.remove("expanded");
+  wrap.classList.toggle("expanded", expandedBlurbs.has(s.key));
   card.querySelector(".subagents").textContent = fmtWork(s);
   card.querySelector(".tokens").textContent = s.tokens ? `${(s.tokens / 1000).toFixed(0)}k tok` : "";
   reorder();
@@ -383,7 +384,9 @@ function updateBlurbToggle(key) {
 
 function toggleBlurb(key) {
   const card = cards.get(key);
-  card.querySelector(".blurb-wrap").classList.toggle("expanded");
+  const expanded = !expandedBlurbs.has(key);
+  if (expanded) expandedBlurbs.add(key); else expandedBlurbs.delete(key);
+  card.querySelector(".blurb-wrap").classList.toggle("expanded", expanded);
   updateBlurbToggle(key);
 }
 
@@ -547,6 +550,7 @@ function renderEmpty() {
 
 function removeCard(key) {
   sessions.delete(key);
+  expandedBlurbs.delete(key);
   cards.get(key)?.remove();
   cards.delete(key);
   reorder();

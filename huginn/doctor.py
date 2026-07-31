@@ -90,6 +90,29 @@ def _report_plugins(registry) -> bool:
     return ok
 
 
+def _report_model_policy(cfg) -> bool:
+    """issue #41: what the installed policies permit, and whether the
+    provider/model this machine is actually configured for survives them --
+    so a refusal shows up here rather than at the first Ask or blurb."""
+    from .policy import DEFAULT_POLICY, refusal, resolve
+    policies = resolve()
+    if policies == (DEFAULT_POLICY,):
+        _check("installed policies", True, "none (every model permitted)")
+        return True
+    ok = True
+    for policy in policies:
+        allow = ", ".join(policy.allow) or "(nothing)"
+        _check(policy.name, bool(policy.allow),
+               f"allow {allow}" + (f", provider {policy.require_provider}"
+                                   if policy.require_provider else ""))
+    provider_name = cfg.get("llm", "provider")
+    for label, key in (("Ask", "chat_model"), ("automatic text", "blurb_model")):
+        message = refusal(cfg.get("llm", key) or "", provider_name)
+        ok &= _check(f"configured {label} model", message is None,
+                     message or f"{provider_name} permitted")
+    return ok
+
+
 def run_doctor() -> int:
     ok = True
 
@@ -107,6 +130,9 @@ def run_doctor() -> int:
     print("plugins:")
     from .plugins import get_registry
     ok &= _report_plugins(get_registry())
+
+    print("model policy:")
+    ok &= _report_model_policy(config.load())
 
     print("data sources:")
     from .sources import claude_code, codex as codex_src

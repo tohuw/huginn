@@ -325,15 +325,25 @@ def create_app(daemon: "Daemon") -> FastAPI:
 
     @api.get("/providers")
     def providers():
+        from .. import policy
         from ..llm.providers import all_providers, blurb_model as resolve_blurb_model
         result = {}
         for name, provider in all_providers(daemon.plugins).items():
-            reason = provider.available()
+            # issue #41: an installed policy that forbids this provider makes it
+            # unavailable here, with the policy's reason verbatim, so the
+            # dashboard never offers a choice the chokepoint would refuse. The
+            # policy check comes first: a forbidden provider must read as
+            # forbidden even when its binary is also missing.
+            reason = policy.provider_refusal(name) or provider.available()
             automatic_model = None
             if reason is None:
                 try:
-                    automatic_model = resolve_blurb_model(
+                    candidate = resolve_blurb_model(
                         name, cfg.get("llm", "blurb_model"), daemon.plugins)
+                    # A refused automatic model is reported as no model, never
+                    # swapped for a permitted one -- see policy.py's rule 2.
+                    refused = policy.refusal(candidate, name)
+                    automatic_model = None if refused else candidate
                 except Exception:
                     pass
             result[name] = {

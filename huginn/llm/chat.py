@@ -13,7 +13,7 @@ import time
 import uuid
 from typing import TYPE_CHECKING
 
-from .. import config
+from .. import config, policy
 from ..model import Session, SessionState
 from .context import digest_for_session, evidence_for_session, evidence_text
 from .providers import compatible_model, get_provider
@@ -228,6 +228,15 @@ async def start_chat(daemon: "Daemon", body: dict) -> dict:
     unavailable = provider.available()
     if unavailable:
         return {"ok": False, "error": unavailable}
+    # issue #41: the request body may name a provider, which is a caller
+    # narrowing its own choice -- it can never widen what policy permits. Check
+    # the resolved (provider, model) pair before spawning anything, and refuse
+    # rather than silently substituting a permitted model.
+    refused = policy.refusal(
+        compatible_model(provider_name, daemon.cfg.get("llm", "chat_model"), daemon.plugins),
+        provider_name)
+    if refused:
+        return {"ok": False, "error": refused}
     request_id = uuid.uuid4().hex[:12]
     daemon.active_chat = asyncio.create_task(
         _run_chat(daemon, provider, question, request_id, provider_name))
@@ -242,6 +251,14 @@ def _apply_controls(daemon: "Daemon", actions) -> list[str]:
             value = not daemon.cfg.get(section, key)
             reply = (f"Blurbs {'enabled' if value else 'disabled'}." if key == "enabled"
                      else f"Desktop presence {'shown' if value else 'hidden'}.")
+        # "use codex" in natural language is still a config write, so it goes
+        # through the same policy gate PUT /api/settings does -- issue #41: no
+        # input path may widen the allowed set, including a chat sentence.
+        if (section, key) == ("llm", "provider"):
+            refused = policy.provider_refusal(str(value))
+            if refused:
+                replies.append(refused)
+                continue
         daemon.cfg.update(section, key, value)
         replies.append(reply)
     config.save(daemon.cfg)
@@ -321,6 +338,12 @@ async def _run_chat(daemon: "Daemon", provider, question: str, request_id: str,
         provider_name = provider_name or getattr(provider, "name", daemon.cfg.get("llm", "provider"))
         model = compatible_model(
             provider_name, daemon.cfg.get("llm", "chat_model"), daemon.plugins)
+        # The chokepoint proper (issue #41): the last statement before the
+        # provider is invoked, on the exact model that will be sent. start_chat
+        # pre-checks so the POST can answer with the reason, but this call is
+        # what makes "no core LLM call bypasses policy" true by construction --
+        # a future caller reaching _run_chat another way is still governed.
+        policy.check(model, provider_name)
         got_any = False
         async for chunk in provider.stream(
                 prompt, model=model, cwd=str(chat_dir), allowed_tools="Read,Grep"):

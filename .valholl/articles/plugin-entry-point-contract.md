@@ -2,12 +2,12 @@
 type: "Knowledge Article"
 title: "Plugin entry-point contract"
 description: "How an external Python distribution registers an LLMProvider or SessionSource under the huginn.plugins entry-point group, and what the daemon guarantees/enforces at load time."
-tags: ["plugins", "extensibility", "entry-points"]
+tags: ["plugins", "extensibility", "entry-points", "policy"]
 timestamp: "2026-07-29T00:00:00Z"
 category: "extensibility"
 status: "current"
 updated: "2026-07-31"
-summary: "How an external Python distribution registers an LLMProvider or SessionSource under the huginn.plugins entry-point group, and what the daemon guarantees/enforces at load time. Plugin API compatibility is a declared range, not an exact match."
+summary: "How an external Python distribution registers an LLMProvider or SessionSource under the huginn.plugins entry-point group, and what the daemon guarantees/enforces at load time. Plugin API compatibility is a declared range, not an exact match; because the registry is additive, model restrictions live in a separate intersecting policy chokepoint."
 related: ["what-huginn-is", "event-bus-and-reducer", "sources-polling-and-watching"]
 ---
 
@@ -60,6 +60,39 @@ non-overlapping range is now reported as a mismatch specifically — a
 `doctor` error that fails the run, and `api_mismatch: true` on the
 `GET /api/plugins` error entry — because the usual cause affects every plugin
 at once and the actionable fact is which side has to move.
+
+## Additive registry, and what that cannot express
+
+This registry is deliberately additive: a plugin contributes capabilities and
+cannot veto another plugin's. That makes a "blocking plugin" inexpressible —
+load order is arbitrary, `get_registry()` is memoized so the set is fixed at
+first read, and additions compose while removals do not. So a restriction like
+"inference must route only through the approved provider" is not a plugin
+concern at all (issue #41).
+
+That enforcement lives in `huginn/policy.py` instead: a separate entry-point
+group `huginn.policy` contributing frozen `ModelPolicy` objects, resolved
+(uncached) at every call and **intersected** — a call is permitted only when
+every policy permits it, so an installed policy can only narrow the allowed
+set and no second policy, config value, env var, or CLI/Ask input can widen
+it. No match means refuse, with the policy's `reason` surfaced verbatim and no
+substitution of a permitted model. `huginn/llm/chat.py`,
+`huginn/llm/blurb.py`, `GET /api/providers`, and `validate_setting()` all
+route through it; with nothing installed, a real permissive `DEFAULT_POLICY`
+applies, so the unrestricted path runs the same code a restricted build does.
+
+Note the deliberate asymmetry with plugin loading: a broken *plugin* is
+skipped, because a missing provider only removes an option. A broken *policy*
+becomes a synthetic policy allowing nothing, because dropping it would widen
+what is permitted. Same word, opposite correct answer.
+
+Honest scope: the policy chokepoint is a contract, not a sandbox — it governs
+Huginn's own calls, and anyone with write access to the environment can edit
+anything. One practical consequence: under a restrictive policy a distribution
+cannot shell out to a vendor CLI for generation (which is how the built-in
+`claude`/`codex` providers work), because that subprocess inherits the user's
+configuration and can egress to a forbidden endpoint outside Huginn's control.
+Approved APIs must be called directly.
 
 The registry is `@lru_cache`-memoized for the life of the process
 (`get_registry()`) — there is no live reload. A newly installed or fixed

@@ -64,6 +64,16 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "chatgpt_desktop": {"enabled": True, "poll_s": 15.0},
     # Empty distros means the user's default WSL distribution.
     "wsl": {"enabled": sys.platform == "win32", "poll_s": 5.0, "distros": []},
+    # How far Huginn's derived view may trail the newest source artifact before
+    # `huginn doctor` warns -- issue #39. Every benign gap is seconds to
+    # minutes: codex polls every 5s, the claude sweep runs every 10s, codex's
+    # active-rollout window is 240s, and roster TTLs are 300s. One hour is more
+    # than an order of magnitude above all of them, so it cannot fire during
+    # normal operation, yet it is far below both the 7-day silent staleness
+    # that motivated the check and Claude Code's 30-day cleanupPeriodDays
+    # sweep -- the deadline past which unprocessed transcripts are deleted
+    # rather than merely late.
+    "doctor": {"max_lag_s": 3600.0},
 }
 
 
@@ -77,6 +87,7 @@ _POSITIVE_NUMERIC_KEYS = {
     ("codex", "poll_s"), ("codex", "active_window_h"), ("claude_desktop", "poll_s"),
     ("chatgpt_desktop", "poll_s"),
     ("wsl", "poll_s"),
+    ("doctor", "max_lag_s"),
 }
 _ENUM_KEYS: dict[tuple[str, str], set[str]] = {
     ("ui", "view"): {"cards", "list"},

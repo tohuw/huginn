@@ -185,6 +185,26 @@ snapshot. Seed reconciliation state from those keys so a record removed while
 Huginn was stopped can age out after successful upstream polls. No other
 source's keys or session contents are exposed through this capability.
 
+### Reporting data lag (optional)
+
+`huginn doctor` reports how far each source's derived sessions trail the
+artifacts they came from, so a source that quietly stops keeping up is visible
+rather than discovered later. A source that reads a filesystem can opt in with
+one synchronous method:
+
+```python
+    def artifact_mtime(self) -> float | None:
+        """Newest epoch mtime this source would consume right now."""
+        return newest_upstream_write() or None
+```
+
+Return the newest timestamp among the artifacts currently worth processing, or
+`None` when there is nothing to process or the answer is unknown — doctor
+treats unknown as unknown, never as stale. Omit the method entirely if the
+source does not watch files; doctor then reports it as not measuring artifact
+times. The call must be quick and must not raise; an exception is reported as
+unknown lag rather than failing the report.
+
 ## Dashboard session groups
 
 Set `Session.group` (and, optionally, `Session.group_label`) to have every

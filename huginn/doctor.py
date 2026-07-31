@@ -36,8 +36,48 @@ def _authed_get(port: int, path: str) -> dict:
         return json.load(response)
 
 
+def _daemon_sessions(port: int) -> list[dict]:
+    return _authed_get(port, "/api/sessions")["sessions"]
+
+
 def _daemon_session_count(port: int) -> int:
-    return len(_authed_get(port, "/api/sessions")["sessions"])
+    return len(_daemon_sessions(port))
+
+
+def _snapshot_sessions() -> list[dict]:
+    """The derived roster the daemon last persisted.
+
+    Lag matters most when the daemon is *not* running -- a stopped daemon is
+    precisely how a view goes days stale -- so the report falls back to the
+    on-disk snapshot rather than skipping the check (issue #39).
+    """
+    try:
+        data = json.loads((config.STATE_DIR / "sessions.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    sessions = data.get("sessions")
+    return list(sessions.values()) if isinstance(sessions, dict) else []
+
+
+def _report_data_lag(sessions: list[dict], cfg: config.Config) -> None:
+    """issue #39: report newest source artifact vs. newest derived timestamp
+    per source. Every way the pipeline can fall behind -- a wedged watcher, a
+    poller blocked on a sandboxed read, a parser that stopped recognizing an
+    upgraded source's artifacts -- otherwise looks identical to a quiet
+    dashboard, and Claude Code's cleanupPeriodDays sweep eventually deletes
+    what was never processed."""
+    from . import lag
+    from .plugins import get_registry
+    probes: dict[str, lag.ArtifactProbe | None] = dict(lag.builtin_probes(cfg))
+    probes.update(lag.plugin_probes(get_registry()))
+    max_lag_s = cfg.get("doctor", "max_lag_s")
+    now = time.time()
+    for entry in lag.collect(lag.newest_processed(sessions), probes):
+        detail = lag.describe(entry, now)
+        if entry.stale(max_lag_s):
+            _warn(f"{entry.source} data lag", f"{detail}, over {int(max_lag_s)}s threshold")
+        else:
+            _check(f"{entry.source} data lag", True, detail)
 
 
 def _check_version_coverage(label: str, sessions, tested: tuple[int, int]) -> None:
@@ -115,6 +155,7 @@ def _report_model_policy(cfg) -> bool:
 
 def run_doctor() -> int:
     ok = True
+    cfg = config.load()
 
     print("binaries:")
     from .llm.providers import claude_binary, codex_binary
@@ -168,17 +209,24 @@ def run_doctor() -> int:
     _check_version_coverage("codex", codex_src.scan(), TESTED_CODEX)
 
     print("daemon:")
+    roster: list[dict] | None = None
     daemon_json = config.STATE_DIR / "daemon.json"
     if daemon_json.exists():
         try:
             info = json.loads(daemon_json.read_text())
-            n = _daemon_session_count(info["port"])
-            _check("daemon running", True, f"port {info['port']}, {n} sessions")
+            roster = _daemon_sessions(info["port"])
+            _check("daemon running", True, f"port {info['port']}, {len(roster)} sessions")
             _report_source_health(info["port"])
         except Exception:
             _warn("daemon state file present but daemon unreachable",
                   "stale daemon.json or crashed daemon")
     else:
         _warn("daemon not running", "start with `huginn serve`")
+
+    print("data lag:")
+    if roster is None:
+        roster = _snapshot_sessions()
+        _warn("live roster unavailable", "measuring lag against the last snapshot")
+    _report_data_lag(roster, cfg)
 
     return 0 if ok else 1

@@ -12,11 +12,26 @@ The native shell lives in `windows/Huginn.Tray`. It is a .NET 8 WinForms `Notify
 - starts and supervises the Huginn daemon without opening a console window;
 - polls the authenticated localhost API and displays agents needing attention;
 - opens the dashboard and asks the daemon to focus an agent;
-- supports refresh, restart, quit, and per-user start-at-login;
+- supports refresh, restart, quit, and per-user start-at-login (the `Huginn`
+  value under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`);
 - reads state from `%LOCALAPPDATA%\Huginn`;
 - writes daemon output to `%LOCALAPPDATA%\Huginn\tray.log`.
 
 The shell contains no session-reduction logic. Session discovery, state, authentication, and focus remain owned by the Python daemon.
+
+## Headless start-at-login
+
+`huginn install-agent` registers a console-free `HuginnDaemon` value under the
+same `Run` key, for a Windows host that wants the daemon without the tray. It is
+a distinct value name from the tray's own `Huginn` entry, and it refuses to
+install while the tray is registered for startup: the tray starts, supervises,
+and stops the daemon, so a second autostart would resurrect a daemon the user
+just quit. A Scheduled Task was rejected for the same reason — it would add a
+third owner of a lifecycle the tray already holds, with a separate credential
+and trigger surface, to deliver what one registry value does. The `Run` key
+starts the daemon once per login and does not restart it; supervision remains
+the tray's job. `huginn uninstall-agent` removes only the `HuginnDaemon` value
+and leaves the tray's registration untouched.
 
 ## Build
 
@@ -53,6 +68,7 @@ For a source checkout, install Huginn into the active Windows Python environment
 - [x] Implement VS Code and Windows Terminal window focus with explicit exact-tab degradation.
 - [x] Add Windows Python CI, tray compilation, and portable packaging jobs.
 - [x] Add a native tray shell with daemon supervision and per-user startup registration.
+- [x] Add a headless `install-agent` startup path that defers to the tray when it owns startup.
 - [ ] Validate the full suite and portable ZIP on `windows-latest`.
 - [x] Add a normalized-session WSL bridge for Claude/Codex discovery.
 - [ ] Extend the WSL bridge with transcript tails, hooks, and exact terminal focus.

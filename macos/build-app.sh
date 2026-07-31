@@ -25,6 +25,11 @@ cp "$repo_dir/huginn/server/static/bird.svg" "$bundle/Contents/Resources/bird.sv
 /usr/libexec/PlistBuddy -c 'Add :CFBundleIconFile string Huginn.icns' "$bundle/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c 'Add :LSUIElement bool true' "$bundle/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c 'Add :NSHighResolutionCapable bool true' "$bundle/Contents/Info.plist"
+# Last-resort hint for spawning the daemon (issue #37). The app prefers a
+# bundled runtime, an enclosing checkout, then daemon.json; this only matters
+# when none of those exist -- e.g. the first launch of a bundle installed to
+# ~/Applications, away from the checkout that built it.
+/usr/libexec/PlistBuddy -c "Add :HuginnRepoPath string $repo_dir" "$bundle/Contents/Info.plist"
 plutil -lint "$bundle/Contents/Info.plist"
 
 iconset=$(mktemp -d)/Huginn.iconset

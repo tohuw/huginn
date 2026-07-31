@@ -75,6 +75,14 @@ menu is open to replace it with **Restart Huginn**. Remove the launchd version
 first with `uv run huginn uninstall-agent`; its `KeepAlive` policy is
 intentionally incompatible with app-owned shutdown.
 
+To relaunch a dead daemon the app looks for an interpreter in this order: a
+runtime bundled in the `.app`, a checkout enclosing the `.app`, the `python`
+and `repo` recorded in `~/.local/state/huginn/daemon.json` by the last daemon,
+the checkout that ran `build-app.sh`, then a `huginn` console script in
+`~/.local/bin`, `/opt/homebrew/bin`, or `/usr/local/bin`. Each candidate is
+verified on disk, so a moved or deleted checkout falls through instead of
+failing to start.
+
 ### Windows 11 tray app
 
 Native Windows support includes AppData-backed state, Claude/Codex discovery,

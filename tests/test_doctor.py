@@ -14,9 +14,11 @@ from huginn.doctor import (
     TESTED_CODEX,
     _check_version_coverage,
     _daemon_session_count,
+    _report_model_policy,
     _report_plugins,
 )
 from huginn.plugins import API_VERSION, MIN_API_VERSION, PluginSpec, discover_plugins
+from huginn.policy import ModelPolicy
 
 
 class _Response(io.BytesIO):
@@ -104,6 +106,51 @@ class PluginApiReportTests(unittest.TestCase):
 
         self.assertTrue(ok)
         self.assertIn("installed plugins", out.getvalue())
+
+
+class ModelPolicyReportTests(unittest.TestCase):
+    """issue #41: a refused configured model must be visible in doctor, not
+    only at the first Ask or automatic-text call."""
+
+    @staticmethod
+    def _installed(*policies):
+        points = [_EntryPoint(policy.name, policy) for policy in policies]
+        return patch("huginn.policy.entry_points", return_value=points)
+
+    def test_no_installed_policy_reports_unrestricted_and_passes(self):
+        with patch("huginn.policy.entry_points", return_value=[]), _capture_stdout() as out:
+            ok = _report_model_policy(config.Config({}))
+
+        self.assertTrue(ok)
+        self.assertIn("every model permitted", out.getvalue())
+
+    def test_refused_configured_model_fails_with_the_reason_verbatim(self):
+        policy = ModelPolicy(name="bedrock-only", allow=(r"^us\.anthropic\.",),
+                             require_provider="bedrock",
+                             reason="POLICY_REASON_TOKEN: approved provider only")
+        cfg = config.Config({"llm": {"provider": "claude", "chat_model": "sonnet",
+                                     "blurb_model": "haiku"}})
+
+        with self._installed(policy), _capture_stdout() as out:
+            ok = _report_model_policy(cfg)
+
+        self.assertFalse(ok)
+        self.assertIn("POLICY_REASON_TOKEN", out.getvalue())
+
+    def test_permitted_configured_model_passes_and_lists_the_policy(self):
+        policy = ModelPolicy(name="bedrock-only", allow=(r"^us\.anthropic\.",),
+                             require_provider="bedrock", reason="approved provider only")
+        cfg = config.Config({"llm": {
+            "provider": "bedrock",
+            "chat_model": "us.anthropic.claude-sonnet-5",
+            "blurb_model": "us.anthropic.claude-haiku-4-5",
+        }})
+
+        with self._installed(policy), _capture_stdout() as out:
+            ok = _report_model_policy(cfg)
+
+        self.assertTrue(ok)
+        self.assertIn("bedrock-only", out.getvalue())
 
 
 class DoctorTests(unittest.TestCase):

@@ -331,6 +331,16 @@ in the dashboard; source plugins receive a narrow `SourceContext` for namespaced
 session upserts, removals, configuration, and redacted health reporting.
 `GET /api/plugins` reports loaded plugins and isolated load failures.
 
+A separate entry-point group, `huginn.policy`, declares a `ModelPolicy` — a
+fail-closed allowlist of model ids and an optional required provider that every
+LLM call Huginn makes must satisfy. Policies intersect rather than union, so an
+installed policy can only narrow what is permitted and nothing (another policy,
+config, the dashboard, or an Ask command) can widen it; a refusal surfaces the
+policy's own reason verbatim and never substitutes a different model. With no
+policy installed, every model is permitted — the default is unchanged. This is a
+contract, not a sandbox: see [docs/plugins.md](docs/plugins.md#model-policy) for
+the scope it does and does not cover.
+
 Install a plugin package into Huginn's active environment (for example,
 `uv pip install -e /path/to/plugin`) to make it discoverable. See
 [the plugin author guide](docs/plugins.md) for the contract and a minimal

@@ -9,7 +9,16 @@ from pathlib import Path
 from unittest.mock import patch
 
 from huginn import config
-from huginn.doctor import TESTED_CLAUDE, TESTED_CODEX, _check_version_coverage, _daemon_session_count
+from huginn.doctor import (
+    TESTED_CLAUDE,
+    TESTED_CODEX,
+    _check_version_coverage,
+    _daemon_session_count,
+    _report_model_policy,
+    _report_plugins,
+)
+from huginn.plugins import API_VERSION, MIN_API_VERSION, PluginSpec, discover_plugins
+from huginn.policy import ModelPolicy
 
 
 class _Response(io.BytesIO):
@@ -53,6 +62,95 @@ class VersionCoverageTests(unittest.TestCase):
 def _capture_stdout():
     import contextlib
     return contextlib.redirect_stdout(io.StringIO())
+
+
+class _EntryPoint:
+    def __init__(self, name, value):
+        self.name = name
+        self.value = value
+
+    def load(self):
+        return self.value
+
+
+class PluginApiReportTests(unittest.TestCase):
+    """issue #38: doctor was the *only* place a version mismatch showed up, and
+    it showed up indistinguishably from an import failure. It must now name the
+    mismatch and core's supported range, and still fail the run."""
+
+    def test_api_mismatch_is_labelled_and_fails_the_check(self):
+        registry = discover_plugins([_EntryPoint("stale", PluginSpec(
+            name="stale", version="1", api_version=API_VERSION + 1))])
+
+        with _capture_stdout() as out:
+            ok = _report_plugins(registry)
+
+        self.assertFalse(ok)
+        text = out.getvalue()
+        self.assertIn("stale API mismatch", text)
+        self.assertIn(f"Huginn supports API {MIN_API_VERSION}..{API_VERSION}", text)
+
+    def test_a_plugin_declaring_a_range_reports_that_range(self):
+        registry = discover_plugins([_EntryPoint("ranged", PluginSpec(
+            name="ranged", version="2.0", min_api=MIN_API_VERSION, max_api=API_VERSION + 4))])
+
+        with _capture_stdout() as out:
+            ok = _report_plugins(registry)
+
+        self.assertTrue(ok)
+        self.assertIn(f"API {MIN_API_VERSION}..{API_VERSION + 4}", out.getvalue())
+
+    def test_no_plugins_installed_still_passes(self):
+        with _capture_stdout() as out:
+            ok = _report_plugins(discover_plugins([]))
+
+        self.assertTrue(ok)
+        self.assertIn("installed plugins", out.getvalue())
+
+
+class ModelPolicyReportTests(unittest.TestCase):
+    """issue #41: a refused configured model must be visible in doctor, not
+    only at the first Ask or automatic-text call."""
+
+    @staticmethod
+    def _installed(*policies):
+        points = [_EntryPoint(policy.name, policy) for policy in policies]
+        return patch("huginn.policy.entry_points", return_value=points)
+
+    def test_no_installed_policy_reports_unrestricted_and_passes(self):
+        with patch("huginn.policy.entry_points", return_value=[]), _capture_stdout() as out:
+            ok = _report_model_policy(config.Config({}))
+
+        self.assertTrue(ok)
+        self.assertIn("every model permitted", out.getvalue())
+
+    def test_refused_configured_model_fails_with_the_reason_verbatim(self):
+        policy = ModelPolicy(name="bedrock-only", allow=(r"^us\.anthropic\.",),
+                             require_provider="bedrock",
+                             reason="POLICY_REASON_TOKEN: approved provider only")
+        cfg = config.Config({"llm": {"provider": "claude", "chat_model": "sonnet",
+                                     "blurb_model": "haiku"}})
+
+        with self._installed(policy), _capture_stdout() as out:
+            ok = _report_model_policy(cfg)
+
+        self.assertFalse(ok)
+        self.assertIn("POLICY_REASON_TOKEN", out.getvalue())
+
+    def test_permitted_configured_model_passes_and_lists_the_policy(self):
+        policy = ModelPolicy(name="bedrock-only", allow=(r"^us\.anthropic\.",),
+                             require_provider="bedrock", reason="approved provider only")
+        cfg = config.Config({"llm": {
+            "provider": "bedrock",
+            "chat_model": "us.anthropic.claude-sonnet-5",
+            "blurb_model": "us.anthropic.claude-haiku-4-5",
+        }})
+
+        with self._installed(policy), _capture_stdout() as out:
+            ok = _report_model_policy(cfg)
+
+        self.assertTrue(ok)
+        self.assertIn("bedrock-only", out.getvalue())
 
 
 class DoctorTests(unittest.TestCase):

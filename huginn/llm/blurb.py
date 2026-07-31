@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .. import config as _config
+from .. import policy
 from ..model import Session, SessionState
 from ..plugins import LLMProviderError
 from .context import distill, evidence_text
@@ -271,6 +272,11 @@ class BlurbWorker:
                     f"{provider_name} is unavailable", retryable=False)
             model = blurb_model(
                 provider_name, configured_model, self.daemon.plugins)
+            # issue #41: automatic text is the highest-volume core LLM call, so
+            # it routes through the chokepoint too. PolicyRefused carries
+            # retryable=False, so _open_circuit latches permanently instead of
+            # re-attempting a refused model every minute for every session.
+            policy.check(model, provider_name)
             fingerprint = hashlib.sha256(
                 f"{provider_name}\0{model}\0{prompt}".encode()
             ).hexdigest()

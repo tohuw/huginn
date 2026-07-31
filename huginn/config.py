@@ -100,7 +100,25 @@ def validate_setting(section: str, key: str, value: Any) -> str | None:
         from .llm.providers import all_providers
         if value not in all_providers():
             return f"llm.provider must name an installed provider: {value}"
-        return None
+        # issue #41: config may narrow the allowed set but never widen it, so a
+        # provider an installed policy forbids is rejected here rather than
+        # written to disk and refused later at the chokepoint. With no policy
+        # installed this is always None -- the default stays permissive.
+        from .policy import provider_refusal
+        return provider_refusal(value)
+
+    if (section, key) in (("llm", "chat_model"), ("llm", "blurb_model")):
+        if not isinstance(value, str):
+            return f"{section}.{key} must be a string"
+        from .policy import DEFAULT_POLICY, refusal, resolve
+        if resolve() == (DEFAULT_POLICY,):
+            return None   # unrestricted: don't re-read config.toml to learn nothing
+        # Validated against the provider *currently* configured: settings are
+        # applied per-key, and a batch that changes both is validated before
+        # anything mutates, so this deliberately checks the provider in effect
+        # rather than one being set in the same request. The chokepoint at the
+        # call site is what guarantees the pair is legal at use time.
+        return refusal(value, load().get("llm", "provider"))
 
     enum = _ENUM_KEYS.get((section, key))
     if enum is not None:

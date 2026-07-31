@@ -12,6 +12,7 @@ from huginn.llm.context import evidence_for_session
 from huginn.model import Session
 from huginn.plugins import (
     API_VERSION,
+    MIN_API_VERSION,
     PluginRegistry,
     PluginSpec,
     SourceContext,
@@ -90,6 +91,99 @@ class PluginDiscoveryTests(unittest.TestCase):
 
         self.assertEqual(registry.plugins, ())
         self.assertIn("incompatible", registry.errors[0].detail)
+
+
+class PluginApiRangeTests(unittest.TestCase):
+    """issue #38: an exact `api_version != API_VERSION` comparison meant a
+    routine core bump silently disabled every installed plugin. A plugin may
+    now declare a supported range, and a mismatch is reported loudly."""
+
+    def test_api_version_only_spec_is_unchanged_when_versions_match(self):
+        # The backward-compatibility guarantee: a spec that sets nothing but
+        # api_version must behave exactly as it did before ranges existed.
+        plugin = PluginSpec(name="legacy", version="1", api_version=API_VERSION,
+                            providers=(_Provider(),))
+
+        registry = discover_plugins([_EntryPoint("legacy", plugin)])
+
+        self.assertEqual([item.name for item in registry.plugins], ["legacy"])
+        self.assertEqual(registry.errors, ())
+        self.assertEqual(plugin.api_range, (API_VERSION, API_VERSION))
+
+    def test_range_spanning_a_core_bump_is_accepted(self):
+        # The whole point: a plugin declaring it speaks the current API *and*
+        # the next one keeps loading after core bumps API_VERSION.
+        plugin = PluginSpec(name="ranged", version="1", api_version=API_VERSION,
+                            min_api=MIN_API_VERSION, max_api=API_VERSION + 5)
+
+        registry = discover_plugins([_EntryPoint("ranged", plugin)])
+
+        self.assertEqual([item.name for item in registry.plugins], ["ranged"])
+        self.assertEqual(registry.errors, ())
+
+    def test_future_only_range_does_not_overlap_and_is_rejected(self):
+        plugin = PluginSpec(name="future", version="1",
+                            min_api=API_VERSION + 1, max_api=API_VERSION + 2)
+
+        registry = discover_plugins([_EntryPoint("future", plugin)])
+
+        self.assertEqual(registry.plugins, ())
+        self.assertTrue(registry.errors[0].api_mismatch)
+        self.assertIn(f"{MIN_API_VERSION}..{API_VERSION}", registry.errors[0].detail)
+
+    def test_past_only_range_does_not_overlap_and_is_rejected(self):
+        plugin = PluginSpec(name="ancient", version="1",
+                            min_api=MIN_API_VERSION - 3, max_api=MIN_API_VERSION - 1)
+
+        registry = discover_plugins([_EntryPoint("ancient", plugin)])
+
+        self.assertEqual(registry.plugins, ())
+        self.assertTrue(registry.errors[0].api_mismatch)
+
+    def test_inverted_range_is_rejected_rather_than_silently_accepted(self):
+        plugin = PluginSpec(name="inverted", version="1",
+                            min_api=API_VERSION + 1, max_api=API_VERSION - 1)
+
+        registry = discover_plugins([_EntryPoint("inverted", plugin)])
+
+        self.assertEqual(registry.plugins, ())
+        self.assertIn("inverted", registry.errors[0].detail)
+
+    def test_mismatch_is_logged_loudly_naming_both_ranges(self):
+        # Not a quiet skip: the failure mode issue #38 describes is a plugin
+        # that stays installed and stops existing with nothing in the log.
+        plugin = PluginSpec(name="future", version="1", api_version=API_VERSION + 1)
+
+        with self.assertLogs("huginn.plugins", level="WARNING") as captured:
+            discover_plugins([_EntryPoint("future", plugin)])
+
+        message = "\n".join(captured.output)
+        self.assertIn("future", message)
+        self.assertIn(f"API {MIN_API_VERSION}..{API_VERSION}", message)
+        self.assertIn("still installed", message)
+
+    def test_mismatch_is_flagged_separately_from_an_import_failure(self):
+        registry = discover_plugins([
+            _EntryPoint("broken", error=ImportError("no module")),
+            _EntryPoint("stale", PluginSpec(name="stale", version="1",
+                                            api_version=API_VERSION + 1)),
+        ])
+
+        by_name = {error.entry_point: error for error in registry.errors}
+        self.assertTrue(by_name["stale"].api_mismatch)
+        self.assertFalse(by_name["broken"].api_mismatch)
+        self.assertEqual([error.entry_point for error in registry.api_mismatches()], ["stale"])
+
+    def test_registry_dict_publishes_core_range_and_plugin_range(self):
+        registry = discover_plugins([_EntryPoint("ranged", PluginSpec(
+            name="ranged", version="1", min_api=MIN_API_VERSION, max_api=API_VERSION + 5))])
+
+        payload = registry.to_dict()
+
+        self.assertEqual(payload["api_version"], API_VERSION)
+        self.assertEqual(payload["min_api_version"], MIN_API_VERSION)
+        self.assertEqual(payload["plugins"][0]["api_range"],
+                         [MIN_API_VERSION, API_VERSION + 5])
 
     def test_builtin_provider_name_cannot_be_shadowed(self):
         plugin = PluginSpec(name="shadow", version="1", providers=(_Provider("codex"),))

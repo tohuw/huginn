@@ -65,6 +65,31 @@ def _report_source_health(port: int) -> None:
                                      f"last {age}s ago")
 
 
+def _report_plugins(registry) -> bool:
+    """issue #38: an API-range mismatch gets its own labelled error line naming
+    core's supported range. The actionable fact is which side has to move -- not
+    just that a plugin "failed" -- and this used to be the *only* place a
+    version disagreement was visible at all."""
+    from .plugins import API_VERSION, MIN_API_VERSION
+    ok = True
+    for plugin in registry.plugins:
+        capabilities = len(plugin.providers) + len(plugin.sources)
+        low, high = plugin.api_range
+        span = str(low) if low == high else f"{low}..{high}"
+        _check(plugin.name, True, f"{plugin.version}, API {span}, {capabilities} capabilities")
+    if not registry.plugins:
+        _check("installed plugins", True, "none")
+    for error in registry.errors:
+        # Still a doctor error rather than a warning: an installed plugin that
+        # contributes nothing is a fault, whichever side caused it.
+        label = (f"{error.entry_point} API mismatch" if error.api_mismatch
+                 else error.entry_point)
+        detail = (f"{error.detail}; Huginn supports API {MIN_API_VERSION}..{API_VERSION}"
+                  if error.api_mismatch else f"{error.error_class}: {error.detail}")
+        ok &= _check(label, False, detail)
+    return ok
+
+
 def run_doctor() -> int:
     ok = True
 
@@ -81,18 +106,7 @@ def run_doctor() -> int:
 
     print("plugins:")
     from .plugins import get_registry
-    registry = get_registry()
-    for plugin in registry.plugins:
-        capabilities = len(plugin.providers) + len(plugin.sources)
-        _check(plugin.name, True, f"{plugin.version}, {capabilities} capabilities")
-    if not registry.plugins:
-        _check("installed plugins", True, "none")
-    for error in registry.errors:
-        ok &= _check(
-            error.entry_point,
-            False,
-            f"{error.error_class}: {error.detail}",
-        )
+    ok &= _report_plugins(get_registry())
 
     print("data sources:")
     from .sources import claude_code, codex as codex_src

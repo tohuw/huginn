@@ -9,7 +9,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 from huginn import config
-from huginn.doctor import TESTED_CLAUDE, TESTED_CODEX, _check_version_coverage, _daemon_session_count
+from huginn.doctor import (
+    TESTED_CLAUDE,
+    TESTED_CODEX,
+    _check_version_coverage,
+    _daemon_session_count,
+    _report_plugins,
+)
+from huginn.plugins import API_VERSION, MIN_API_VERSION, PluginSpec, discover_plugins
 
 
 class _Response(io.BytesIO):
@@ -53,6 +60,50 @@ class VersionCoverageTests(unittest.TestCase):
 def _capture_stdout():
     import contextlib
     return contextlib.redirect_stdout(io.StringIO())
+
+
+class _EntryPoint:
+    def __init__(self, name, value):
+        self.name = name
+        self.value = value
+
+    def load(self):
+        return self.value
+
+
+class PluginApiReportTests(unittest.TestCase):
+    """issue #38: doctor was the *only* place a version mismatch showed up, and
+    it showed up indistinguishably from an import failure. It must now name the
+    mismatch and core's supported range, and still fail the run."""
+
+    def test_api_mismatch_is_labelled_and_fails_the_check(self):
+        registry = discover_plugins([_EntryPoint("stale", PluginSpec(
+            name="stale", version="1", api_version=API_VERSION + 1))])
+
+        with _capture_stdout() as out:
+            ok = _report_plugins(registry)
+
+        self.assertFalse(ok)
+        text = out.getvalue()
+        self.assertIn("stale API mismatch", text)
+        self.assertIn(f"Huginn supports API {MIN_API_VERSION}..{API_VERSION}", text)
+
+    def test_a_plugin_declaring_a_range_reports_that_range(self):
+        registry = discover_plugins([_EntryPoint("ranged", PluginSpec(
+            name="ranged", version="2.0", min_api=MIN_API_VERSION, max_api=API_VERSION + 4))])
+
+        with _capture_stdout() as out:
+            ok = _report_plugins(registry)
+
+        self.assertTrue(ok)
+        self.assertIn(f"API {MIN_API_VERSION}..{API_VERSION + 4}", out.getvalue())
+
+    def test_no_plugins_installed_still_passes(self):
+        with _capture_stdout() as out:
+            ok = _report_plugins(discover_plugins([]))
+
+        self.assertTrue(ok)
+        self.assertIn("installed plugins", out.getvalue())
 
 
 class DoctorTests(unittest.TestCase):

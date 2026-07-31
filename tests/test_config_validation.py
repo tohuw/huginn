@@ -70,6 +70,15 @@ class ValidateSettingTests(unittest.TestCase):
         self.assertNotIn("waiting", config.DEFAULTS["patterns"])
         self.assertIsNotNone(validate_setting("patterns", "waiting", ["x"]))
 
+    def test_doctor_lag_threshold_is_a_positive_number(self):
+        # issue #39: a zero/negative staleness threshold would warn constantly
+        # and make the check as useless as not having it.
+        self.assertIsNone(validate_setting("doctor", "max_lag_s", 900))
+        self.assertIsNone(validate_setting("doctor", "max_lag_s", 900.5))
+        self.assertIsNotNone(validate_setting("doctor", "max_lag_s", 0))
+        self.assertIsNotNone(validate_setting("doctor", "max_lag_s", -1))
+        self.assertIsNotNone(validate_setting("doctor", "max_lag_s", "soon"))
+
     def test_plain_string_type_enforced(self):
         self.assertIsNone(validate_setting("llm", "provider", "claude"))
         self.assertIsNotNone(validate_setting("llm", "chat_model", 5))

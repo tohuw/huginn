@@ -192,6 +192,30 @@ class AgentCliTests(unittest.TestCase):
             "confirmed": True,
         })
 
+    def test_install_and_uninstall_agent_reach_every_platform_backend(self):
+        """issue #39: `uninstall-agent` must work on every platform install
+        supports, not just the launchd one it started as."""
+        from huginn import agent_install
+        for platform in ("darwin", "linux", "win32"):
+            with self.subTest(platform=platform):
+                backend = agent_install.get_login_agent(platform)
+                self.assertIsNotNone(backend)
+                with patch.object(agent_install.sys, "platform", platform), \
+                        patch.object(type(backend), "install", return_value=0) as install, \
+                        patch.object(type(backend), "uninstall", return_value=0) as uninstall:
+                    self.assertEqual(cli.cmd_install_agent(Namespace()), 0)
+                    self.assertEqual(cli.cmd_uninstall_agent(Namespace()), 0)
+                install.assert_called_once_with()
+                uninstall.assert_called_once_with()
+
+    def test_agent_commands_report_an_unsupported_platform(self):
+        from huginn import agent_install
+        err = io.StringIO()
+        with patch.object(agent_install.sys, "platform", "sunos5"), redirect_stderr(err):
+            self.assertEqual(cli.cmd_install_agent(Namespace()), 2)
+            self.assertEqual(cli.cmd_uninstall_agent(Namespace()), 2)
+        self.assertIn("not supported on sunos5", err.getvalue())
+
     def test_send_cancellation_is_consumed_server_side(self):
         calls = []
 

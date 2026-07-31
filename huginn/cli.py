@@ -395,8 +395,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("uninstall-hooks", help="remove huginn hooks").set_defaults(fn=cmd_uninstall_hooks)
     sub.add_parser("doctor", help="check environment and configuration").set_defaults(fn=cmd_doctor)
 
-    sub.add_parser("install-agent", help="run huginn as a LaunchAgent (auto-start on login)").set_defaults(fn=cmd_install_agent)
-    sub.add_parser("uninstall-agent", help="remove the huginn LaunchAgent").set_defaults(fn=cmd_uninstall_agent)
+    sub.add_parser("install-agent", help="start huginn at login (launchd/systemd/Windows)").set_defaults(fn=cmd_install_agent)
+    sub.add_parser("uninstall-agent", help="stop starting huginn at login").set_defaults(fn=cmd_uninstall_agent)
 
     args = p.parse_args(argv)
     return args.fn(args)

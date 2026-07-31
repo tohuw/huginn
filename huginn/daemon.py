@@ -6,6 +6,7 @@ import contextlib
 import json
 import os
 import socket
+import sys
 import time
 import uuid
 import webbrowser
@@ -467,8 +468,18 @@ class Daemon:
         return 0
 
     def _write_daemon_state(self, port: int) -> None:
-        (config.STATE_DIR / "daemon.json").write_text(json.dumps(
-            {"pid": os.getpid(), "port": port, "started": time.time()}))
+        # "python"/"repo" let a tray app relaunch a dead daemon without
+        # guessing where Huginn lives -- the macOS app used to hardcode one
+        # developer's checkout (issue #37). Additive: pid/port/started keep
+        # their meaning for existing readers. Nothing secret goes in here;
+        # this file is world-readable, unlike the token beside it.
+        (config.STATE_DIR / "daemon.json").write_text(json.dumps({
+            "pid": os.getpid(),
+            "port": port,
+            "started": time.time(),
+            "python": sys.executable,
+            "repo": str(Path(__file__).resolve().parent.parent),
+        }))
         (config.STATE_DIR / "port").write_text(str(port))
 
 

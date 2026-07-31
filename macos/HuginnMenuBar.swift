@@ -15,9 +15,16 @@ private struct AgentSession: Decodable {
     let last_prompt: String?
 }
 
+/// How to spawn the daemon. Needed only when no daemon is live, which is
+/// exactly the case a hardcoded developer path never survives (issue #37).
+private struct DaemonCommand {
+    let executable: URL
+    let arguments: [String]
+    let workingDirectory: URL
+}
+
 @main
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
-    private let repoPath = "/Users/hljod/Projects/huginn"
     private let statePath = NSString(string: "~/.local/state/huginn").expandingTildeInPath
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
@@ -73,10 +80,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             refreshSessions()
             return
         }
+        guard let command = resolveDaemonCommand() else {
+            rebuildMenu(error: "Could not locate Huginn install")
+            return
+        }
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: repoPath + "/.venv/bin/python3")
-        process.arguments = ["-m", "huginn.cli", "serve", "--no-open"]
-        process.currentDirectoryURL = URL(fileURLWithPath: repoPath)
+        process.executableURL = command.executable
+        process.arguments = command.arguments
+        process.currentDirectoryURL = command.workingDirectory
 
         let logURL = URL(fileURLWithPath: statePath + "/menubar.log")
         try? FileManager.default.createDirectory(at: URL(fileURLWithPath: statePath),
@@ -102,6 +113,89 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } catch {
             rebuildMenu(error: "Could not start daemon")
         }
+    }
+
+    /// Where to find an interpreter that can run `huginn.cli`, in order of how
+    /// much we trust it. The old code hardcoded one developer's checkout
+    /// (issue #37), which meant a clean machine could never spawn the daemon --
+    /// the bug hid because a daemon was normally already running.
+    ///
+    /// 1. A runtime bundled inside the .app: self-contained, needs no checkout.
+    /// 2. A checkout enclosing the .app: true for a build left in `dist/`.
+    /// 3. `daemon.json`, which the daemon now stamps with the interpreter and
+    ///    root it is itself running from -- the only source that is known to
+    ///    have worked, and the one that follows a moved checkout.
+    /// 4. The build-time `HuginnRepoPath`, correct only while the checkout that
+    ///    built this bundle stays put -- hence last among path-bearing sources.
+    /// 5. A `huginn` console script in the usual user/Homebrew prefixes. A GUI
+    ///    app inherits a minimal PATH, so these are probed by absolute path.
+    private func resolveDaemonCommand() -> DaemonCommand? {
+        if let bundled = pythonCommand(inRoot: Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Resources/runtime")) {
+            return bundled
+        }
+        var ancestor = Bundle.main.bundleURL.deletingLastPathComponent()
+        while ancestor.path != "/" {
+            if FileManager.default.fileExists(atPath: ancestor
+                .appendingPathComponent("huginn/cli.py").path),
+               let command = pythonCommand(inRoot: ancestor) {
+                return command
+            }
+            ancestor = ancestor.deletingLastPathComponent()
+        }
+        if let recorded = recordedDaemonCommand() { return recorded }
+        if let buildTime = Bundle.main.infoDictionary?["HuginnRepoPath"] as? String,
+           !buildTime.isEmpty,
+           let command = pythonCommand(inRoot: URL(fileURLWithPath: buildTime)) {
+            return command
+        }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        for script in [home.appendingPathComponent(".local/bin/huginn"),
+                       URL(fileURLWithPath: "/opt/homebrew/bin/huginn"),
+                       URL(fileURLWithPath: "/usr/local/bin/huginn")]
+            where FileManager.default.isExecutableFile(atPath: script.path) {
+            return DaemonCommand(executable: script,
+                                 arguments: ["serve", "--no-open"],
+                                 workingDirectory: home)
+        }
+        return nil
+    }
+
+    /// A `.venv`/`bin` interpreter under `root`, if one is actually there.
+    /// Validating beats trusting any recorded string: a stale path is exactly
+    /// the failure mode issue #37 is about.
+    private func pythonCommand(inRoot root: URL) -> DaemonCommand? {
+        for relative in [".venv/bin/python3", "bin/python3"] {
+            let python = root.appendingPathComponent(relative)
+            if FileManager.default.isExecutableFile(atPath: python.path) {
+                return command(python: python, root: root)
+            }
+        }
+        return nil
+    }
+
+    private func command(python: URL, root: URL) -> DaemonCommand {
+        var isDirectory: ObjCBool = false
+        let usable = FileManager.default.fileExists(atPath: root.path, isDirectory: &isDirectory)
+            && isDirectory.boolValue
+        return DaemonCommand(
+            executable: python,
+            arguments: ["-m", "huginn.cli", "serve", "--no-open"],
+            // `python -m huginn.cli` resolves the package by install, not by
+            // cwd, so a non-checkout root (site-packages) is no reason to fail.
+            workingDirectory: usable ? root : FileManager.default.homeDirectoryForCurrentUser)
+    }
+
+    /// The interpreter and root the last daemon ran from, as recorded in
+    /// `daemon.json`. Absent for a daemon predating that field, hence optional.
+    private func recordedDaemonCommand() -> DaemonCommand? {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: daemonStatePath)),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let python = object["python"] as? String, !python.isEmpty,
+              FileManager.default.isExecutableFile(atPath: python) else { return nil }
+        let root = (object["repo"] as? String).flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
+        return command(python: URL(fileURLWithPath: python),
+                       root: root ?? FileManager.default.homeDirectoryForCurrentUser)
     }
 
     private func liveDaemonPID() -> pid_t? {

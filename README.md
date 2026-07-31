@@ -322,11 +322,14 @@ and long-running session sources without being copied into the core package.
 They are trusted native code: installation is the explicit trust boundary, and
 Huginn does not execute modules found by scanning arbitrary directories.
 
-An entry point returns a `huginn.plugins.PluginSpec` with API version `1`.
-Provider options appear dynamically in the dashboard; source plugins receive a
-narrow `SourceContext` for namespaced session upserts, removals, configuration,
-and redacted health reporting. `GET /api/plugins` reports loaded plugins and
-isolated load failures.
+An entry point returns a `huginn.plugins.PluginSpec` with API version `1`. A
+plugin may declare the range of APIs it supports (`min_api`/`max_api`, both
+defaulting to `api_version`), and is loaded when that range overlaps core's; a
+non-overlapping range is reported loudly on the daemon log and as a `huginn
+doctor` error rather than skipped silently. Provider options appear dynamically
+in the dashboard; source plugins receive a narrow `SourceContext` for namespaced
+session upserts, removals, configuration, and redacted health reporting.
+`GET /api/plugins` reports loaded plugins and isolated load failures.
 
 Install a plugin package into Huginn's active environment (for example,
 `uv pip install -e /path/to/plugin`) to make it discoverable. See

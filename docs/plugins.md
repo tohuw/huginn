@@ -34,6 +34,35 @@ or malformed capability names, and reserves the built-in provider names `claude`
 and `codex`. `huginn doctor` and authenticated `GET /api/plugins` report the
 result. Arbitrary directories are never scanned or imported.
 
+## API version ranges
+
+Core advertises the inclusive range `MIN_API_VERSION..API_VERSION`. A plugin is
+loaded when its own supported range overlaps core's. Declare a range with
+`min_api`/`max_api` so a routine core `API_VERSION` bump does not disable your
+plugin:
+
+```python
+plugin = PluginSpec(
+    name="example",
+    version="1.0.0",
+    api_version=API_VERSION,
+    min_api=1,
+    max_api=2,          # keeps loading after core bumps to API 2
+    providers=(ExampleProvider(),),
+)
+```
+
+Both default to `api_version`, so a spec that sets only `api_version` behaves
+exactly as before: accepted when the versions match, refused when they do not.
+Declare the widest range you have actually tested — a range is a compatibility
+claim, not a wish.
+
+A range that does not overlap core's is reported loudly rather than skipped
+quietly: a `WARNING` on the daemon log at every start naming both ranges, a
+labelled `huginn doctor` error that fails the run, and an `api_mismatch: true`
+error entry in `GET /api/plugins`. The plugin stays installed but contributes
+nothing, which is precisely why it has to be visible.
+
 ## Ask providers
 
 A provider has a lowercase `name`, `available()`, `run_text()`, and asynchronous

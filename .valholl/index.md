@@ -12,4 +12,4 @@ okf_version: "0.1"
 
 ## extensibility
 
-* [Plugin entry-point contract](articles/plugin-entry-point-contract.md) - How an external Python distribution registers an `LLMProvider` or `SessionSource` under the `huginn.plugins` entry-point group, and what the daemon guarantees/enforces at load time. (Status: current; updated: 2026-07-29.)
+* [Plugin entry-point contract](articles/plugin-entry-point-contract.md) - How an external Python distribution registers an `LLMProvider` or `SessionSource` under the `huginn.plugins` entry-point group, and what the daemon guarantees/enforces at load time. Plugin API compatibility is a declared range, not an exact match. (Status: current; updated: 2026-07-31.)

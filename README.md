@@ -90,6 +90,29 @@ Windows Terminal focus is window-level; exact selection of an arbitrary existing
 tab remains a documented limitation. WSL sessions are discovered through a
 bounded in-distribution helper and namespaced separately. See [WINDOWS.md](WINDOWS.md).
 
+### Start at login
+
+```sh
+uv run huginn install-agent     # uv run huginn uninstall-agent to remove
+```
+
+The mechanism and its restart policy follow the platform:
+
+| Platform | Mechanism | On exit |
+| --- | --- | --- |
+| macOS | `~/Library/LaunchAgents/is.tohuw.huginn.plist` | `KeepAlive` restarts it |
+| Linux | `~/.config/systemd/user/huginn.service` | `Restart=on-failure` only |
+| Windows | `HKCU\...\CurrentVersion\Run\HuginnDaemon` | not restarted |
+
+The differences are deliberate. launchd's `KeepAlive` restarts the daemon even
+after a clean exit, which is why the menu-bar app needs it removed first. The
+systemd unit uses `Restart=on-failure` instead so `systemctl --user stop huginn`
+stays effective; add `loginctl enable-linger $USER` to keep it running between
+logins on a headless host. On Windows the tray app already supervises the daemon
+and registers its own startup entry, so `install-agent` writes a separate value
+name and refuses to run when the tray is already claiming that job — two
+supervisors would resurrect a daemon you just quit.
+
 ### Agent access
 
 Install the CLI on `PATH` from this checkout:
@@ -311,8 +334,8 @@ prompts or agent output in the first place.
 
 `~/.config/huginn/config.toml` — server port, automatic-text
 enable/provider/model/minute and daily budgets, Ask model, notification
-patterns, poll cadences, ended-card TTL. All editable from the dashboard
-settings too (PUT `/api/settings`).
+patterns, poll cadences, ended-card TTL, `doctor.max_lag_s`. All editable from
+the dashboard settings too (PUT `/api/settings`).
 
 ## Plugins
 

@@ -185,6 +185,27 @@ snapshot. Seed reconciliation state from those keys so a record removed while
 Huginn was stopped can age out after successful upstream polls. No other
 source's keys or session contents are exposed through this capability.
 
+### The Session shape is a stable, shared surface
+
+`Session`, `SessionState`, `STATE_RANK` and `ATTENTION_STATES` live in the
+separate [`corvidae`](../packages/corvidae/README.md#stability-contract) package
+and are **stable within a CalVer year** — issue #42. `huginn.model` re-exports the
+identical objects, so `from huginn.model import Session` is correct and will keep
+working; importing `from corvidae.model import Session` is equally correct and
+lets a plugin (or a non-Huginn tool) depend on the shape without depending on
+Huginn. The same promise covers `corvidae.Tail` — the transcript tailer — and
+`corvidae.redact_secrets`, if your source reads JSONL transcripts or emits text
+that came from one.
+
+Within a year, changes to those names are additive only: new `Session` fields
+always have defaults, and `Session.from_dict()` ignores keys it does not know.
+Two consequences worth coding against: `SessionState` may gain members, so avoid
+exhaustive matches without a default arm; and redaction recognises credential
+*shapes*, so it is one layer of defence, not a guarantee.
+
+Nothing else in `huginn.*` carries a compatibility promise except the plugin
+contract in `huginn.plugins`, which is versioned by API range (above).
+
 ### Reporting data lag (optional)
 
 `huginn doctor` reports how far each source's derived sessions trail the

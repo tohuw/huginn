@@ -1,4 +1,10 @@
-"""Credential redaction at the shared session-evidence seam."""
+"""Credential redaction at the shared session-evidence seam.
+
+The pattern-level coverage for ``redact_secrets`` moved to corvidae with the
+function itself (issue #42, packages/corvidae/tests/test_redact.py). What stays
+here is huginn's side of the seam: proof that every path which turns transcript
+bytes into evidence actually calls through to redaction.
+"""
 from __future__ import annotations
 
 import unittest
@@ -15,24 +21,10 @@ from huginn.model import SessionState
 
 
 class EvidenceRedactionTests(unittest.TestCase):
-    def test_common_credentials_are_redacted(self):
-        samples = (
-            "key " + "AKIA" + "IOSFODNN7EXAMPLE",
-            "Authorization: Bearer abc.def-ghi_123",
-            "token=do-not-send",
-            "github_" + "pat_1234567890abcdefghijklmnop",
-            "https://user:password@example.com/path",
-            "eyJabcdefghijk.abcdefghijk.abcdefghijk",
-        )
-        for sample in samples:
-            with self.subTest(sample=sample):
-                redacted = redact_secrets(sample)
-                self.assertIn("[REDACTED]", redacted)
-                self.assertNotIn("do-not-send", redacted)
-
-    def test_private_key_marker_redacts_whole_evidence_item(self):
-        value = "before -----BEGIN PRIVATE KEY----- private material"
-        self.assertEqual(redact_secrets(value), "[REDACTED PRIVATE KEY]")
+    def test_redact_secrets_is_still_importable_from_its_original_path(self):
+        # Plugins and forks import this name from here; the move to corvidae must
+        # stay invisible to them -- issue #42.
+        self.assertEqual(redact_secrets("token=do-not-send"), "[REDACTED]")
 
     def test_claude_user_and_tool_evidence_is_redacted(self):
         entries = [

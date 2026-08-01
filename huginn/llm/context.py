@@ -2,41 +2,23 @@
 
 Shared by Peek (dashboard), blurbs, and the Q&A chat. Never reads whole
 transcripts — last 64KB only.
+
+``redact_secrets`` itself moved to ``corvidae.redact`` -- issue #42: the pattern
+set is the piece Muninn needed, while the distillation and digest layers around
+it are dashboard-shaped and stayed here. It is re-exported so
+``from huginn.llm.context import redact_secrets`` keeps working.
 """
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any
+
+from corvidae.redact import redact_secrets  # noqa: F401  -- re-export for import compatibility
 
 from ..sources.transcript import Tail, _items, _user_text
 
 TRUNC = 300
-_PRIVATE_KEY_RE = re.compile(
-    r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----",
-    re.IGNORECASE,
-)
-_URL_CREDENTIAL_RE = re.compile(r"(?i)\b(https?://)[^\s/@:]+:[^\s/@]+@")
-_SECRET_PATTERNS = (
-    re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"),
-    re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b"),
-    re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"),
-    re.compile(r"\b(?:sk-ant-|sk-proj-|xai-)[A-Za-z0-9_-]{16,}\b"),
-    re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"),
-    re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+\-/]+=*"),
-    re.compile(r"(?i)\b(?:password|passwd|secret|token|api[_-]?key)\s*[:=]\s*[^\s,;]+"),
-)
-
-
-def redact_secrets(text: str) -> str:
-    """Redact common credential shapes before evidence leaves the transcript seam."""
-    if _PRIVATE_KEY_RE.search(text):
-        return "[REDACTED PRIVATE KEY]"
-    value = _URL_CREDENTIAL_RE.sub(r"\1[REDACTED]@", text)
-    for pattern in _SECRET_PATTERNS:
-        value = pattern.sub("[REDACTED]", value)
-    return value
 
 
 def _clip(text: str, n: int = TRUNC) -> str:

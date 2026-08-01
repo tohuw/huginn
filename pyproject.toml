@@ -5,6 +5,11 @@ description = "Local monitor for AI coding-agent sessions (Claude Code, Codex, C
 license = "Apache-2.0"
 requires-python = ">=3.12"
 dependencies = [
+    # Shared, independently versioned internals (transcript tailing, credential
+    # redaction, session shapes) with a declared stability contract -- issue #42.
+    # Pinned to the CalVer year corvidae promises compatibility within; see
+    # packages/corvidae/README.md.
+    "corvidae>=2026.7.31,<2027",
     "fastapi>=0.115",
     "uvicorn>=0.30",
     "watchfiles>=0.24",
@@ -21,12 +26,29 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["huginn"]
 
+# corvidae lives in this repo as a separate distributable so Muninn can depend on
+# it without depending on Huginn -- issue #42. A uv workspace means local dev and
+# CI resolve it from the checkout, while the published dependency above stays an
+# ordinary version range.
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+corvidae = { workspace = true }
+
 [dependency-groups]
 dev = [
     "httpx>=0.28.1",
     "pytest>=9.1.1",
     "ruff>=0.15.22",
 ]
+
+[tool.pytest.ini_options]
+# Two test trees since issue #42: huginn's own, plus the shared package's, which
+# lives with its code. Listed explicitly so `uv run pytest -q` at the repo root
+# stays the single command that gates a push (.githooks/pre-push) -- an implicit
+# rootdir walk would silently stop covering corvidae if the layout moved.
+testpaths = ["tests", "packages/corvidae/tests"]
 
 [tool.ruff]
 line-length = 130

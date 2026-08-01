@@ -426,6 +426,12 @@ the checkout rather than an index.
 One release prerequisite, since Huginn's wheel now declares `corvidae` as an
 ordinary dependency: **corvidae must be reachable from an index before the next
 Huginn release is published.** A consumer that installs Huginn by Git reference
-(`huginn @ git+https://…@<sha>`) cannot resolve a workspace member from that URL —
-it needs corvidae on PyPI, or its own explicit source for it. In-repo development
-is unaffected.
+(`huginn @ git+https://…@<sha>`) cannot resolve a workspace member from that URL,
+so until corvidae is on PyPI such a consumer needs to point at it explicitly:
+
+```toml
+[tool.uv.sources]
+corvidae = { git = "https://github.com/tohuw/huginn", tag = "<tag>", subdirectory = "packages/corvidae" }
+```
+
+In-repo development is unaffected.

@@ -29,25 +29,33 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from importlib import metadata
 from importlib.metadata import entry_points
+from typing import Any
 
 POLICY_ENTRY_POINT_GROUP = "huginn.policy"
 LOG = logging.getLogger("huginn.policy")
+# PEP 503/508 distribution-name normalisation, reimplemented rather than
+# imported from importlib.metadata.Prepared, which is private.
+_NON_ALPHANUM = re.compile(r"[-_.]+")
+
+
+def _normalize(name: str) -> str:
+    return _NON_ALPHANUM.sub("_", name).lower()
 
 
 @dataclass(frozen=True)
 class ModelPolicy:
     """One installed distribution's statement of which calls it permits.
 
-    ``allow`` patterns are matched with ``re.search``, not ``re.fullmatch``: a
-    policy author who wants a strict prefix restriction anchors the pattern
-    with ``^`` themselves. Unanchored search is deliberate -- it lets a policy
-    allowlist a vendor prefix embedded in a longer qualified id (for example
-    ``bedrock/us.anthropic.claude-...``) without every author remembering to
-    write ``.*`` first. Anchoring stays a per-pattern choice because a global
-    fullmatch would silently break every existing unanchored pattern the
-    moment one author wanted a suffix match.
+    ``allow`` patterns are matched with ``re.search``, not ``re.fullmatch``.
+    Anchor a pattern with ``^`` (and ``$`` where a suffix matters) to restrict
+    a prefix strictly -- ``r"^us\\.anthropic\\."`` and not ``r"us\\.anthropic\\."``,
+    since the latter also permits ``evil-us.anthropic.foo``. Unanchored search
+    stays the primitive because it lets a policy allowlist a vendor prefix
+    embedded in a longer qualified id (for example
+    ``bedrock/us.anthropic.claude-...``); it is not a recommendation.
 
     An empty ``allow`` tuple permits nothing. That is the correct reading, not
     a degenerate one: see ``_load_failed`` below.
@@ -57,6 +65,44 @@ class ModelPolicy:
     allow: tuple[str, ...]                 # regex allowlist of model ids (re.search)
     require_provider: str | None = None    # None = any provider
     reason: str = ""                       # shown verbatim on refusal
+    # Compiled eagerly at construction, not a declared field: excluded from
+    # __eq__/__repr__ so a policy still compares and prints by its declaration.
+    _patterns: tuple[re.Pattern[str], ...] = field(
+        default=(), init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        """Reject a malformed ``allow`` at construction rather than at call time.
+
+        Issue #41 H1: ``allow`` was only a type *hint* on a frozen dataclass
+        that validated nothing, so one missing comma --
+        ``allow=r"^us\\.anthropic\\."`` instead of ``allow=(r"^us\\.anthropic\\.",)``
+        -- made ``_permits`` iterate the pattern's *characters*. Every one-char
+        regex (``^``, ``u``, ``s``, ``.``) matches almost any model id, so a
+        policy meant to permit one vendor prefix permitted everything, and the
+        empty-``allow`` guard passed too because a non-empty string is truthy.
+
+        H2: compiling here also means a bad regex surfaces as a construction
+        error the caller's ``except`` turns into the refuse-everything
+        ``_load_failed`` policy, instead of escaping ``_permits`` later as a
+        bare ``re.error`` that 500s ``/api/providers`` and, in ``blurb.py``,
+        lands in a broad handler that retries with backoff forever.
+        """
+        if isinstance(self.allow, str) or not isinstance(self.allow, tuple):
+            raise TypeError(
+                "ModelPolicy.allow must be a tuple of regex strings, not "
+                f"{type(self.allow).__name__} (a bare string would be matched "
+                "character by character)"
+            )
+        for pattern in self.allow:
+            if not isinstance(pattern, str):
+                raise TypeError(
+                    f"ModelPolicy.allow patterns must be strings, not {type(pattern).__name__}")
+        if self.require_provider is not None and not isinstance(self.require_provider, str):
+            raise TypeError("ModelPolicy.require_provider must be a string or None")
+        if not isinstance(self.reason, str):
+            raise TypeError("ModelPolicy.reason must be a string")
+        object.__setattr__(
+            self, "_patterns", tuple(re.compile(pattern) for pattern in self.allow))
 
 
 # The permissive default is a real ModelPolicy, not a bypass branch, so the
@@ -85,9 +131,22 @@ class PolicyRefused(RuntimeError):
 
 
 def _permits(policy: ModelPolicy, model: str, provider: str) -> bool:
-    if policy.require_provider is not None and provider != policy.require_provider:
+    """Whether one policy permits one call. Any surprise here means refuse.
+
+    Issue #41 H2: matching used to call ``re.search`` on an unvalidated pattern,
+    so a malformed regex escaped as ``re.error`` -- not a ``PolicyRefused`` --
+    and widened nothing but broke every surface that asks. Patterns are now
+    compiled at construction, and the blanket ``except BaseException`` is the
+    belt to that braces: a discovery or matching fault must never be readable
+    as "permitted".
+    """
+    try:
+        if policy.require_provider is not None and provider != policy.require_provider:
+            return False
+        return any(pattern.search(model) for pattern in policy._patterns)
+    except BaseException:
+        LOG.exception("model policy %s failed while matching; refusing the call", policy.name)
         return False
-    return any(re.search(pattern, model) for pattern in policy.allow)
 
 
 def _load_failed(name: str, exc: BaseException) -> ModelPolicy:
@@ -113,6 +172,134 @@ def _load_failed(name: str, exc: BaseException) -> ModelPolicy:
     )
 
 
+def _declares_policy_unparseably(distribution: Any) -> bool:
+    """Whether ``entry_points.txt`` mentions our group but parsed to nothing.
+
+    Issue #41 C1's other route: a corrupt or truncated ``entry_points.txt`` (a
+    missing ``]``, say) makes ``importlib`` yield zero entry points *silently*,
+    so a restrictive policy that is installed and declared reads exactly like no
+    policy at all. A discovery failure must never widen the permitted set.
+    """
+    try:
+        raw = distribution.read_text("entry_points.txt") or ""
+    except Exception:
+        return False
+    return POLICY_ENTRY_POINT_GROUP in raw
+
+
+class _CorruptDeclaration:
+    """Stand-in entry point whose ``load()`` always fails, so it always refuses.
+
+    Reuses the ``_load_failed`` path rather than inventing a second refusal
+    shape: from ``resolve()``'s perspective a declaration it cannot parse and a
+    policy it cannot import are the same fact.
+    """
+
+    value = "(unparseable entry_points.txt)"
+
+    def __init__(self, distribution_name: str):
+        self.name = f"{distribution_name}(unparseable-declaration)"
+
+    def load(self) -> ModelPolicy:
+        raise ValueError("entry_points.txt names huginn.policy but could not be parsed")
+
+
+def _distribution_entry_points() -> tuple[list[Any], tuple[str, ...]]:
+    """Policy entry points found by walking every installed distribution.
+
+    Issue #41 C1: ``importlib.metadata.entry_points()`` dedupes distributions
+    by *normalised name, first on sys.path wins*. A directory earlier on
+    ``sys.path`` containing nothing but ``mypol-9.9.dist-info/METADATA`` -- same
+    name, no ``entry_points.txt`` -- therefore masks the real ``mypol`` dist,
+    and the group query returns zero entry points. ``resolve()`` cannot
+    distinguish that from "no policy is installed", so it fell back to the
+    permissive ``DEFAULT_POLICY`` and the excluded model became usable again.
+    ``huginn serve`` runs with CWD on ``sys.path[0]`` and ``agent_install``'s
+    ``WorkingDirectory`` is ``REPO_ROOT``, so a writable checkout is enough.
+
+    Walking ``distributions()`` ourselves sees every dist-info on the path,
+    shadowed or not, and finds the policy the masking dist hides.
+
+    Returns the entry points plus the normalised distribution names that
+    contributed a policy more than once -- the signal that something is
+    shadowing, reported by ``resolve()`` and ``huginn doctor`` rather than left
+    for a reviewer to notice.
+    """
+    found: list[Any] = []
+    seen: list[str] = []          # normalised name of every dist-info walked
+    contributors: set[str] = set()  # those that declare a policy
+    for distribution in metadata.distributions():
+        try:
+            raw = distribution.metadata["Name"] or ""
+            name = _normalize(raw) if raw else "(unnamed)"
+            seen.append(name)
+            # A per-dist failure must not abort the walk: one unreadable or
+            # corrupt dist-info that stopped discovery would silently widen the
+            # permitted set, which is the same C1 failure by another route.
+            group = [point for point in distribution.entry_points
+                     if point.group == POLICY_ENTRY_POINT_GROUP]
+            if not group and _declares_policy_unparseably(distribution):
+                # The file names our group but importlib could not parse it, so
+                # it yielded nothing -- indistinguishable from "no policy" to
+                # every caller. Synthesise a refusing entry point rather than
+                # let a corrupt declaration read as permissive (issue #41 C1).
+                found.append(_CorruptDeclaration(name))
+                contributors.add(name)
+                continue
+        except Exception:
+            LOG.warning("could not read entry points for an installed distribution; "
+                        "a model policy it declares would be invisible")
+            continue
+        if not group:
+            continue
+        found.extend(group)
+        contributors.add(name)
+    # A shadowing dist is by construction the one *without* entry_points.txt,
+    # so the duplicate has to be spotted among all names walked, not only among
+    # those that contributed -- otherwise the masking dist is invisible here too.
+    duplicates = tuple(sorted(
+        name for name in contributors if seen.count(name) > 1))
+    return found, duplicates
+
+
+def shadowed_policy_distributions() -> tuple[str, ...]:
+    """Normalised names of distributions contributing a policy more than once.
+
+    Non-empty means two dist-info directories claim the same distribution name
+    and at least one declares a policy -- the shape of the C1 shadowing attack.
+    Surfaced by ``huginn doctor`` because doctor's output is the evidence that
+    an exclusion is in force.
+    """
+    return _distribution_entry_points()[1]
+
+
+def _policy_entry_points() -> list[Any]:
+    """Every policy entry point either discovery mechanism can see.
+
+    A *union* on purpose. Policies intersect (see the module docstring), so an
+    extra discovery source can only ever add a policy, and adding a policy can
+    only narrow what is permitted. Missing one, by contrast, widens it -- which
+    is the entire C1 bug. Deduplicated by (name, value) so a policy both
+    mechanisms see is not counted twice.
+    """
+    found, duplicates = _distribution_entry_points()
+    if duplicates:
+        LOG.error("model policy distributions are shadowed: %s appear more than once on "
+                  "sys.path; the entry-point group query cannot see all of them",
+                  ", ".join(duplicates))
+    try:
+        found.extend(entry_points(group=POLICY_ENTRY_POINT_GROUP))
+    except Exception:
+        # Even total failure of the group query must not widen anything -- the
+        # distributions() walk above stands on its own.
+        LOG.warning("entry_points(group=%s) failed; relying on the distribution walk",
+                    POLICY_ENTRY_POINT_GROUP)
+    unique: dict[Any, Any] = {}
+    for point in found:
+        unique.setdefault((getattr(point, "name", None), getattr(point, "value", None)), point)
+    return sorted(unique.values(), key=lambda item: str(getattr(item, "name", "")))
+
+
 def resolve() -> tuple[ModelPolicy, ...]:
     """Every policy declared by an installed distribution, or the default.
 
@@ -122,11 +309,15 @@ def resolve() -> tuple[ModelPolicy, ...]:
     unable to express a restriction.
     """
     policies: list[ModelPolicy] = []
-    for entry_point in sorted(entry_points(group=POLICY_ENTRY_POINT_GROUP),
-                              key=lambda item: item.name):
+    for entry_point in _policy_entry_points():
         try:
             candidate = entry_point.load()
-        except Exception as exc:
+        # BaseException, not Exception -- issue #41 M2: a policy module raising
+        # SystemExit at import (a stray `sys.exit()` in a config check, say)
+        # otherwise propagates out of every policy function and out of the
+        # caller, taking down whatever asked. A policy that cannot load must
+        # refuse, never escape.
+        except BaseException as exc:
             LOG.error("model policy %s failed to load (%s); refusing every call",
                       entry_point.name, type(exc).__name__)
             policies.append(_load_failed(entry_point.name, exc))
@@ -207,4 +398,5 @@ __all__ = [
     "provider_refusal",
     "refusal",
     "resolve",
+    "shadowed_policy_distributions",
 ]

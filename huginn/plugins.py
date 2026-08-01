@@ -35,6 +35,12 @@ API_VERSION = 1
 # accepted range is a one-line change here; a genuinely breaking change raises
 # MIN_API_VERSION and then a stale plugin is refused loudly, on purpose.
 MIN_API_VERSION = 1
+# Most a plugin may declare for min_api/max_api/api_version -- issue #41 M1.
+# Deliberately generous rather than API_VERSION: declaring the next few
+# versions is issue #38's entire point, so clamping to API_VERSION would both
+# refuse the supported case and discard what api_range publishes. This only
+# rules out a number no plugin author could mean, like max_api=10**9.
+MAX_DECLARABLE_API = API_VERSION + 100
 ENTRY_POINT_GROUP = "huginn.plugins"
 _NAME_RE = re.compile(r"^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$")
 _EXTERNAL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$")
@@ -211,9 +217,50 @@ def _api_ranges_overlap(plugin: PluginSpec) -> bool:
     return low <= API_VERSION and high >= MIN_API_VERSION
 
 
+def _validate_api_int(label: str, value: Any) -> int:
+    """One API version number, or ``PluginApiMismatch`` -- issue #41 M1.
+
+    The overlap arithmetic itself is correct; what was missing was any
+    type/bound check on its inputs. ``min_api=-999``, ``max_api=10**9`` and
+    ``min_api=True`` (``bool`` is an ``int`` subclass, so it silently means 1)
+    all loaded, and a non-int ``api_version`` raised a bare ``TypeError`` --
+    so ``doctor`` and ``GET /api/plugins`` labelled a version disagreement as
+    an indistinguishable load failure with ``api_mismatch`` False, which is
+    exactly the mislabelling issue #38 exists to prevent.
+
+    ``PluginApiMismatch`` rather than ``ValueError`` for the same reason: this
+    *is* core and the plugin disagreeing about the contract, so ``doctor`` and
+    ``GET /api/plugins`` must be able to say so.
+
+    ``bool`` is rejected explicitly: it is an ``int`` subclass, so ``min_api=True``
+    silently meant 1 -- accidentally valid, and never what anyone typed on purpose.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise PluginApiMismatch(
+            f"{label} must be an integer, not {type(value).__name__}: {value!r}")
+    if value < 0:
+        raise PluginApiMismatch(f"{label} must not be negative: {value}")
+    if value > MAX_DECLARABLE_API:
+        # A plugin cannot know an API it has never seen. Declaring the next few
+        # versions is issue #38's whole point and stays supported; max_api=10**9
+        # is different in kind -- it asserts forward compatibility with every
+        # contract that will ever exist, so a genuinely breaking change could
+        # never disable the plugin, which is what raising MIN_API_VERSION is for.
+        raise PluginApiMismatch(
+            f"{label} is {value}, beyond any API this Huginn could describe "
+            f"(core is at {API_VERSION}, and {MAX_DECLARABLE_API} is the most a "
+            "plugin may claim); declare the versions you actually support"
+        )
+    return value
+
+
 def _validate_plugin(plugin: Any) -> PluginSpec:
     if not isinstance(plugin, PluginSpec):
         raise TypeError("entry point must return huginn.plugins.PluginSpec")
+    _validate_api_int("api_version", plugin.api_version)
+    for label, value in (("min_api", plugin.min_api), ("max_api", plugin.max_api)):
+        if value is not None:
+            _validate_api_int(label, value)
     low, high = plugin.api_range
     if low > high:
         raise PluginApiMismatch(

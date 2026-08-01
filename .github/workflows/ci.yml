@@ -45,13 +45,17 @@ jobs:
       - name: Test
         run: uv run pytest -q
 
-      - name: Build wheel
-        run: uv build
+      # --all-packages: the workspace has two distributables since issue #42
+      # (huginn + the shared corvidae package), and huginn's wheel now depends on
+      # corvidae's, so both must be built for the smoke test below to resolve.
+      - name: Build wheels
+        run: uv build --all-packages
 
       - name: Install wheel into a clean venv and smoke-test
         run: |
           python3 -m venv /tmp/huginn-smoke-venv
           /tmp/huginn-smoke-venv/bin/pip install --quiet dist/*.whl
+          /tmp/huginn-smoke-venv/bin/python -c "import corvidae; print('corvidae ok')"
           /tmp/huginn-smoke-venv/bin/python -c "import huginn; print('import ok')"
           /tmp/huginn-smoke-venv/bin/huginn --help
           /tmp/huginn-smoke-venv/bin/huginn status
@@ -84,8 +88,8 @@ jobs:
       - name: Test
         run: uv run pytest -q
 
-      - name: Build wheel
-        run: uv build
+      - name: Build wheels
+        run: uv build --all-packages
 
       - name: Build Windows tray
         run: dotnet build windows/Huginn.Tray/Huginn.Tray.csproj --configuration Release

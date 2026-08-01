@@ -12,7 +12,7 @@ import uuid
 import webbrowser
 from pathlib import Path
 
-from . import config
+from . import config, raven
 from .bus import Bus
 from .diagnostics import Diagnostics
 from .model import Event, Session, SessionState
@@ -435,6 +435,15 @@ class Daemon:
             for plugin, source in self.plugins.sources()
         )
         self._write_daemon_state(port)
+        # Published after the bind above, never before: a descriptor naming a
+        # port that is not yet listening makes the menu bar report a healthy
+        # daemon as unreachable during startup (issue #40). Best-effort -- an
+        # unwritable shared directory must not stop the daemon serving.
+        try:
+            raven.publish(port)
+            self.diagnostics.ok("raven_descriptor")
+        except OSError as e:
+            self.diagnostics.error("raven_descriptor", e)
         if open_browser:
             # The token rides in a URL fragment (#t=...), which browsers
             # never send over the network -- see issue #23. app.js reads it
@@ -457,6 +466,12 @@ class Daemon:
                 self.active_chat.cancel()
             with contextlib.suppress(Exception):
                 self._write_snapshot()   # best-effort: survive a graceful restart
+            # A stopped raven should have no descriptor rather than a stale one.
+            # Ownership-checked inside withdraw(), like the daemon.json teardown
+            # below, so a daemon that lost the port race cannot delete the
+            # winner's file (issue #40).
+            with contextlib.suppress(Exception):
+                raven.withdraw()
             with contextlib.suppress(Exception):
                 state_path = config.STATE_DIR / "daemon.json"
                 state = json.loads(state_path.read_text())

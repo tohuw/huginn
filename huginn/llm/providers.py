@@ -289,7 +289,40 @@ def all_providers(registry=None):
 
 
 def get_provider(name: str, registry=None):
-    return all_providers(registry).get(name, BUILTIN_PROVIDERS["claude"])
+    """The provider registered under ``name``, or None when nothing is.
+
+    Returns None rather than falling back, and callers must refuse -- issue #41
+    C2. This used to return ``BUILTIN_PROVIDERS["claude"]`` for *any* unknown
+    name, so ``policy.check(model, "bedrock")`` validated the string "bedrock"
+    against a ``require_provider="bedrock"`` policy, passed, and then dispatched
+    to ``ClaudeCLI``. An absent or API-mismatched plugin therefore meant the
+    gate approved one provider while a different one ran -- reachable by
+    accident, and more likely now that #38 ships API ranges and a mismatched
+    plugin stays installed while contributing nothing.
+
+    The registered object's own ``name`` must agree with the key it was looked
+    up under, so the gate and the dispatch cannot disagree even if some future
+    registry path keys a provider under the wrong name.
+    """
+    selected = all_providers(registry).get(name)
+    if selected is None:
+        return None
+    actual = str(getattr(selected, "name", "") or "")
+    if actual and actual != name:
+        return None
+    return selected
+
+
+def effective_provider_name(provider: object, requested: str) -> str:
+    """The name to gate on: the resolved provider's own, not the caller's string.
+
+    issue #41 C2: the policy verdict has to describe the object that will
+    actually run. ``get_provider`` already refuses a name/object mismatch, so
+    these agree in practice; asking the object keeps it true if that ever
+    changes. Falls back to ``requested`` only for a provider exposing no name
+    at all, which the plugin contract forbids.
+    """
+    return str(getattr(provider, "name", "") or "") or requested
 
 
 def compatible_model(provider: str, model: str, registry=None) -> str:
@@ -298,6 +331,11 @@ def compatible_model(provider: str, model: str, registry=None) -> str:
     if not value:
         return ""
     selected = get_provider(provider, registry)
+    if selected is None:
+        # No installed provider by that name, so no model is compatible with
+        # it. Returning the value unchanged would hand a model to whatever ran
+        # instead -- the C2 substitution this refuses to make.
+        return ""
     plugin_filter = getattr(selected, "compatible_model", None)
     if callable(plugin_filter):
         return str(plugin_filter(value) or "")
@@ -315,6 +353,11 @@ def blurb_model(provider: str, model: str, registry=None) -> str:
     compatibility behavior while preferring Claude's stable ``haiku`` alias.
     """
     selected = get_provider(provider, registry)
+    if selected is None:
+        # issue #41 C2: no silent fallback to Claude's "haiku". A name nothing
+        # is registered under is a configuration fault, and permanent.
+        raise LLMProviderError(
+            f"no installed provider named {provider!r}", retryable=False)
     configured = (model or "").strip()
     resolver = getattr(selected, "resolve_blurb_model", None)
     if callable(resolver):

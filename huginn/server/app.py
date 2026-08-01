@@ -302,6 +302,42 @@ def create_app(daemon: "Daemon") -> FastAPI:
         bus.emit(Event(f"hook.{source}", None, time.time(), "hook", payload))
         return {"ok": True}
 
+    @api.get("/menu")
+    def menu():
+        """Declarative menu for the shared status menu bar -- issue #40.
+
+        Behind the same require_local_origin + require_token gate as every other
+        /api route, on purpose: the menu bar authenticates by reading Huginn's
+        own token from the token_path its descriptor advertises, so there is no
+        reason for this route to be the one exception. See huginn/raven.py for
+        the contract and why the text is sanitised on this side too."""
+        from ..raven import build_menu
+        return build_menu(reducer.sessions.values())
+
+    @api.post("/menu/action")
+    async def menu_action(request: Request):
+        """Act on an action id this daemon itself published in GET /api/menu.
+
+        The host does not interpret the id -- it hands back exactly what we sent
+        -- but it still arrives over HTTP, so raven.perform_action matches it
+        against what Huginn actually issues rather than parsing it for meaning.
+        An unknown or stale id is refused with ok=false and HTTP 200: it is a
+        request that could not be honoured, not a malformed one, and the host
+        renders the menu again on its next poll regardless."""
+        from ..raven import MAX_ACTION_BODY, perform_action
+        # Bounded before parsing: a menu click carries an id of at most a
+        # hundred-odd bytes, so anything larger is not one of ours.
+        raw = await request.body()
+        if len(raw) > MAX_ACTION_BODY:
+            raise HTTPException(413, "request body is too large")
+        try:
+            body = json.loads(raw or b"{}")
+        except ValueError as exc:
+            raise HTTPException(400, "body is not JSON") from exc
+        if not isinstance(body, dict):
+            raise HTTPException(400, "expected an object with a string id")
+        return perform_action(daemon, body.get("id"))
+
     @api.get("/hook-stats")
     def hook_stats():
         """issue #2: which hook events actually fire, per source. Persists

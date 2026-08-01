@@ -404,6 +404,85 @@ class AuthTests(unittest.TestCase):
         self.assertEqual(body["sources"]["blurb"]["error_count"], 1)
         self.assertNotIn(secret, r.text)
 
+    def test_menu_requires_token(self):
+        # issue #40: the menu bar authenticates by reading Huginn's own token
+        # from the token_path its descriptor advertises, so this route stays
+        # behind the same gate as every other /api route.
+        c = make_client()
+        self.assertEqual(c.get("/api/menu").status_code, 401)
+        self.assertEqual(c.post("/api/menu/action", json={"id": "open-console"}).status_code, 401)
+
+    def test_menu_rejects_cross_origin_and_foreign_host(self):
+        c = make_client()
+        headers = {"X-Huginn-Token": "secret-token"}
+        self.assertEqual(
+            c.get("/api/menu", headers={**headers, "Origin": "http://evil.example"}).status_code,
+            403)
+        foreign = TestClient(c.app, base_url="http://attacker.example")
+        self.assertEqual(foreign.get("/api/menu", headers=headers).status_code, 400)
+
+    def test_menu_returns_the_declarative_shape(self):
+        c, daemon = make_client_with_daemon()
+        session = Session(
+            key="claude:1", source="claude", session_id="s1", cwd="/tmp/project",
+            name="alpha", state=SessionState.WAITING_PERMISSION, state_since=1.0)
+        daemon.reducer.sessions[session.key] = session
+
+        r = c.get("/api/menu", headers={"X-Huginn-Token": "secret-token"})
+
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual(body["api_version"], 1)
+        self.assertEqual(body["title"], "Huginn")
+        self.assertEqual(body["badge"], 1)
+        ids = [i.get("id") for s in body["sections"] for i in s["items"]]
+        self.assertIn("focus:claude:1", ids)
+
+    def test_menu_action_forwards_a_published_id(self):
+        c, daemon = make_client_with_daemon()
+        session = Session(
+            key="claude:1", source="claude", session_id="s1", cwd="/tmp/project",
+            name="alpha", state=SessionState.WAITING_INPUT, state_since=1.0)
+        daemon.reducer.sessions[session.key] = session
+
+        with patch("huginn.focus.focus_session", return_value={"ok": True, "target": "iTerm2"}):
+            r = c.post("/api/menu/action", json={"id": "focus:claude:1"},
+                       headers={"X-Huginn-Token": "secret-token"})
+
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.json()["ok"])
+
+    def test_menu_action_refuses_an_unknown_id_without_failing_the_request(self):
+        # A stale id (a session that ended between the menu build and the click)
+        # is a request that could not be honoured, not a malformed one -- the host
+        # rebuilds the menu on its next poll either way.
+        c = make_client()
+        r = c.post("/api/menu/action", json={"id": "reboot-the-planet"},
+                   headers={"X-Huginn-Token": "secret-token"})
+
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json(), {"ok": False, "error": "unknown action"})
+
+    def test_menu_action_rejects_a_malformed_body(self):
+        c = make_client()
+        headers = {"X-Huginn-Token": "secret-token"}
+        self.assertEqual(
+            c.post("/api/menu/action", content=b"{not json", headers=headers).status_code, 400)
+        self.assertEqual(
+            c.post("/api/menu/action", json=["focus:claude:1"], headers=headers).status_code, 400)
+        # No id at all is refused as an action, not as a bad request.
+        r = c.post("/api/menu/action", json={}, headers=headers)
+        self.assertEqual(r.status_code, 200)
+        self.assertFalse(r.json()["ok"])
+
+    def test_menu_action_bounds_the_body(self):
+        c = make_client()
+        r = c.post("/api/menu/action", content=b'{"id":"' + b"x" * 20000 + b'"}',
+                   headers={"X-Huginn-Token": "secret-token",
+                            "Content-Type": "application/json"})
+
+        self.assertEqual(r.status_code, 413)
+
     def test_chat_rejection_uses_error_status(self):
         c = make_client()
         with patch("huginn.llm.chat.start_chat", new=AsyncMock(

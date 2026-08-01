@@ -7,6 +7,9 @@ are all covered on the macOS dev machine without requiring those OSes.
 from __future__ import annotations
 
 import io
+import os
+import plistlib
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -231,6 +234,212 @@ class SystemdUserAgentTests(unittest.TestCase):
         with patch.object(agent_install.sys, "platform", "darwin"):
             with self.assertRaisesRegex(RuntimeError, "only available on Linux"):
                 agent_install._systemctl("daemon-reload")
+
+
+class ConfigInjectionTests(unittest.TestCase):
+    """issue #41 C3: ``_PLIST_TEMPLATE``/``_UNIT_TEMPLATE`` were ``str.format``
+    into structured config with zero escaping, and ``{cwd}`` is ``REPO_ROOT`` --
+    a filesystem path -- while ``{python}`` is ``sys.executable``. A directory
+    name containing XML (macOS) or a newline (Linux) injected arbitrary
+    directives into *persistent auto-start config* that ``KeepAlive`` then
+    relaunches forever. A payload erroring out is not a mitigation: the ones
+    below parsed cleanly before the fix."""
+
+    # Closes WorkingDirectory's <string>, adds a whole key/value pair, reopens a
+    # string so the document stays balanced. Verified to parse cleanly and yield
+    # a live DYLD_INSERT_LIBRARIES against the pre-fix template.
+    XML_PAYLOAD = ("/tmp/x</string><key>EnvironmentVariables</key><dict>"
+                   "<key>DYLD_INSERT_LIBRARIES</key><string>/tmp/evil.dylib</string>"
+                   "</dict><key>Ignored</key><string>y")
+    ARGV_PAYLOAD = ('/tmp/v</string><string>-c</string>'
+                    '<string>__import__("os").system("id")</string><string>/bin/true')
+
+    def test_an_xml_payload_in_repo_root_injects_no_plist_key(self):
+        with patch.object(agent_install, "REPO_ROOT", self.XML_PAYLOAD):
+            parsed = plistlib.loads(agent_install._plist_xml().encode())
+
+        self.assertEqual(sorted(parsed), [
+            "KeepAlive", "Label", "ProgramArguments", "RunAtLoad",
+            "StandardErrorPath", "StandardOutPath", "WorkingDirectory",
+        ])
+        self.assertNotIn("EnvironmentVariables", parsed)
+        # The payload survives as inert data in the one value it belongs to.
+        self.assertEqual(parsed["WorkingDirectory"], self.XML_PAYLOAD)
+
+    def test_an_xml_payload_in_sys_executable_leaves_program_arguments_intact(self):
+        with patch.object(agent_install.sys, "executable", self.ARGV_PAYLOAD):
+            parsed = plistlib.loads(agent_install._plist_xml().encode())
+
+        # Before the fix this was 8 arguments including "-c" and a system() call.
+        self.assertEqual(parsed["ProgramArguments"],
+                         [self.ARGV_PAYLOAD, "-m", "huginn.cli", "serve", "--no-open"])
+
+    def test_the_plist_is_still_the_agent_it_was(self):
+        parsed = plistlib.loads(agent_install._plist_xml().encode())
+
+        self.assertIs(parsed["KeepAlive"], True)
+        self.assertIs(parsed["RunAtLoad"], True)
+        self.assertEqual(parsed["Label"], agent_install.LABEL)
+        self.assertEqual(parsed["ProgramArguments"][1:],
+                         ["-m", "huginn.cli", "serve", "--no-open"])
+
+    def test_a_newline_in_repo_root_injects_no_systemd_directive(self):
+        payload = '/tmp/x\nExecStartPre=/bin/sh -c "id > /tmp/PWNED"'
+
+        with patch.object(agent_install, "REPO_ROOT", payload):
+            with self.assertRaisesRegex(ValueError, "newline"):
+                agent_install._unit_text()
+
+    def test_a_carriage_return_is_refused_too(self):
+        with patch.object(agent_install, "REPO_ROOT", "/tmp/x\rExecStartPre=/bin/false"):
+            with self.assertRaisesRegex(ValueError, "carriage return"):
+                agent_install._unit_text()
+
+    def test_a_percent_specifier_is_refused_rather_than_expanded(self):
+        # systemd expands %h/%t at load time, so a path containing one would
+        # name something other than the checkout meant.
+        with patch.object(agent_install, "REPO_ROOT", "/home/%h/huginn"):
+            with self.assertRaisesRegex(ValueError, "specifier"):
+                agent_install._unit_text()
+
+    def test_a_payload_in_sys_executable_is_refused_for_systemd_too(self):
+        with patch.object(agent_install.sys, "executable", "/tmp/p\nExecStartPre=/bin/false"):
+            with self.assertRaisesRegex(ValueError, "Python executable"):
+                agent_install._unit_text()
+
+    def test_unit_values_are_quoted_per_systemd_syntax(self):
+        with patch.object(agent_install, "REPO_ROOT", "/tmp/dir with spaces"):
+            unit = agent_install._unit_text()
+
+        self.assertIn('WorkingDirectory="/tmp/dir with spaces"', unit)
+        # Still exactly one ExecStart, and still the same command.
+        self.assertEqual(len([line for line in unit.splitlines()
+                             if line.startswith("ExecStart")]), 1)
+        self.assertIn("-m huginn.cli serve --no-open", unit)
+
+    def test_a_quote_in_a_path_cannot_end_the_quoted_value(self):
+        with patch.object(agent_install, "REPO_ROOT", '/tmp/a"b'):
+            unit = agent_install._unit_text()
+
+        self.assertIn(r'WorkingDirectory="/tmp/a\"b"', unit)
+
+
+class WriteWithBackupHardeningTests(unittest.TestCase):
+    """issue #41 H3: every one of these was verified against the previous
+    version of ``_write_with_backup``."""
+
+    def test_a_symlinked_target_is_refused_rather_than_followed(self):
+        # Verified before the fix: a 0600 secret was copied through the link
+        # into a 0644 .huginn-bak.<ts> file, and os.replace would then publish
+        # this content wherever the link pointed.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            secret = root / "secret"
+            secret.write_text("sk-ant-PLANTEDSECRET")
+            os.chmod(secret, 0o600)
+            (root / "huginn.service").symlink_to(secret)
+
+            with self.assertRaisesRegex(ValueError, "symlink"):
+                agent_install._write_with_backup(root / "huginn.service", "[Service]\n")
+
+            self.assertEqual(secret.read_text(), "sk-ant-PLANTEDSECRET")
+            self.assertEqual(list(root.glob("*huginn-bak*")), [])
+
+    def test_a_pre_planted_tmp_symlink_is_not_written_through(self):
+        # Verified before the fix: the predictable "<name>.tmp" was written
+        # *through* the planted link, and os.replace then made the unit path
+        # itself an attacker-owned symlink.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            victim = root / "victim"
+            victim.write_text("untouched")
+            (root / "huginn.service.tmp").symlink_to(victim)
+
+            agent_install._write_with_backup(root / "huginn.service", "[Service]\nnew\n")
+
+            self.assertEqual(victim.read_text(), "untouched")
+            unit = root / "huginn.service"
+            self.assertFalse(unit.is_symlink())
+            self.assertEqual(unit.read_text(), "[Service]\nnew\n")
+
+    def test_the_temp_name_is_not_predictable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            names = []
+            real_mkstemp = agent_install.tempfile.mkstemp
+
+            def record(**kwargs):
+                fd, name = real_mkstemp(**kwargs)
+                names.append(Path(name).name)
+                return fd, name
+
+            with patch.object(agent_install.tempfile, "mkstemp", side_effect=record):
+                for index in range(3):
+                    agent_install._write_with_backup(root / f"unit{index}", "x")
+
+            self.assertEqual(len(set(names)), 3, names)
+
+    def test_a_fresh_config_file_is_not_world_readable(self):
+        # Verified before the fix: 0644 at the default umask, unlike this
+        # codebase's own config.secure_dir/write_token/_write_snapshot.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "huginn.service"
+            agent_install._write_with_backup(path, "[Service]\n")
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+
+    def test_a_backup_is_0600_before_any_content_lands(self):
+        # Verified before the fix: backing up a 0600 file produced a 0644 copy.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "huginn.service"
+            path.write_text("sk-ant-PLANTEDSECRET")
+            os.chmod(path, 0o600)
+
+            agent_install._write_with_backup(path, "[Service]\nnew\n")
+
+            backups = list(Path(tmp).glob("huginn.service.huginn-bak.*"))
+            self.assertEqual(len(backups), 1)
+            self.assertEqual(stat.S_IMODE(backups[0].stat().st_mode), 0o600)
+            self.assertEqual(backups[0].read_text(), "sk-ant-PLANTEDSECRET")
+
+    def test_an_existing_backup_name_is_not_silently_overwritten(self):
+        # O_EXCL: a pre-planted backup name is an error, not a target.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "huginn.service"
+            path.write_text("old")
+            with patch.object(agent_install.time, "time", return_value=1000):
+                (Path(tmp) / "huginn.service.huginn-bak.1000").write_text("planted")
+                with self.assertRaises(FileExistsError):
+                    agent_install._write_with_backup(path, "new")
+            self.assertEqual(path.read_text(), "old")
+
+    def test_a_failed_write_leaves_no_temp_file_behind(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "huginn.service"
+            with patch.object(agent_install.os, "replace",
+                              side_effect=OSError("read-only filesystem")):
+                with self.assertRaises(OSError):
+                    agent_install._write_with_backup(path, "x")
+            self.assertEqual(list(Path(tmp).iterdir()), [])
+
+    def test_uninstall_refuses_to_act_on_a_symlinked_unit_path(self):
+        # UNIT_PATH follows $XDG_CONFIG_HOME. Path.unlink removes the link
+        # rather than its target, so this was not arbitrary deletion -- but a
+        # symlink here means the installed agent was not the file we think, and
+        # that is worth refusing loudly rather than quietly tidying away.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            elsewhere = root / "elsewhere"
+            elsewhere.write_text("not ours")
+            unit = root / "huginn.service"
+            unit.symlink_to(elsewhere)
+
+            with (patch.object(agent_install, "UNIT_PATH", unit),
+                  patch.object(agent_install, "_systemctl", return_value=_ok())):
+                with self.assertRaisesRegex(ValueError, "symlink"):
+                    SystemdUserAgent().uninstall()
+
+            self.assertTrue(elsewhere.exists())
+            self.assertTrue(unit.is_symlink())
 
 
 class _FakeKey:

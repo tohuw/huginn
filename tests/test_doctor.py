@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from huginn import config, lag
+from huginn import config, doctor, lag
 from huginn.doctor import (
     TESTED_CLAUDE,
     TESTED_CODEX,
@@ -23,6 +23,7 @@ from huginn.doctor import (
 from huginn.plugins import (
     API_VERSION,
     MIN_API_VERSION,
+    PluginLoadError,
     PluginRegistry,
     PluginSpec,
     discover_plugins,
@@ -160,6 +161,71 @@ class ModelPolicyReportTests(unittest.TestCase):
 
         self.assertTrue(ok)
         self.assertIn("bedrock-only", out.getvalue())
+
+    def test_shadowed_policy_distributions_are_reported_as_a_failure(self):
+        # issue #41 C1: resolution now sees through a metadata-only shadow, but
+        # the name collision itself is the signal an exclusion is under attack.
+        with patch("huginn.policy.shadowed_policy_distributions", return_value=("mypol",)), \
+             patch("huginn.policy.entry_points", return_value=[]), _capture_stdout() as out:
+            ok = _report_model_policy(config.Config({}))
+
+        self.assertFalse(ok)
+        self.assertIn("shadowed", out.getvalue())
+        self.assertIn("mypol", out.getvalue())
+
+
+class DoctorOutputSanitizationTests(unittest.TestCase):
+    """issue #41 M4: doctor emits its own ANSI codes and printed policy/plugin
+    labels verbatim, so an embedded ``\\x1b[2K\\r`` could erase and rewrite the
+    line already printed -- enough to forge a green "installed policies — none
+    (every model permitted)". Sources are trusted-ish, so this is low severity,
+    but doctor's output is the evidence issue #41 relies on."""
+
+    FORGERY = "\x1b[2K\rharmless \033[32m✓\033[0m installed policies — none"
+
+    def test_control_characters_are_stripped_from_labels_and_details(self):
+        self.assertNotIn("\x1b", doctor.safe(self.FORGERY))
+        self.assertNotIn("\r", doctor.safe(self.FORGERY))
+        self.assertNotIn("\n", doctor.safe("line one\nline two"))
+        self.assertNotIn("\x7f", doctor.safe("a\x7fb"))
+
+    def test_long_labels_are_truncated(self):
+        self.assertLessEqual(len(doctor.safe("x" * 5000)), doctor.MAX_LABEL_CHARS + 1)
+
+    def test_ordinary_text_including_unicode_is_left_intact(self):
+        self.assertEqual(doctor.safe("us.anthropic.claude-sonnet-5 — permitted"),
+                         "us.anthropic.claude-sonnet-5 — permitted")
+
+    def test_a_policy_cannot_forge_a_line_in_the_report(self):
+        policy = ModelPolicy(name=self.FORGERY, allow=("^ok$",), reason=self.FORGERY)
+        points = [_EntryPoint("forger", policy)]
+
+        with patch("huginn.policy.entry_points", return_value=points), _capture_stdout() as out:
+            _report_model_policy(config.Config({"llm": {"provider": "claude"}}))
+
+        # No escape sequence beyond doctor's own colour codes for its marks.
+        self.assertNotIn("\x1b[2K", out.getvalue())
+        self.assertNotIn("\r", out.getvalue())
+
+    def test_a_plugin_error_cannot_forge_a_line_in_the_report(self):
+        registry = PluginRegistry(errors=(PluginLoadError(
+            entry_point=self.FORGERY, error_class=self.FORGERY, detail=self.FORGERY),))
+
+        with _capture_stdout() as out:
+            _report_plugins(registry)
+
+        self.assertNotIn("\x1b[2K", out.getvalue())
+        self.assertNotIn("\r", out.getvalue())
+
+    def test_a_plugin_supplied_source_name_cannot_forge_a_lag_line(self):
+        # entry.source reaches the report from a plugin or a restored snapshot.
+        with _capture_stdout() as out:
+            _report_data_lag(
+                [{"key": "plugin:a:1", "source": self.FORGERY, "last_activity": 100.0}],
+                config.Config({}))
+
+        self.assertNotIn("\x1b[2K", out.getvalue())
+        self.assertNotIn("\r", out.getvalue())
 class _PluginSource:
     """Plugin source that opts into artifact-time reporting -- issue #39."""
 
@@ -287,6 +353,67 @@ class DataLagTests(unittest.TestCase):
         for value in ("later", None, True, object()):
             probes = lag.plugin_probes(_registry(_PluginSource(mtime=value)))
             self.assertIsNone(probes["workers"](), msg=value)
+
+
+class NonFiniteLagTests(unittest.TestCase):
+    """issue #41 M3: ``isinstance(x, (int, float))`` accepted nan/inf/-inf and
+    absurd magnitudes. ``nan`` crashed doctor with ValueError and ``inf`` with
+    OverflowError -- doctor is the tool you run *because* something is already
+    wrong -- while ``-inf`` reported ``stale=False``, silently suppressing the
+    staleness issue #39 exists to surface. ``1e300`` rendered a ~300-digit
+    integer into the report."""
+
+    def _probe(self, value):
+        return lag.plugin_probes(_registry(_PluginSource(mtime=value)))["workers"]
+
+    def test_every_non_finite_probe_value_reads_as_unknown(self):
+        for value in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(value=value):
+                self.assertIsNone(self._probe(value)())
+
+    def test_an_absurd_magnitude_reads_as_unknown(self):
+        # Not merely cosmetic: 1e300 also passed stale() and produced a
+        # ~300-digit "seconds ago" figure.
+        self.assertIsNone(self._probe(1e300)())
+        self.assertIsNone(self._probe(-1.0)())
+
+    def test_doctor_survives_a_non_finite_probe_instead_of_crashing(self):
+        # The regression that matters: the whole report must still print.
+        for value in (float("nan"), float("inf"), float("-inf"), 1e300):
+            with self.subTest(value=value):
+                probes = {"workers": self._probe(value)}
+                entries = lag.collect({"workers": 100.0}, probes)
+                self.assertEqual(entries[0].detail, "no live artifacts")
+                self.assertFalse(entries[0].stale(0))
+                lag.describe(entries[0], now=200.0)   # must not raise
+
+    def test_negative_infinity_does_not_suppress_staleness(self):
+        # The worst of the three: -inf made lag_s() clamp to 0.0 and report a
+        # healthy source, which is the exact failure #39 exists to prevent.
+        entry = lag.collect({"workers": 100.0}, {"workers": self._probe(float("-inf"))})[0]
+        self.assertIsNone(entry.newest_artifact)
+        self.assertIsNone(entry.lag_s())
+
+    def test_a_probe_raising_system_exit_does_not_take_doctor_down(self):
+        # issue #41 M2: _guarded caught Exception, not BaseException, so a probe
+        # calling sys.exit() propagated out and violated this function's own
+        # documented contract that one broken probe must not end the report.
+        def exiting():
+            raise SystemExit("a stray sys.exit in a plugin probe")
+
+        self.assertIsNone(lag._guarded(exiting)())
+        self.assertIsNone(lag._guarded(lambda: (_ for _ in ()).throw(KeyboardInterrupt()))())
+
+    def test_a_non_finite_snapshot_timestamp_is_ignored(self):
+        # A restored snapshot is a file on disk; an inf there breaks the same
+        # arithmetic as one from a probe.
+        processed = lag.newest_processed([
+            {"key": "a:1", "source": "workers", "last_activity": float("inf")},
+            {"key": "a:2", "source": "workers", "last_activity": float("nan")},
+            {"key": "a:3", "source": "workers", "last_activity": 300.0},
+            {"key": "a:4", "source": "other", "last_activity": 1e300},
+        ])
+        self.assertEqual(processed, {"workers": 300.0})
 
     def test_builtin_claude_probe_reads_live_status_files_and_transcripts(self):
         from huginn.model import Session

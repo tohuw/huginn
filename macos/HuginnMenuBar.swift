@@ -121,7 +121,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// the bug hid because a daemon was normally already running.
     ///
     /// 1. A runtime bundled inside the .app: self-contained, needs no checkout.
-    /// 2. A checkout enclosing the .app: true for a build left in `dist/`.
+    /// 2. A checkout enclosing the .app: true for a build left in `dist/`, and
+    ///    searched only a few levels up (see `enclosingCheckoutCommand`).
     /// 3. `daemon.json`, which the daemon now stamps with the interpreter and
     ///    root it is itself running from -- the only source that is known to
     ///    have worked, and the one that follows a moved checkout.
@@ -129,20 +130,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     ///    built this bundle stays put -- hence last among path-bearing sources.
     /// 5. A `huginn` console script in the usual user/Homebrew prefixes. A GUI
     ///    app inherits a minimal PATH, so these are probed by absolute path.
+    ///
+    /// Every candidate outside the bundle must pass `isTrustworthy` first --
+    /// issue #41 M5. `isExecutableFile` is not a security check: a quarantined
+    /// shell script still returns true and still runs.
     private func resolveDaemonCommand() -> DaemonCommand? {
+        // The bundled runtime is preferred and needs no ownership check: it is
+        // inside the (code-signed) .app, which is the trust boundary itself.
         if let bundled = pythonCommand(inRoot: Bundle.main.bundleURL
             .appendingPathComponent("Contents/Resources/runtime")) {
             return bundled
         }
-        var ancestor = Bundle.main.bundleURL.deletingLastPathComponent()
-        while ancestor.path != "/" {
-            if FileManager.default.fileExists(atPath: ancestor
-                .appendingPathComponent("huginn/cli.py").path),
-               let command = pythonCommand(inRoot: ancestor) {
-                return command
-            }
-            ancestor = ancestor.deletingLastPathComponent()
-        }
+        if let enclosing = enclosingCheckoutCommand() { return enclosing }
         if let recorded = recordedDaemonCommand() { return recorded }
         if let buildTime = Bundle.main.infoDictionary?["HuginnRepoPath"] as? String,
            !buildTime.isEmpty,
@@ -153,12 +152,69 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         for script in [home.appendingPathComponent(".local/bin/huginn"),
                        URL(fileURLWithPath: "/opt/homebrew/bin/huginn"),
                        URL(fileURLWithPath: "/usr/local/bin/huginn")]
-            where FileManager.default.isExecutableFile(atPath: script.path) {
+            where FileManager.default.isExecutableFile(atPath: script.path)
+                && isTrustworthy(script) {
             return DaemonCommand(executable: script,
                                  arguments: ["serve", "--no-open"],
                                  workingDirectory: home)
         }
         return nil
+    }
+
+    /// Number of ancestors of the `.app` searched for an enclosing checkout.
+    /// A build left in the repo's own `dist/` is one level up; the previous
+    /// unbounded walk reached `/Users/Shared` and `/` (issue #41 M5).
+    private static let maxAncestorDepth = 3
+
+    /// A checkout enclosing the `.app`, true for a build left in `dist/`.
+    ///
+    /// issue #41 M5: this walked *every* ancestor for `<ancestor>/huginn/cli.py`
+    /// plus a `.venv/bin/python3`, and did so *before* consulting `daemon.json`.
+    /// An app in `~/Downloads` -- or worse `/Users/Shared`, confirmed
+    /// `drwxrwxrwt` -- could therefore be hijacked by anyone able to plant those
+    /// two paths beside it. Bounded to a few levels, and every candidate must be
+    /// owned by this uid and not group/world-writable.
+    private func enclosingCheckoutCommand() -> DaemonCommand? {
+        var ancestor = Bundle.main.bundleURL.deletingLastPathComponent()
+        for _ in 0..<Self.maxAncestorDepth {
+            if ancestor.path == "/" { break }
+            if FileManager.default.fileExists(atPath: ancestor
+                .appendingPathComponent("huginn/cli.py").path),
+               let command = pythonCommand(inRoot: ancestor) {
+                return command
+            }
+            ancestor = ancestor.deletingLastPathComponent()
+        }
+        return nil
+    }
+
+    /// Whether a path is safe to execute, or to resolve an interpreter beneath.
+    ///
+    /// issue #41 M5: `isExecutableFile` answers "can this be run", not "should
+    /// it be" -- a quarantined shell script satisfies it. What actually runs
+    /// must be owned by this uid (or root) and not group- or world-writable, and
+    /// so must every directory above it: checking only the leaf would accept a
+    /// 0644 binary sitting in a world-writable directory, where it can simply be
+    /// replaced. `/Users/Shared` (confirmed `drwxrwxrwt`) is the case in point,
+    /// and the sticky bit is no help -- it stops deletion of others' files, not
+    /// creation of a `huginn/cli.py` and a `.venv` beside a planted `.app`.
+    ///
+    /// Symlinks are resolved rather than refused: a virtualenv's `bin/python3`
+    /// is normally a link to `bin/python`, so refusing them would reject every
+    /// real install. Walking the *resolved* path is also the stronger check,
+    /// because it describes the binary that will actually be executed.
+    private func isTrustworthy(_ url: URL) -> Bool {
+        let me = getuid()
+        var current = url.resolvingSymlinksInPath().standardizedFileURL
+        while true {
+            var info = stat()
+            guard stat(current.path, &info) == 0 else { return false }
+            if info.st_uid != me && info.st_uid != 0 { return false }
+            if info.st_mode & (S_IWGRP | S_IWOTH) != 0 { return false }
+            let parent = current.deletingLastPathComponent().standardizedFileURL
+            if parent.path == current.path { return true }
+            current = parent
+        }
     }
 
     /// A `.venv`/`bin` interpreter under `root`, if one is actually there.
@@ -167,7 +223,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func pythonCommand(inRoot root: URL) -> DaemonCommand? {
         for relative in [".venv/bin/python3", "bin/python3"] {
             let python = root.appendingPathComponent(relative)
-            if FileManager.default.isExecutableFile(atPath: python.path) {
+            if FileManager.default.isExecutableFile(atPath: python.path),
+               isTrustworthy(python) {
                 return command(python: python, root: root)
             }
         }
@@ -188,11 +245,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// The interpreter and root the last daemon ran from, as recorded in
     /// `daemon.json`. Absent for a daemon predating that field, hence optional.
+    ///
+    /// issue #41 M5: this path is *executed*, and it comes from a mutable file
+    /// on disk, so it gets the same ownership check as any other candidate --
+    /// `isExecutableFile` alone would happily run a planted script. The daemon
+    /// now writes `daemon.json` 0600 as well, so its 0700 parent is no longer
+    /// the only thing protecting it.
     private func recordedDaemonCommand() -> DaemonCommand? {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: daemonStatePath)),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let python = object["python"] as? String, !python.isEmpty,
-              FileManager.default.isExecutableFile(atPath: python) else { return nil }
+              FileManager.default.isExecutableFile(atPath: python),
+              isTrustworthy(URL(fileURLWithPath: python)) else { return nil }
         let root = (object["repo"] as? String).flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
         return command(python: URL(fileURLWithPath: python),
                        root: root ?? FileManager.default.homeDirectoryForCurrentUser)

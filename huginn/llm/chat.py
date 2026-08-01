@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 from .. import config, policy
 from ..model import Session, SessionState
 from .context import digest_for_session, evidence_for_session, evidence_text
-from .providers import compatible_model, get_provider
+from .providers import compatible_model, effective_provider_name, get_provider
 
 if TYPE_CHECKING:
     from ..daemon import Daemon
@@ -223,15 +223,22 @@ async def start_chat(daemon: "Daemon", body: dict) -> dict:
             _confirm_controls(daemon, replies, request_id))
         return {"ok": True, "request_id": request_id,
                 "settings": daemon.cfg.to_dict()}
-    provider_name = body.get("provider") or daemon.cfg.get("llm", "provider")
-    provider = get_provider(provider_name, daemon.plugins)
+    requested_name = body.get("provider") or daemon.cfg.get("llm", "provider")
+    provider = get_provider(requested_name, daemon.plugins)
+    if provider is None:
+        # issue #41 C2: get_provider used to fall back to ClaudeCLI for any
+        # unknown name, so an absent or API-mismatched plugin meant the policy
+        # gate approved "bedrock" while ClaudeCLI actually ran. Refuse instead.
+        return {"ok": False, "error": f"no installed provider named {requested_name}"}
     unavailable = provider.available()
     if unavailable:
         return {"ok": False, "error": unavailable}
     # issue #41: the request body may name a provider, which is a caller
     # narrowing its own choice -- it can never widen what policy permits. Check
     # the resolved (provider, model) pair before spawning anything, and refuse
-    # rather than silently substituting a permitted model.
+    # rather than silently substituting a permitted model. The name gated on is
+    # the resolved provider's own, so the verdict describes what will run (C2).
+    provider_name = effective_provider_name(provider, requested_name)
     refused = policy.refusal(
         compatible_model(provider_name, daemon.cfg.get("llm", "chat_model"), daemon.plugins),
         provider_name)

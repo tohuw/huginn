@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import urllib.request
 from pathlib import Path
@@ -14,6 +15,25 @@ from . import config
 # than fixture coverage" ask.
 TESTED_CLAUDE = (2, 1)
 TESTED_CODEX = (0, 144)
+
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+MAX_LABEL_CHARS = 200
+
+
+def safe(text: object, limit: int = MAX_LABEL_CHARS) -> str:
+    """Strip control characters and truncate an externally-sourced string.
+
+    issue #41 M4: doctor emits its own ANSI colour codes, and it printed
+    ``policy.reason``, ``policy.allow`` and ``entry.source`` verbatim. An
+    embedded ``\\x1b[2K\\r`` therefore erases and rewrites the line already
+    printed -- enough to forge a green "installed policies — none (every model
+    permitted)" line. Sources are trusted-ish (an installed distribution, a 0600
+    ``sessions.json``), so this is low severity, but doctor's output is the
+    evidence that an exclusion is actually in force, so it must not be
+    forgeable by the thing it is reporting on.
+    """
+    flattened = _CONTROL_CHARS.sub(" ", str(text))
+    return flattened if len(flattened) <= limit else flattened[:limit] + "…"
 
 
 def _check(label: str, ok: bool, detail: str = "") -> bool:
@@ -73,11 +93,14 @@ def _report_data_lag(sessions: list[dict], cfg: config.Config) -> None:
     max_lag_s = cfg.get("doctor", "max_lag_s")
     now = time.time()
     for entry in lag.collect(lag.newest_processed(sessions), probes):
-        detail = lag.describe(entry, now)
+        detail = safe(lag.describe(entry, now))
+        # entry.source comes from a plugin or a restored snapshot -- sanitized
+        # before it reaches a terminal that interprets escapes (issue #41 M4).
+        label = f"{safe(entry.source, 60)} data lag"
         if entry.stale(max_lag_s):
-            _warn(f"{entry.source} data lag", f"{detail}, over {int(max_lag_s)}s threshold")
+            _warn(label, f"{detail}, over {int(max_lag_s)}s threshold")
         else:
-            _check(f"{entry.source} data lag", True, detail)
+            _check(label, True, detail)
 
 
 def _check_version_coverage(label: str, sessions, tested: tuple[int, int]) -> None:
@@ -116,16 +139,17 @@ def _report_plugins(registry) -> bool:
         capabilities = len(plugin.providers) + len(plugin.sources)
         low, high = plugin.api_range
         span = str(low) if low == high else f"{low}..{high}"
-        _check(plugin.name, True, f"{plugin.version}, API {span}, {capabilities} capabilities")
+        _check(safe(plugin.name, 60), True,
+               f"{safe(plugin.version, 40)}, API {span}, {capabilities} capabilities")
     if not registry.plugins:
         _check("installed plugins", True, "none")
     for error in registry.errors:
         # Still a doctor error rather than a warning: an installed plugin that
         # contributes nothing is a fault, whichever side caused it.
-        label = (f"{error.entry_point} API mismatch" if error.api_mismatch
-                 else error.entry_point)
-        detail = (f"{error.detail}; Huginn supports API {MIN_API_VERSION}..{API_VERSION}"
-                  if error.api_mismatch else f"{error.error_class}: {error.detail}")
+        entry_point = safe(error.entry_point, 60)
+        label = f"{entry_point} API mismatch" if error.api_mismatch else entry_point
+        detail = (f"{safe(error.detail)}; Huginn supports API {MIN_API_VERSION}..{API_VERSION}"
+                  if error.api_mismatch else f"{safe(error.error_class, 60)}: {safe(error.detail)}")
         ok &= _check(label, False, detail)
     return ok
 
@@ -134,22 +158,32 @@ def _report_model_policy(cfg) -> bool:
     """issue #41: what the installed policies permit, and whether the
     provider/model this machine is actually configured for survives them --
     so a refusal shows up here rather than at the first Ask or blurb."""
-    from .policy import DEFAULT_POLICY, refusal, resolve
+    from .policy import DEFAULT_POLICY, refusal, resolve, shadowed_policy_distributions
+    ok = True
+    # issue #41 C1: two dist-info directories claiming one distribution name is
+    # how a metadata-only shadow hides a real policy from the entry-point group
+    # query. Resolution now sees through it, but the collision itself is
+    # reported -- an exclusion under attack must be visible, not merely survived.
+    shadowed = shadowed_policy_distributions()
+    if shadowed:
+        ok &= _check("policy distributions are not shadowed", False,
+                     f"{safe(', '.join(shadowed))} appear more than once on sys.path")
     policies = resolve()
     if policies == (DEFAULT_POLICY,):
         _check("installed policies", True, "none (every model permitted)")
-        return True
-    ok = True
+        return ok
     for policy in policies:
-        allow = ", ".join(policy.allow) or "(nothing)"
-        _check(policy.name, bool(policy.allow),
-               f"allow {allow}" + (f", provider {policy.require_provider}"
+        # A policy's own name/allow/reason are printed, and doctor emits ANSI
+        # codes of its own -- sanitize before they reach a terminal (M4).
+        allow = safe(", ".join(policy.allow)) or "(nothing)"
+        _check(safe(policy.name, 60), bool(policy.allow),
+               f"allow {allow}" + (f", provider {safe(policy.require_provider, 60)}"
                                    if policy.require_provider else ""))
     provider_name = cfg.get("llm", "provider")
     for label, key in (("Ask", "chat_model"), ("automatic text", "blurb_model")):
         message = refusal(cfg.get("llm", key) or "", provider_name)
         ok &= _check(f"configured {label} model", message is None,
-                     message or f"{provider_name} permitted")
+                     safe(message) if message else f"{safe(provider_name, 60)} permitted")
     return ok
 
 

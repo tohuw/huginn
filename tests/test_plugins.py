@@ -185,6 +185,75 @@ class PluginApiRangeTests(unittest.TestCase):
         self.assertEqual(payload["plugins"][0]["api_range"],
                          [MIN_API_VERSION, API_VERSION + 5])
 
+    def test_a_non_int_api_version_is_labelled_an_api_mismatch(self):
+        # issue #41 M1: this raised a bare TypeError, so doctor and
+        # GET /api/plugins reported api_mismatch False and labelled a version
+        # disagreement as an indistinguishable load failure -- the exact
+        # mislabelling issue #38 exists to prevent.
+        for value in ("1", 1.5, None, [1]):
+            with self.subTest(api_version=value):
+                registry = discover_plugins([_EntryPoint("odd", PluginSpec(
+                    name="odd", version="1", api_version=value))])
+                self.assertEqual(registry.plugins, ())
+                self.assertTrue(registry.errors[0].api_mismatch)
+                self.assertEqual(registry.errors[0].error_class, "PluginApiMismatch")
+
+    def test_a_negative_api_bound_is_rejected(self):
+        # min_api=-999 loaded before the fix: the overlap arithmetic is correct,
+        # but nothing checked its inputs.
+        for kwargs in ({"min_api": -999}, {"max_api": -1}, {"api_version": -5}):
+            with self.subTest(**kwargs):
+                registry = discover_plugins([_EntryPoint("negative", PluginSpec(
+                    name="negative", version="1", **kwargs))])
+                self.assertEqual(registry.plugins, ())
+                self.assertTrue(registry.errors[0].api_mismatch)
+                self.assertIn("negative", registry.errors[0].detail)
+
+    def test_a_bool_api_bound_is_rejected_despite_being_an_int(self):
+        # bool is an int subclass, so min_api=True silently meant 1 -- valid by
+        # accident, and never what anyone typed on purpose.
+        registry = discover_plugins([_EntryPoint("boolean", PluginSpec(
+            name="boolean", version="1", min_api=True))])
+
+        self.assertEqual(registry.plugins, ())
+        self.assertTrue(registry.errors[0].api_mismatch)
+        self.assertIn("bool", registry.errors[0].detail)
+
+    def test_an_unbounded_max_api_cannot_claim_every_future_contract(self):
+        # max_api=10**9 asserts forward compatibility with every API that will
+        # ever exist, so raising MIN_API_VERSION could never disable the plugin
+        # -- which is what raising MIN_API_VERSION is for.
+        registry = discover_plugins([_EntryPoint("forever", PluginSpec(
+            name="forever", version="1", max_api=10 ** 9))])
+
+        self.assertEqual(registry.plugins, ())
+        self.assertTrue(registry.errors[0].api_mismatch)
+
+    def test_declaring_the_next_few_versions_still_works(self):
+        # The guarantee issue #38 added must survive M1's validation: a
+        # plausible forward range is exactly the supported case.
+        registry = discover_plugins([_EntryPoint("ranged", PluginSpec(
+            name="ranged", version="1",
+            min_api=MIN_API_VERSION, max_api=API_VERSION + 5))])
+
+        self.assertEqual([item.name for item in registry.plugins], ["ranged"])
+        self.assertEqual(registry.errors, ())
+        # api_range still publishes what the plugin declared, unclamped.
+        self.assertEqual(registry.plugins[0].api_range, (MIN_API_VERSION, API_VERSION + 5))
+
+    def test_the_overlap_arithmetic_is_unchanged_at_the_boundaries(self):
+        # M1 changed input validation only; pin that the boundaries still land
+        # where they did.
+        for bounds, loads in (((MIN_API_VERSION, API_VERSION), True),
+                              ((API_VERSION, API_VERSION), True),
+                              ((API_VERSION + 1, API_VERSION + 1), False),
+                              ((MIN_API_VERSION, MIN_API_VERSION), True)):
+            low, high = bounds
+            with self.subTest(bounds=bounds):
+                registry = discover_plugins([_EntryPoint("edge", PluginSpec(
+                    name="edge", version="1", min_api=low, max_api=high))])
+                self.assertEqual(bool(registry.plugins), loads)
+
     def test_builtin_provider_name_cannot_be_shadowed(self):
         plugin = PluginSpec(name="shadow", version="1", providers=(_Provider("codex"),))
 

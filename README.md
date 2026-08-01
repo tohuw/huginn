@@ -377,18 +377,55 @@ Install a plugin package into Huginn's active environment (for example,
 [the plugin author guide](docs/plugins.md) for the contract and a minimal
 package example.
 
+## Shared internals: corvidae
+
+Three parts of Huginn are reusable outside it, and were being reimplemented
+elsewhere purely because nothing promised they would keep working. They now live
+in **[`corvidae`](packages/corvidae/)**, a stdlib-only package in this repo that
+is published separately and depends on nothing (least of all on Huginn):
+
+- `Tail` — the seek-from-end JSONL transcript tailer, with its awkward edges
+  (a record larger than the read window, truncation below the stored offset,
+  rotation, partial-line carry).
+- `redact_secrets` — credential redaction for text leaving a transcript.
+- `Session` / `SessionState` / `STATE_RANK` / `ATTENTION_STATES`.
+
+**These names are stable within a CalVer year.** The exact surface, signatures,
+guaranteed `Tail` behaviour, and the two explicit non-promises are documented in
+[packages/corvidae/README.md](packages/corvidae/README.md#stability-contract).
+Anything not listed there is an implementation detail.
+
+Huginn re-exports all of them from their original module paths — `huginn.model`,
+`huginn.sources.transcript`, `huginn.llm.context` — so existing plugins and forks
+need no changes. Nothing else in `huginn.*` carries a compatibility promise; the
+plugin contract in `huginn.plugins` has its own, versioned separately (see
+[API version ranges](docs/plugins.md#api-version-ranges)).
+
 ## Versioning
 
 Huginn uses calendar versioning. Package versions follow `YYYY.MM.DD`, with a
 numeric `.MICRO` suffix for additional releases on the same day. Annotated Git
-tags add a leading `v`, for example `v2026.07.29.3`.
+tags add a leading `v`, for example `v2026.07.29.3`. `corvidae` versions the same
+way, independently, and its compatibility promise is keyed to the year component.
 
 ## Dev
 
 ```sh
-uv run python -m unittest discover -s tests   # reducer + analyzer tests
+uv run pytest -q     # huginn's tests + the shared package's
 ```
 
 Architecture: sources (fsevents watchers + pollers) → event bus → one reducer
 (`huginn/state.py`, pure transition rules, unit-tested) → SSE → vanilla-JS
-dashboard. No build step, three dependencies (fastapi, uvicorn, watchfiles).
+dashboard. No build step, three runtime dependencies (fastapi, uvicorn,
+watchfiles) plus the in-repo `corvidae`.
+
+The repo is a `uv` workspace: `packages/corvidae/` is a second distributable, so
+`uv build --all-packages` builds both wheels and `uv sync` resolves corvidae from
+the checkout rather than an index.
+
+One release prerequisite, since Huginn's wheel now declares `corvidae` as an
+ordinary dependency: **corvidae must be reachable from an index before the next
+Huginn release is published.** A consumer that installs Huginn by Git reference
+(`huginn @ git+https://…@<sha>`) cannot resolve a workspace member from that URL —
+it needs corvidae on PyPI, or its own explicit source for it. In-repo development
+is unaffected.

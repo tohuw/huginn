@@ -33,6 +33,8 @@ daemon-reachability and per-source health checks.
 """
 from __future__ import annotations
 
+import logging
+import math
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,8 +42,35 @@ from typing import Any, Callable, Iterable, Mapping
 
 from . import config
 
+LOG = logging.getLogger("huginn.lag")
+
 # Newest artifact mtime for one source, or None when it cannot be determined.
 ArtifactProbe = Callable[[], float | None]
+
+# Widest window a probe may report, as a Unix timestamp. A probe returns an
+# mtime, so anything outside roughly 1970..2200 is a bug or a hostile value, not
+# a measurement -- and issue #41 M3 showed what those do: 1e300 rendered a
+# ~300-digit integer into doctor's report, and -inf made stale() return False,
+# silently suppressing the staleness issue #39 exists to surface.
+MIN_TIMESTAMP = 0.0
+MAX_TIMESTAMP = 7_258_118_400.0   # 2200-01-01T00:00:00Z
+
+
+def _sane_timestamp(value: Any) -> float | None:
+    """A finite, in-window float, or None -- ``None`` reads as "unknown".
+
+    ``isinstance(x, (int, float))`` alone accepted ``nan``/``inf``/``-inf`` and
+    absurd magnitudes (issue #41 M3). ``nan`` crashed doctor with ``ValueError``
+    and ``inf`` with ``OverflowError`` -- doctor is the tool you run *because*
+    something is already wrong, so it must not be the thing that breaks -- while
+    ``-inf`` was worse than a crash: it reported ``stale=False``.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if not math.isfinite(number) or not MIN_TIMESTAMP <= number <= MAX_TIMESTAMP:
+        return None
+    return number
 
 # Sources whose derived timestamp *is* an artifact mtime by construction --
 # the desktop tiles and the WSL bridge report the same number they read -- have
@@ -128,11 +157,17 @@ def _guarded(probe: Any) -> ArtifactProbe:
     def call() -> float | None:
         try:
             value = probe()
-        except Exception:
+        # BaseException, not Exception -- issue #41 M2: a probe raising
+        # SystemExit took down the whole doctor run, violating this function's
+        # own stated contract that one broken probe must not take the rest of
+        # the report with it.
+        except BaseException:
+            LOG.debug("a lag probe raised; reporting its lag as unknown", exc_info=True)
             return None
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            return None
-        return float(value)
+        sane = _sane_timestamp(value)
+        if sane is None and value is not None:
+            LOG.debug("a lag probe returned %r, which is not a usable timestamp", value)
+        return sane
 
     return call
 
@@ -162,13 +197,16 @@ def newest_processed(sessions: Iterable[Mapping[str, Any]]) -> dict[str, float]:
         if str(session.get("key") or "").startswith("wsl:"):
             continue
         source = session.get("source")
-        ts = session.get("last_activity")
-        if not isinstance(source, str) or isinstance(ts, bool):
+        if not isinstance(source, str):
             continue
-        if not isinstance(ts, (int, float)) or ts <= 0:
+        # Same finite/in-window check the probes get (issue #41 M3): a restored
+        # snapshot is a file on disk, and an inf here would break doctor's
+        # arithmetic just as surely as one from a plugin probe.
+        ts = _sane_timestamp(session.get("last_activity"))
+        if ts is None or ts <= 0:
             continue
         if ts > result.get(source, 0.0):
-            result[source] = float(ts)
+            result[source] = ts
     return result
 
 

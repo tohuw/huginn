@@ -22,7 +22,7 @@ from .. import policy
 from ..model import Session, SessionState
 from ..plugins import LLMProviderError
 from .context import distill, evidence_text
-from .providers import blurb_model, get_provider
+from .providers import blurb_model, effective_provider_name, get_provider
 
 if TYPE_CHECKING:
     from ..daemon import Daemon
@@ -266,10 +266,19 @@ class BlurbWorker:
             return None
         try:
             provider = get_provider(provider_name, self.daemon.plugins)
+            if provider is None:
+                # issue #41 C2: no silent fallback to ClaudeCLI for an unknown
+                # name. retryable=False so the circuit latches -- a provider
+                # that is not installed will not become installed by waiting.
+                raise LLMProviderError(
+                    f"no installed provider named {provider_name!r}", retryable=False)
             unavailable = provider.available()
             if unavailable:
                 raise LLMProviderError(
                     f"{provider_name} is unavailable", retryable=False)
+            # Gate on the resolved provider's own name, so the policy verdict
+            # describes the object that will actually run (issue #41 C2).
+            provider_name = effective_provider_name(provider, provider_name)
             model = blurb_model(
                 provider_name, configured_model, self.daemon.plugins)
             # issue #41: automatic text is the highest-volume core LLM call, so

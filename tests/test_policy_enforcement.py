@@ -16,7 +16,9 @@ from fastapi.testclient import TestClient
 from huginn.config import Config
 from huginn.daemon import Daemon
 from huginn.llm.chat import _apply_controls, start_chat
+from huginn.llm.providers import blurb_model, compatible_model, get_provider
 from huginn.model import Session, SessionState
+from huginn.plugins import LLMProviderError
 from huginn.policy import ModelPolicy
 from huginn.server.app import create_app
 
@@ -215,6 +217,77 @@ class ProvidersEndpointTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 422)
         self.assertIn("POLICY_REASON_TOKEN", str(response.json()))
+
+
+class AbsentProviderTests(unittest.IsolatedAsyncioTestCase):
+    """issue #41 C2: ``get_provider`` fell back to ``ClaudeCLI`` for any unknown
+    name, so ``require_provider="bedrock"`` was validated against the *string*
+    "bedrock" while ``ClaudeCLI`` was the object dispatched to. An absent or
+    API-mismatched plugin therefore meant the gate passed and a different model
+    provider ran -- reachable by accident, more likely since #38 shipped API
+    ranges and a mismatched plugin stays installed contributing nothing."""
+
+    def test_get_provider_returns_none_instead_of_falling_back_to_claude(self):
+        self.assertIsNone(get_provider("bedrock"))
+        self.assertIsNone(get_provider("not-installed-at-all"))
+        # The default path is untouched: built-ins still resolve.
+        self.assertEqual(get_provider("claude").name, "claude")
+        self.assertEqual(get_provider("codex").name, "codex")
+
+    def test_get_provider_refuses_an_object_whose_name_disagrees_with_its_key(self):
+        # The gate and the dispatch must not be able to disagree: a provider
+        # registered under a name it does not claim is refused, not run.
+        impostor = _Provider()
+        impostor.name = "claude"
+        registry = Mock()
+        registry.providers = Mock(return_value={"bedrock": impostor})
+
+        self.assertIsNone(get_provider("bedrock", registry))
+
+    async def test_a_forbidden_model_is_refused_when_the_named_provider_is_absent(self):
+        # The C2 reproduction: under a bedrock-only policy the model is
+        # permitted *for bedrock*, but no bedrock provider is installed. Before
+        # the fix ClaudeCLI ran it. Nothing may run.
+        daemon = Daemon(Config({"llm": {
+            "provider": "bedrock", "chat_model": "us.anthropic.claude-sonnet-5"}}))
+
+        with _installed(BEDROCK_ONLY):
+            result = await start_chat(daemon, {"question": "what's blocked?"})
+
+        self.assertFalse(result["ok"])
+        self.assertIn("bedrock", result["error"])
+        self.assertIsNone(daemon.active_chat)
+
+    async def test_a_body_named_absent_provider_cannot_reach_a_different_one(self):
+        daemon = Daemon(Config({"llm": {"provider": "claude"}}))
+
+        with _no_policy():
+            result = await start_chat(
+                daemon, {"question": "hi", "provider": "bedrock"})
+
+        self.assertFalse(result["ok"])
+        self.assertIn("no installed provider", result["error"])
+        self.assertIsNone(daemon.active_chat)
+
+    async def test_automatic_text_latches_rather_than_running_a_substitute(self):
+        daemon = Daemon(Config({"llm": {
+            "enabled": True, "blurb_debounce_s": 0, "provider": "bedrock"}}))
+
+        with _installed(BEDROCK_ONLY):
+            self.assertIsNone(await daemon.blurbs._run_prompt("summarize this"))
+
+        self.assertEqual(daemon.diagnostics.snapshot()["blurb"]["last_error_class"],
+                         "LLMProviderError")
+        # retryable=False: a provider that is not installed will not become
+        # installed by retrying once a minute for every session.
+        self.assertTrue(daemon.blurbs.status()["circuit"]["permanent"])
+
+    def test_no_compatible_model_is_offered_for_an_absent_provider(self):
+        # Returning the configured model unchanged would hand it to whatever
+        # ran instead -- the substitution rule 2 of policy.py forbids.
+        self.assertEqual(compatible_model("bedrock", "us.anthropic.claude-sonnet-5"), "")
+        with self.assertRaises(LLMProviderError):
+            blurb_model("bedrock", "us.anthropic.claude-sonnet-5")
 
 
 if __name__ == "__main__":

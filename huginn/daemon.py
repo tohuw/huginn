@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import socket
 import sys
@@ -22,6 +23,8 @@ from .sources.transcript import ClaudeAnalyzer, CodexAnalyzer, Tail
 from .state import Reducer
 from .steering import ConfirmationStore
 from .triage import build_triage
+
+LOG = logging.getLogger("huginn.daemon")
 
 
 class Daemon:
@@ -422,6 +425,17 @@ class Daemon:
             timeout_graceful_shutdown=2,
         )
         server = uvicorn.Server(uv_cfg)
+        # Uvicorn handles SIGTERM by setting should_exit, but on the way out of
+        # capture_signals() it restores the default handler and *re-raises* the
+        # captured signal. For SIGINT that re-raise becomes KeyboardInterrupt,
+        # which propagates through the finally below; for SIGTERM the default
+        # action terminates the process on the spot, so the teardown never runs
+        # and daemon.json, the token, and the raven descriptor are all orphaned
+        # (issue #43). Quit in the macOS menu-bar app sends SIGTERM, so this was
+        # the ordinary stop path, not an edge case. Asking for the same orderly
+        # shutdown SIGINT gets means should_exit is already set when uvicorn
+        # installs its handler, and nothing is left to re-raise.
+        self._install_termination_handler(server)
 
         tasks = [asyncio.create_task(c) for c in (
             self.reducer_loop(), self.claude_watcher(), self.transcript_watcher(),
@@ -481,6 +495,36 @@ class Daemon:
                 if config.TOKEN_PATH.read_text().strip() == self.token:
                     config.TOKEN_PATH.unlink()
         return 0
+
+    def _install_termination_handler(self, server) -> None:
+        """Turn a terminating signal into uvicorn's own graceful shutdown.
+
+        Installed via the event loop rather than ``signal.signal`` so the flag is
+        set from inside the loop, and installed *before* ``server.serve()`` so
+        uvicorn's ``capture_signals`` records ours as the handler to restore --
+        which is what stops it re-raising into a lethal default (issue #43).
+
+        SIGHUP is included because a daemon started from a terminal that then
+        closes gets it, and losing the teardown there orphans exactly the same
+        files. Windows has neither signal in the asyncio loop and raises
+        NotImplementedError; the tray owns lifecycle there (see WINDOWS.md), so
+        a missing handler is correct rather than a gap to paper over.
+        """
+        import signal
+
+        loop = asyncio.get_running_loop()
+        for name in ("SIGTERM", "SIGHUP"):
+            sig = getattr(signal, name, None)
+            if sig is None:
+                continue
+            with contextlib.suppress(NotImplementedError, RuntimeError, ValueError):
+                loop.add_signal_handler(sig, self._request_shutdown, server, name)
+
+    def _request_shutdown(self, server, signal_name: str) -> None:
+        # should_exit (not force_exit) so in-flight requests still drain within
+        # timeout_graceful_shutdown, matching what Ctrl-C already did.
+        LOG.info("huginn: %s received, shutting down", signal_name)
+        server.should_exit = True
 
     def _write_daemon_state(self, port: int) -> None:
         # "python"/"repo" let a tray app relaunch a dead daemon without

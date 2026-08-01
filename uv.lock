@@ -2,6 +2,12 @@ version = 1
 revision = 3
 requires-python = ">=3.12"
 
+[manifest]
+members = [
+    "corvidae",
+    "huginn",
+]
+
 [[package]]
 name = "annotated-doc"
 version = "0.0.4"
@@ -64,6 +70,11 @@ wheels = [
 ]
 
 [[package]]
+name = "corvidae"
+version = "2026.7.31"
+source = { editable = "packages/corvidae" }
+
+[[package]]
 name = "fastapi"
 version = "0.139.2"
 source = { registry = "https://pypi.org/simple" }
@@ -121,6 +132,7 @@ name = "huginn"
 version = "2026.7.30.1"
 source = { editable = "." }
 dependencies = [
+    { name = "corvidae" },
     { name = "fastapi" },
     { name = "uvicorn" },
     { name = "watchfiles" },
@@ -135,6 +147,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "corvidae", editable = "packages/corvidae" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "uvicorn", specifier = ">=0.30" },
     { name = "watchfiles", specifier = ">=0.24" },

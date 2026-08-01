@@ -163,11 +163,24 @@ class AllowValidationTests(unittest.TestCase):
     nothing, so one missing comma turned a vendor-prefix allowlist into
     allow-everything, and a malformed regex escaped as ``re.error``."""
 
-    def test_a_bare_string_allow_is_rejected_at_construction(self):
-        # allow=r"^us\.anthropic\." instead of (r"^us\.anthropic\.",) made
-        # _permits iterate *characters*: "^", "u", "s", "." each match nearly
-        # any model id, and a non-empty string is truthy so the empty-allow
-        # guard passed too. Reproduced: gpt-4o-EVIL was permitted.
+    def test_a_backslash_free_bare_string_allow_is_rejected(self):
+        # The case that proves the *tuple* check does the work. Split into
+        # characters, "^us-anthropic-" has every character compile cleanly, so
+        # eager re.compile catches nothing and the lone "^" then matches every
+        # model id under re.search. Verified before the fix.
+        with self.assertRaises(TypeError):
+            ModelPolicy(name="typo", allow="^us-anthropic-")
+
+        # Pin the premise, so this test cannot start passing for the wrong
+        # reason if the type check is ever removed in favour of compilation.
+        for character in "^us-anthropic-":
+            re.compile(character)   # must not raise
+        self.assertTrue(re.search("^", "local-llama-7b"))
+
+    def test_a_bare_string_allow_with_backslashes_is_also_rejected(self):
+        # The brief's original example. It happens to yield a lone "\\" that
+        # fails to compile, so it would be caught either way -- which is exactly
+        # why it is the weaker test of the two.
         with self.assertRaises(TypeError):
             ModelPolicy(name="typo", allow=r"^us\.anthropic\.")
 
@@ -213,6 +226,22 @@ class AllowValidationTests(unittest.TestCase):
             self.assertIsNotNone(refusal("ok", "anyprovider"))
             with self.assertRaises(PolicyRefused):
                 check("ok", "anyprovider")
+
+    def test_ctrl_c_during_matching_stays_interruptible(self):
+        # The deliberate asymmetry with the *load* guard, which does catch
+        # BaseException. A pathological pattern can backtrack for a long time,
+        # which is exactly when a user reaches for Ctrl-C -- swallowing that to
+        # report a refusal would make the call unkillable. A refusal is not
+        # worth an uninterruptible process.
+        policy = ModelPolicy(name="slow", allow=("^ok$",), reason="only ok")
+        interrupting = Mock()
+        interrupting.search = Mock(side_effect=KeyboardInterrupt())
+        object.__setattr__(policy, "_patterns", (interrupting,))
+
+        with patch("huginn.policy._policy_entry_points",
+                   return_value=[_point("slow", policy)]):
+            with self.assertRaises(KeyboardInterrupt):
+                refusal("ok", "anyprovider")
 
 
 def _point(name: str, policy: ModelPolicy):

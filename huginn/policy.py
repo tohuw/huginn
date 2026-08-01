@@ -73,19 +73,30 @@ class ModelPolicy:
     def __post_init__(self) -> None:
         """Reject a malformed ``allow`` at construction rather than at call time.
 
-        Issue #41 H1: ``allow`` was only a type *hint* on a frozen dataclass
-        that validated nothing, so one missing comma --
-        ``allow=r"^us\\.anthropic\\."`` instead of ``allow=(r"^us\\.anthropic\\.",)``
-        -- made ``_permits`` iterate the pattern's *characters*. Every one-char
-        regex (``^``, ``u``, ``s``, ``.``) matches almost any model id, so a
-        policy meant to permit one vendor prefix permitted everything, and the
-        empty-``allow`` guard passed too because a non-empty string is truthy.
+        Two *independent* guarantees, which is why both are asserted here.
 
-        H2: compiling here also means a bad regex surfaces as a construction
-        error the caller's ``except`` turns into the refuse-everything
-        ``_load_failed`` policy, instead of escaping ``_permits`` later as a
-        bare ``re.error`` that 500s ``/api/providers`` and, in ``blurb.py``,
-        lands in a broad handler that retries with backoff forever.
+        H1 -- the ``tuple`` check. ``allow`` was only a type *hint* on a frozen
+        dataclass that validated nothing, so one missing comma
+        (``allow=r"^us-anthropic-"`` for ``allow=(r"^us-anthropic-",)``) made
+        ``_permits`` iterate the pattern's *characters*. A lone ``^`` matches
+        every model id under ``re.search``, so a policy meant to permit one
+        vendor prefix permitted everything, and the empty-``allow`` guard passed
+        too because a non-empty string is truthy.
+
+        H2 -- eager ``re.compile``. A bad regex becomes a construction error the
+        caller's ``except`` turns into the refuse-everything ``_load_failed``
+        policy, instead of escaping ``_permits`` later as a bare ``re.error``
+        that 500s ``/api/providers`` and, in ``blurb.py``, lands in a broad
+        handler where ``retryable`` defaults True and so retries with backoff
+        instead of latching.
+
+        Compilation does **not** backstop H1 and must not be relied on to.
+        ``r"^us\\.anthropic\\."`` split into characters happens to yield a lone
+        ``"\\"`` that fails to compile, which makes that one example look
+        caught; a backslash-free prefix like ``"^us-anthropic-"`` has *every*
+        character compile cleanly, and the resulting ``^`` then permits
+        everything silently. The explicit ``tuple``/``str`` checks are what
+        actually catch this class.
         """
         if isinstance(self.allow, str) or not isinstance(self.allow, tuple):
             raise TypeError(
@@ -136,15 +147,22 @@ def _permits(policy: ModelPolicy, model: str, provider: str) -> bool:
     Issue #41 H2: matching used to call ``re.search`` on an unvalidated pattern,
     so a malformed regex escaped as ``re.error`` -- not a ``PolicyRefused`` --
     and widened nothing but broke every surface that asks. Patterns are now
-    compiled at construction, and the blanket ``except BaseException`` is the
-    belt to that braces: a discovery or matching fault must never be readable
-    as "permitted".
+    compiled at construction, and this is the belt to that braces: a matching
+    fault must never be readable as "permitted".
+
+    ``Exception`` and deliberately *not* ``BaseException``, unlike the load
+    guard in ``resolve()``. The asymmetry is the point. At load time a stray
+    ``sys.exit()`` in a policy module is the hazard, and swallowing it is
+    correct. Here the plausible ``BaseException`` is a ``KeyboardInterrupt``
+    arriving during a pathological pattern's backtracking -- precisely when a
+    user reaches for Ctrl-C -- and catching that to report a refusal would make
+    the call unkillable. A refusal is not worth an uninterruptible process.
     """
     try:
         if policy.require_provider is not None and provider != policy.require_provider:
             return False
         return any(pattern.search(model) for pattern in policy._patterns)
-    except BaseException:
+    except Exception:
         LOG.exception("model policy %s failed while matching; refusing the call", policy.name)
         return False
 

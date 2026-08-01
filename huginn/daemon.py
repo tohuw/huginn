@@ -509,6 +509,18 @@ class Daemon:
         files. Windows has neither signal in the asyncio loop and raises
         NotImplementedError; the tray owns lifecycle there (see WINDOWS.md), so
         a missing handler is correct rather than a gap to paper over.
+
+        Deliberately **not** extracted to corvidae with the rest of the daemon
+        machinery (issue #42). Muninn needs the same *outcome* -- a terminating
+        signal that runs its cleanup -- by a mechanism with nothing in common:
+        it has no async server and no uvicorn, so ``signal.signal(SIGTERM,
+        lambda *_: sys.exit(0))`` is its whole implementation. The substance of
+        this method is the two constraints in the paragraphs above (install via
+        the loop, install *before* ``serve()``), and both exist only because
+        uvicorn is in the picture. A shared helper would either lose them --
+        making it a three-line wrapper around ``signal.signal`` -- or carry a
+        uvicorn-shaped parameter into a stdlib-only package. Duplication is the
+        smaller cost; see the "Not in scope" section of corvidae's README.
         """
         import signal
 

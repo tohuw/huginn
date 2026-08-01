@@ -6,6 +6,7 @@ Windows tray) keep working off pid/port/started."""
 from __future__ import annotations
 
 import json
+import stat
 import sys
 import tempfile
 import unittest
@@ -52,8 +53,8 @@ class DaemonStateFileTests(unittest.TestCase):
         self.assertTrue((Path(state["repo"]) / "huginn" / "cli.py").exists())
 
     def test_carries_nothing_secret(self):
-        # World-readable, unlike the 0600 token beside it: a leak here is a
-        # leak to every local process.
+        # Still holds no secret -- but see the mode test below: the 0600 there
+        # is about integrity, not confidentiality.
         daemon = Daemon(Config({}))
         daemon.token = "secret-token"
         daemon.refresh_token = "secret-refresh-token"
@@ -64,6 +65,27 @@ class DaemonStateFileTests(unittest.TestCase):
         self.assertNotIn("secret-refresh-token", raw)
         self.assertEqual(
             set(json.loads(raw)), {"pid", "port", "started", "python", "repo"})
+
+    def test_is_not_group_or_world_writable(self):
+        # issue #41 M5: written with a bare write_text, so 0644 at the default
+        # umask, unlike its 0600 siblings (token, sessions.json). It holds no
+        # secret, but macos/HuginnMenuBar.swift *executes* the "python" path
+        # from it, so integrity matters where confidentiality does not -- and
+        # only the 0700 parent stood between that and any process able to write
+        # here.
+        self._write()
+        mode = stat.S_IMODE((config.STATE_DIR / "daemon.json").stat().st_mode)
+
+        self.assertEqual(mode & (stat.S_IWGRP | stat.S_IWOTH), 0, oct(mode))
+        self.assertEqual(mode, 0o600, oct(mode))
+
+    def test_rewriting_keeps_the_restricted_mode(self):
+        # A restart must not silently widen it back to 0644.
+        self._write()
+        self._write(port=47201)
+        mode = stat.S_IMODE((config.STATE_DIR / "daemon.json").stat().st_mode)
+
+        self.assertEqual(mode, 0o600, oct(mode))
 
 
 if __name__ == "__main__":

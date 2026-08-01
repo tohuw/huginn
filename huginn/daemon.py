@@ -471,15 +471,23 @@ class Daemon:
         # "python"/"repo" let a tray app relaunch a dead daemon without
         # guessing where Huginn lives -- the macOS app used to hardcode one
         # developer's checkout (issue #37). Additive: pid/port/started keep
-        # their meaning for existing readers. Nothing secret goes in here;
-        # this file is world-readable, unlike the token beside it.
-        (config.STATE_DIR / "daemon.json").write_text(json.dumps({
+        # their meaning for existing readers.
+        #
+        # 0600, not the bare write_text's 0644 -- issue #41 M5. This holds no
+        # secret, but macos/HuginnMenuBar.swift *executes* the "python" path
+        # from it, so integrity matters even where confidentiality does not.
+        # Only the 0700 parent stood between that and any process able to write
+        # here, and its 0600 siblings (token, sessions.json) already set the
+        # precedent.
+        state_path = config.STATE_DIR / "daemon.json"
+        state_path.write_text(json.dumps({
             "pid": os.getpid(),
             "port": port,
             "started": time.time(),
             "python": sys.executable,
             "repo": str(Path(__file__).resolve().parent.parent),
         }))
+        state_path.chmod(0o600)
         (config.STATE_DIR / "port").write_text(str(port))
 
 

@@ -1,0 +1,23 @@
+[project]
+name = "corvidae"
+version = "2026.07.31"
+description = "Shared internals for the raven agent-monitoring projects: JSONL transcript tailing, credential redaction, session shapes"
+license = "Apache-2.0"
+requires-python = ">=3.12"
+# Intentionally empty: corvidae is stdlib-only, so depending on it never drags
+# a web framework (or Huginn itself) into a consumer -- issue #42.
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["corvidae"]
+
+[tool.ruff]
+line-length = 130
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = ["E702"]

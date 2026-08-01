@@ -33,7 +33,9 @@ uv run pytest -q || {
 	exit 1
 }
 
-uv build || {
+# --all-packages: two distributables since issue #42 (huginn + shared corvidae),
+# and huginn's wheel depends on corvidae's, so the smoke test below needs both.
+uv build --all-packages || {
 	echo "huginn pre-push: wheel build failed — push blocked. (--no-verify to override)"
 	exit 1
 }
@@ -44,7 +46,7 @@ if command -v python3 >/dev/null 2>&1; then
 	rm -rf "$SMOKE_VENV"
 	python3 -m venv "$SMOKE_VENV" && \
 	"$SMOKE_VENV/bin/pip" install --quiet dist/*.whl && \
-	"$SMOKE_VENV/bin/python" -c "import huginn; print('import ok')" && \
+	"$SMOKE_VENV/bin/python" -c "import huginn, corvidae; print('import ok')" && \
 	"$SMOKE_VENV/bin/huginn" --help >/dev/null && \
 	"$SMOKE_VENV/bin/huginn" status >/dev/null
 	SMOKE_RC=$?

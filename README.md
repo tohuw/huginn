@@ -98,6 +98,47 @@ Windows Terminal focus is window-level; exact selection of an arbitrary existing
 tab remains a documented limitation. WSL sessions are discovered through a
 bounded in-distribution helper and namespaced separately. See [WINDOWS.md](WINDOWS.md).
 
+### Shared status menu bar
+
+Huginn also publishes itself as a **raven**: a participant in one shared status
+menu bar that can show several tools at once. It is opt-out only in the sense
+that a menu bar has to be installed separately — Huginn publishes whether or not
+one is running, and publishing is best-effort, so nothing about the console
+depends on it.
+
+While the daemon is serving it writes one descriptor:
+
+| | |
+| --- | --- |
+| Where | `$RAVENS_STATE_DIR`, else `%LOCALAPPDATA%\Ravens` on Windows, else `$XDG_STATE_HOME/ravens`, else `~/.local/state/ravens` |
+| File | `huginn.json`, mode 0600, written atomically after the port is bound |
+| Removed | on a clean daemon exit; a descriptor left by a crash is refused by the menu bar, which checks the recorded pid and start time |
+
+Note this directory honours `XDG_STATE_HOME` while Huginn's own state directory
+(`~/.local/state/huginn`) does not. That is deliberate: the ravens directory is
+shared with the menu bar and any other participant, so resolving it Huginn's way
+would publish where nothing is looking.
+
+The descriptor names Huginn's port, its protocol range (`min_api`/`max_api` — a
+range, never an equality, for the same reason plugins declare one), and the path
+to Huginn's ordinary API token. The menu bar reads that token fresh per request
+and calls two authenticated routes:
+
+- `GET /api/menu` — a declarative menu: a triage headline, sessions needing
+  attention, worktree contention, what is working, and dismissable ended
+  sessions, plus a badge carrying the same attention count the dashboard tab
+  title shows. The menu bar renders these labels without interpreting them.
+- `POST /api/menu/action` — an action id from that menu, handed back unchanged.
+  `focus:<key>` jumps to a session exactly as the dashboard's **jump** does,
+  `dismiss:<key>` removes an ended card, and `open-console` opens the dashboard
+  with a fresh auth bootstrap. An id Huginn no longer recognises — a session that
+  ended between the menu being drawn and clicked — is refused, never guessed at.
+
+Both routes sit behind the same token and `Origin`/`Host` checks as the rest of
+the API; there is no unauthenticated menu surface. Session names, titles, and
+blurbs are sanitised and credential-redacted before they become menu labels, on
+Huginn's side, rather than relying on the menu bar to clean up after it.
+
 ### Start at login
 
 ```sh
@@ -323,6 +364,12 @@ this does and doesn't protect against:
   privilege isolation between processes owned by the same user. If that's
   your threat model, huginn isn't the layer defending against it; your OS
   user/process sandboxing is.
+
+The shared status menu bar authenticates with that same token, read from the
+`token_path` its descriptor advertises — so it is inside the token boundary, not
+an exception to it. The descriptor itself carries no secret; it is 0600 for the
+same reason `daemon.json` is, because another process reads a port and a token
+path out of it and acts on them.
 
 If the daemon restarts, the API token rotates, but this is continuity rather
 than revocation: the separate on-disk refresh credential intentionally persists

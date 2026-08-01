@@ -3,6 +3,13 @@
 Every backend is driven through the ``LoginAgent`` seam with its own
 subprocess/registry boundary patched, so launchd, systemd, and Windows startup
 are all covered on the macOS dev machine without requiring those OSes.
+
+The implementation moved to ``corvidae.login_agent`` in issue #42, and this file
+deliberately still drives it through ``huginn.agent_install``: what it covers is
+that *Huginn's* login agents behave as they did, spec and all. Only the two
+assertions that patch a stdlib module the implementation uses (``time``,
+``tempfile``) reach into ``corvidae.login_agent``, because that is where the code
+under test now lives. corvidae has its own tests for the generic behaviour.
 """
 from __future__ import annotations
 
@@ -16,6 +23,8 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
+
+from corvidae import login_agent
 
 from huginn import agent_install
 from huginn.agent_install import (
@@ -363,17 +372,21 @@ class WriteWithBackupHardeningTests(unittest.TestCase):
             self.assertEqual(unit.read_text(), "[Service]\nnew\n")
 
     def test_the_temp_name_is_not_predictable(self):
+        # Patched at corvidae's module rather than huginn's since issue #42 moved
+        # the implementation there. Still driven through
+        # ``agent_install._write_with_backup``, because Huginn's entry point and
+        # its ``.huginn-bak.`` tag are what this file is here to cover.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             names = []
-            real_mkstemp = agent_install.tempfile.mkstemp
+            real_mkstemp = login_agent.tempfile.mkstemp
 
             def record(**kwargs):
                 fd, name = real_mkstemp(**kwargs)
                 names.append(Path(name).name)
                 return fd, name
 
-            with patch.object(agent_install.tempfile, "mkstemp", side_effect=record):
+            with patch.object(login_agent.tempfile, "mkstemp", side_effect=record):
                 for index in range(3):
                     agent_install._write_with_backup(root / f"unit{index}", "x")
 
@@ -406,7 +419,7 @@ class WriteWithBackupHardeningTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "huginn.service"
             path.write_text("old")
-            with patch.object(agent_install.time, "time", return_value=1000):
+            with patch.object(login_agent.time, "time", return_value=1000):
                 (Path(tmp) / "huginn.service.huginn-bak.1000").write_text("planted")
                 with self.assertRaises(FileExistsError):
                     agent_install._write_with_backup(path, "new")

@@ -426,7 +426,7 @@ package example.
 
 ## Shared internals: corvidae
 
-Three parts of Huginn are reusable outside it, and were being reimplemented
+Several parts of Huginn are reusable outside it, and were being reimplemented
 elsewhere purely because nothing promised they would keep working. They now live
 in **[`corvidae`](packages/corvidae/)**, a stdlib-only package in this repo that
 is published separately and depends on nothing (least of all on Huginn):
@@ -436,15 +436,23 @@ is published separately and depends on nothing (least of all on Huginn):
   rotation, partial-line carry).
 - `redact_secrets` — credential redaction for text leaving a transcript.
 - `Session` / `SessionState` / `STATE_RANK` / `ATTENTION_STATES`.
+- `LoginAgentSpec` / `get_login_agent` and the launchd/systemd/Windows backends —
+  the start-at-login machinery behind `huginn install-agent`, including the
+  plist/unit injection refusals and the 0600 write-with-backup discipline.
+- `state_dir` / `publish_descriptor` / `withdraw_descriptor` /
+  `descriptor_is_live` and `sanitize_label` — the shared-directory half of the
+  raven protocol, plus the sanitiser for untrusted menu text. What Huginn's
+  descriptor *says*, its menu, and its `/api/menu` endpoint stay here: they are
+  authenticated and offer actions, which the other raven deliberately does not.
 
 **These names are stable within a CalVer year.** The exact surface, signatures,
-guaranteed `Tail` behaviour, and the two explicit non-promises are documented in
+guaranteed behaviour, and the explicit non-promises are documented in
 [packages/corvidae/README.md](packages/corvidae/README.md#stability-contract).
 Anything not listed there is an implementation detail.
 
-Huginn re-exports all of them from their original module paths — `huginn.model`,
-`huginn.sources.transcript`, `huginn.llm.context` — so existing plugins and forks
-need no changes. Nothing else in `huginn.*` carries a compatibility promise; the
+Huginn keeps all of them working from their original module paths — `huginn.model`,
+`huginn.sources.transcript`, `huginn.llm.context`, `huginn.agent_install`,
+`huginn.raven` — so existing plugins and forks need no changes. Nothing else in `huginn.*` carries a compatibility promise; the
 plugin contract in `huginn.plugins` has its own, versioned separately (see
 [API version ranges](docs/plugins.md#api-version-ranges)).
 

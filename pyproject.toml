@@ -6,10 +6,12 @@ license = "Apache-2.0"
 requires-python = ">=3.12"
 dependencies = [
     # Shared, independently versioned internals (transcript tailing, credential
-    # redaction, session shapes) with a declared stability contract -- issue #42.
-    # Pinned to the CalVer year corvidae promises compatibility within; see
-    # packages/corvidae/README.md.
-    "corvidae>=2026.7.31,<2027",
+    # redaction, session shapes, start-at-login supervision, raven descriptors)
+    # with a declared stability contract -- issue #42. Pinned to the CalVer year
+    # corvidae promises compatibility within; see packages/corvidae/README.md.
+    # The floor is 2026.8.1 because agent_install and raven now import
+    # corvidae.login_agent/descriptor/label, which 2026.7.31 does not have.
+    "corvidae>=2026.8.1,<2027",
     "fastapi>=0.115",
     "uvicorn>=0.30",
     "watchfiles>=0.24",

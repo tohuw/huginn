@@ -32,17 +32,32 @@ titles, and blurbs derive from directory names, transcripts, and LLM output --
 attacker-influenceable text on its way into a desktop menu -- and the host
 sanitising them at its end is defence in depth for the host, not permission for
 us to emit control characters.
+
+The parts of this that are the *protocol* rather than Huginn's opinion moved to
+``corvidae.descriptor`` and ``corvidae.label`` -- issue #42: the shared
+state-directory resolution, the atomic 0600 publish, the ownership-checked
+withdraw, and the ANSI/C1/bidi label sanitiser were byte-identical in both raven
+projects, and the resolution rule in particular fails *silently* when two
+participants disagree. What stayed is everything a second raven would not want:
+the descriptor's contents, the menu, and the actions. Muninn's descriptor carries
+no token and its rows are links, so a shared payload builder or menu shape would
+force a form neither project chose.
 """
 from __future__ import annotations
 
-import json
 import os
-import re
-import sys
-import tempfile
 import time
 from pathlib import Path
 from typing import Any, Iterable
+
+from corvidae.descriptor import (
+    STATE_DIR_ENV,
+    descriptor_path as _shared_descriptor_path,
+    publish_descriptor,
+    state_dir,
+    withdraw_descriptor,
+)
+from corvidae.label import MAX_DETAIL, MAX_LABEL, sanitize_label
 
 from . import config
 from .llm.context import redact_secrets
@@ -72,82 +87,45 @@ ACTION_ENDPOINT = "/api/menu/action"
 
 #: Environment override for the shared descriptor directory, part of the
 #: contract: it is what lets a test harness point a raven and the host at the
-#: same alternate location.
-STATE_DIR_ENV = "RAVENS_STATE_DIR"
+#: same alternate location. Bound from corvidae so nothing here can drift from
+#: the name the host actually reads.
+STATE_DIR_ENV = STATE_DIR_ENV
 
 
 # ── Descriptor location ───────────────────────────────────────────────────────
-
-def state_dir() -> Path:
-    """Return the shared descriptor directory.
-
-    Resolution order, which *is* the contract and must match the host and every
-    other raven byte for byte:
-
-    1. ``$RAVENS_STATE_DIR`` when set and non-empty.
-    2. Windows: ``%LOCALAPPDATA%\\Ravens``, falling back to
-       ``~\\AppData\\Local\\Ravens``.
-    3. POSIX: ``$XDG_STATE_HOME/ravens``, falling back to
-       ``~/.local/state/ravens``.
-
-    Note this honours ``XDG_STATE_HOME`` while ``config.STATE_DIR`` does not.
-    That asymmetry is deliberate, not an oversight: Huginn's own state directory
-    is Huginn's business and moving it is a compatibility change of its own,
-    whereas this directory is *shared*. Replicating Huginn's quirk here would
-    publish where the host is not looking on any machine that sets
-    ``XDG_STATE_HOME``, and the failure would be silent -- an empty menu with
-    nothing to explain it.
-    """
-    override = os.environ.get(STATE_DIR_ENV, "").strip()
-    if override:
-        return Path(override).expanduser()
-    if sys.platform == "win32":
-        local = os.environ.get("LOCALAPPDATA", "").strip()
-        base = Path(local) if local else Path.home() / "AppData" / "Local"
-        return base / "Ravens"
-    xdg = os.environ.get("XDG_STATE_HOME", "").strip()
-    base = Path(xdg) if xdg else Path.home() / ".local" / "state"
-    return base / "ravens"
-
+#
+# ``state_dir`` is corvidae's, imported above and re-exported so
+# ``huginn.raven.state_dir`` keeps working. Its resolution order *is* the
+# protocol -- ``$RAVENS_STATE_DIR``, then ``%LOCALAPPDATA%\Ravens`` on Windows,
+# then ``$XDG_STATE_HOME/ravens`` -- and it honours ``XDG_STATE_HOME`` while
+# ``config.STATE_DIR`` does not. That asymmetry is deliberate, not an oversight:
+# Huginn's own state directory is Huginn's business and moving it is a
+# compatibility change of its own, whereas this directory is *shared*, so
+# replicating Huginn's quirk would publish where the host is not looking on any
+# machine that sets ``XDG_STATE_HOME`` -- and the failure would be silent, an
+# empty menu with nothing to explain it. Shared code rather than a documented
+# convention for exactly that reason (issue #42).
 
 def descriptor_path() -> Path:
-    return state_dir() / f"{NAME}.json"
+    """Where Huginn's own descriptor lives, inside the shared directory."""
+    return _shared_descriptor_path(NAME)
 
 
 # ── Text safety ───────────────────────────────────────────────────────────────
 #
-# Mirrors the host's own sanitising rules rather than importing them: the host is
-# a separate project we do not depend on, and "the host will clean it up" is not
-# a reason to put an ANSI escape on the wire.
+# The sanitiser itself is ``corvidae.label.sanitize_label`` -- issue #42. It
+# mirrors the host's own rules (ANSI/OSC sequences, C0/C1/DEL, bidi overrides and
+# zero-width characters, a whitespace collapse) and both raven projects had the
+# same regex set, down to including C1 because a lone 0x9b is an alternate CSI
+# introducer. "The host will clean it up" is still not a reason to put an ANSI
+# escape on the wire: the host defends itself from a hostile raven, while this
+# defends Huginn's users from transcript content Huginn is the one that read.
 
-# CSI/OSC and the two-character escapes, matched before the control-class strip
-# so the whole sequence goes rather than leaving its printable tail ("[31m").
-_ANSI_RE = re.compile(
-    r"\x1b(?:\[[0-9;:<=>?]*[ -/]*[@-~]"
-    r"|\][^\x07\x1b]*(?:\x07|\x1b\\)"
-    r"|[@-Z\\-_])"
-)
-# C0 minus the whitespace handled below, DEL, and C1 -- a lone 0x9b is an
-# alternate CSI introducer on some terminals.
-_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
-# Bidi overrides and invisible formatting characters: these reorder a rendered
-# label after the fact, so a menu row can read as something other than the bytes
-# behind it.
-_SPOOF_RE = re.compile(
-    "["
-    "​-‏"
-    "‪-‮"
-    "⁠-⁤"
-    "⁦-⁩"
-    "﻿"
-    "]"
-)
-_WHITESPACE_RE = re.compile(r"[\s   -     　]+")
-
-#: Host-side caps. Emitting more would be silently truncated there, so these are
-#: enforced here where the text is still ours to shorten sensibly.
-MAX_LABEL = 120
-MAX_DETAIL = 80
+#: Host-side caps, bound from corvidae rather than re-declared here. Emitting more
+#: would be silently truncated there, so they are enforced here where the text is
+#: still ours to shorten sensibly.
+MAX_LABEL = MAX_LABEL
+MAX_DETAIL = MAX_DETAIL
 MAX_ACTION_ID = 128
 
 #: Per-section caps, chosen well under the host's 50-per-section / 200-total
@@ -166,26 +144,27 @@ MAX_ACTION_BODY = 8 * 1024
 def safe_text(value: object, limit: int = MAX_LABEL) -> str:
     """Reduce ``value`` to one bounded, printable line fit for a menu label.
 
-    Redaction runs *before* the length cap on purpose: clipping first could cut a
-    credential shape in half so the pattern no longer matches, leaving a partial
-    secret on screen. It runs at all because a menu label carries title, blurb,
-    and plugin-summary text -- titles arrive straight from ``PUT
+    ``corvidae.label.sanitize_label`` plus redaction, in that order and then
+    sanitised again. Redaction runs *before* the length cap on purpose: clipping
+    first could cut a credential shape in half so the pattern no longer matches,
+    leaving a partial secret on screen. That is why the cap is applied here rather
+    than passed down -- corvidae is asked for an uncapped clean line first.
+
+    Redaction runs at all because a menu label carries title, blurb, and
+    plugin-summary text -- titles arrive straight from ``PUT
     /api/sessions/{key}/title`` and plugin summaries from installed code, neither
     of which has been through the transcript-distillation seam that already
-    redacts peek/blurb/Ask text.
+    redacts peek/blurb/Ask text. It is composed here rather than built into
+    corvidae because it is Huginn's decision: Muninn sanitises its labels and
+    deliberately does not redact them, and a shared sanitiser that redacted
+    unconditionally would take that choice away from it (issue #42).
     """
-    if not isinstance(value, str):
+    cleaned = sanitize_label(value, 0)
+    if not cleaned:
         return ""
-    cleaned = _ANSI_RE.sub("", value)
-    cleaned = _CONTROL_RE.sub("", cleaned)
-    cleaned = _SPOOF_RE.sub("", cleaned)
-    # Any escape byte left over was not part of a recognised sequence.
-    cleaned = cleaned.replace("\x1b", "")
-    cleaned = _WHITESPACE_RE.sub(" ", cleaned).strip()
-    cleaned = redact_secrets(cleaned)
-    cleaned = _WHITESPACE_RE.sub(" ", cleaned).strip()
-    if limit > 0 and len(cleaned) > limit:
-        cleaned = cleaned[: max(limit - 1, 0)].rstrip() + "…"
+    # Re-sanitised after redaction: the replacement text is ours, but collapsing
+    # whitespace again keeps the spacing tidy where a secret was excised.
+    cleaned = sanitize_label(redact_secrets(cleaned), limit)
     return cleaned
 
 
@@ -483,54 +462,34 @@ def descriptor_payload(port: int, *, pid: int | None = None, started: float | No
 def publish(port: int, *, pid: int | None = None, started: float | None = None) -> Path:
     """Write Huginn's descriptor atomically and return where it landed.
 
-    Atomic because the host may read at any moment and must never see a partial
-    file; the temp file is staged in the same directory so the replace cannot
-    cross a filesystem boundary. 0600 for the same reason ``daemon.json`` is
-    (issue #41): this holds no secret, but it names a port and a token path that
-    another process reads and acts on, so integrity matters where
-    confidentiality does not.
+    The write itself is ``corvidae.publish_descriptor`` (issue #42), which is
+    atomic because the host may read at any moment and must never see a partial
+    file, stages the temp file in the same directory so the replace cannot cross a
+    filesystem boundary, and lands the file 0600 and the directory 0700. 0600 for
+    the same reason ``daemon.json`` is (issue #41): this holds no secret, but it
+    names a port and a token path that another process reads and acts on, so
+    integrity matters where confidentiality does not. An existing shared directory
+    is never retightened -- it belongs to every raven, not to Huginn.
+
+    Only the payload is Huginn's, which is exactly the split: Muninn's descriptor
+    carries no token at all.
     """
-    directory = state_dir()
-    try:
-        # Only ever created owner-only, and never chmodded if it already exists:
-        # this directory is shared with other ravens, and silently retightening
-        # another project's directory is not ours to do.
-        directory.mkdir(parents=True, mode=0o700)
-    except FileExistsError:
-        pass
-    target = directory / f"{NAME}.json"
-    fd, tmp_name = tempfile.mkstemp(prefix=f".{NAME}.", dir=str(directory))
-    tmp = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            json.dump(descriptor_payload(port, pid=pid, started=started),
-                      stream, indent=2, sort_keys=True)
-            stream.write("\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        tmp.chmod(0o600)
-        os.replace(tmp, target)
-    finally:
-        tmp.unlink(missing_ok=True)
-    return target
+    return publish_descriptor(
+        NAME, descriptor_payload(port, pid=pid, started=started))
 
 
 def withdraw(pid: int | None = None) -> None:
     """Remove our descriptor if it is still ours, best-effort.
 
-    Ownership is checked the same way the ``daemon.json`` teardown checks it: a
-    second daemon that lost the port race, or a replacement that already
-    republished, must not have its descriptor deleted by our exit. If this never
-    runs at all the host still copes, because it verifies the recorded pid before
-    trusting the file -- so there is no reason to add machinery guaranteeing it.
+    Ownership is checked inside ``corvidae.withdraw_descriptor``, the same way the
+    ``daemon.json`` teardown checks it: a second daemon that lost the port race, or
+    a replacement that already republished, must not have its descriptor deleted by
+    our exit. If this never runs at all the host still copes, because it verifies
+    the recorded pid before trusting the file -- so there is no reason to add
+    machinery guaranteeing it. Returns nothing, unlike the shared helper, because
+    the daemon's teardown has nothing to do with the answer.
     """
-    process_id = os.getpid() if pid is None else pid
-    path = descriptor_path()
-    try:
-        if json.loads(path.read_text(encoding="utf-8")).get("pid") == process_id:
-            path.unlink()
-    except (OSError, ValueError, AttributeError):
-        pass
+    withdraw_descriptor(NAME, pid=pid)
 
 
 __all__ = [

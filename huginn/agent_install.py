@@ -33,11 +33,17 @@ Windows
 from __future__ import annotations
 
 import os
+import plistlib
 import subprocess
 import sys
+import tempfile
 import time
 from abc import ABC, abstractmethod
 from pathlib import Path
+
+# O_NOFOLLOW exists on every platform this module's backends actually run on;
+# on Windows the LoginAgent is the registry, which never reaches this code.
+_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 
 LABEL = "is.tohuw.huginn"
 PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{LABEL}.plist"
@@ -55,34 +61,6 @@ RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 # separate value name keeps the two from silently overwriting each other.
 TRAY_RUN_VALUE = "Huginn"
 DAEMON_RUN_VALUE = "HuginnDaemon"
-
-_PLIST_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>{label}</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>{python}</string>
-        <string>-m</string>
-        <string>huginn.cli</string>
-        <string>serve</string>
-        <string>--no-open</string>
-    </array>
-    <key>WorkingDirectory</key>
-    <string>{cwd}</string>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>{log}</string>
-    <key>StandardErrorPath</key>
-    <string>{log}</string>
-</dict>
-</plist>
-"""
 
 _UNIT_TEMPLATE = """[Unit]
 Description=Huginn local AI coding-session monitor
@@ -103,23 +81,125 @@ WantedBy=default.target
 
 
 def _plist_xml() -> str:
-    return _PLIST_TEMPLATE.format(
-        label=LABEL, python=sys.executable, cwd=REPO_ROOT, log=LOG_PATH)
+    """The launchd plist, serialized by ``plistlib`` rather than string-formatted.
+
+    issue #41 C3: this was a ``str.format`` into XML with zero escaping, and
+    ``{cwd}`` is ``REPO_ROOT`` -- a filesystem path -- while ``{python}`` is
+    ``sys.executable``. A directory name containing XML injected arbitrary keys
+    into *persistent auto-start config*: a ``sys.executable`` payload became
+    extra ``ProgramArguments`` (verified: ``['-c', '__import__("os").system(...)']``),
+    and a ``REPO_ROOT`` payload added a whole
+    ``EnvironmentVariables``/``DYLD_INSERT_LIBRARIES`` dict that ``plistlib``
+    parses cleanly. ``KeepAlive`` then relaunches it forever. "My first payload
+    broke the XML" is not a mitigation; ``plistlib.dumps`` of a real dict is,
+    because there is no longer a text template for a value to escape out of.
+    """
+    return plistlib.dumps({
+        "Label": LABEL,
+        "ProgramArguments": [
+            str(sys.executable), "-m", "huginn.cli", "serve", "--no-open",
+        ],
+        "WorkingDirectory": str(REPO_ROOT),
+        "RunAtLoad": True,
+        # Huginn.app owns the daemon lifecycle and this deliberately conflicts
+        # with that -- see the module docstring. Preserved unchanged.
+        "KeepAlive": True,
+        "StandardOutPath": str(LOG_PATH),
+        "StandardErrorPath": str(LOG_PATH),
+    }).decode()
+
+
+def _systemd_value(name: str, value: str) -> str:
+    """One systemd unit value, or a clear error if it cannot be represented.
+
+    issue #41 C3: the unit was a ``str.format`` too, so a newline in
+    ``REPO_ROOT`` injected arbitrary directives -- verified with an
+    ``ExecStartPre=/bin/sh -c ...`` line landing in a persistent user unit.
+
+    ``\\n`` and ``\\r`` end a directive and so cannot be represented at all;
+    ``%`` is systemd's specifier prefix (``%h``, ``%t``, ...) and would expand
+    at load time into something other than the path meant. Rejecting is right
+    rather than escaping: these are a Python executable path and this repo's own
+    location, so a value containing them is a broken install to be reported, not
+    a case to accommodate. ``systemd.syntax`` double-quoting covers the rest.
+    """
+    for forbidden, why in (("\n", "a newline"), ("\r", "a carriage return"),
+                           ("%", "a '%' specifier prefix")):
+        if forbidden in value:
+            raise ValueError(
+                f"cannot write a systemd unit: {name} contains {why} ({value!r}). "
+                "Move the checkout to a path without it, or install the daemon "
+                "some other way."
+            )
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 def _unit_text() -> str:
-    return _UNIT_TEMPLATE.format(python=sys.executable, cwd=REPO_ROOT)
+    return _UNIT_TEMPLATE.format(
+        python=_systemd_value("the Python executable", str(sys.executable)),
+        cwd=_systemd_value("the Huginn checkout path", str(REPO_ROOT)))
 
 
 def _write_with_backup(path: Path, text: str) -> None:
-    """Back up any existing file, then publish the new one atomically."""
+    """Back up any existing file, then publish the new one atomically.
+
+    issue #41 H3, all of which was verified against the previous version:
+
+    * A **symlinked target** made the backup read through the link and write a
+      0600 secret into a 0644 ``.huginn-bak.<ts>`` file, and ``os.replace``
+      would then publish over whatever the link named. Refused outright: this
+      function writes launchd/systemd config, and that is never a symlink in a
+      healthy install.
+    * A **pre-planted ``<name>.tmp`` symlink** was written *through*, and
+      ``os.replace`` then made the unit path itself an attacker-owned symlink.
+      ``mkstemp`` gives an unpredictable name and ``O_CREAT|O_EXCL|O_NOFOLLOW``
+      semantics, so there is nothing to pre-plant and nothing to follow.
+    * A fresh plist/unit was **0644** at the default umask, and a backup of a
+      0600 file became 0644. Both are 0600 now, matching what this codebase
+      already does for ``config.secure_dir``/``write_token``/``_write_snapshot``.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_symlink():
+        raise ValueError(
+            f"refusing to write {path}: it is a symlink. A login-agent config "
+            "file is never a symlink in a healthy install, and following one "
+            "would publish this content wherever it points."
+        )
     if path.exists():
         backup = path.with_name(path.name + f".huginn-bak.{int(time.time())}")
-        backup.write_text(path.read_text())
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text)
-    os.replace(tmp, path)
+        # 0600 *before* any content lands: the file being copied may itself be
+        # secret, and a world-readable backup of it is the leak.
+        with open(os.open(backup, os.O_CREAT | os.O_EXCL | os.O_WRONLY | _NOFOLLOW, 0o600),
+                  "w") as handle:
+            handle.write(path.read_text())
+    # mkstemp: unpredictable name, O_CREAT|O_EXCL|O_NOFOLLOW, mode 0600.
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with open(fd, "w") as handle:
+            handle.write(text)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def _unlink_config(path: Path) -> None:
+    """Remove a login-agent config file, refusing to follow a symlink.
+
+    issue #41 H3: ``uninstall`` unlinked ``UNIT_PATH`` directly, and that path
+    follows ``$XDG_CONFIG_HOME``. ``Path.unlink`` removes the link rather than
+    its target, so the original was not an arbitrary-deletion primitive -- but a
+    symlink here means the *installed* agent was not the file we think it was,
+    which is worth refusing loudly rather than quietly tidying away.
+    """
+    if path.is_symlink():
+        raise ValueError(
+            f"refusing to act on {path}: it is a symlink, not the login-agent "
+            "config this installed. Remove it by hand after checking where it points."
+        )
+    path.unlink()
 
 
 def _launchctl(*args: str) -> subprocess.CompletedProcess:
@@ -177,7 +257,7 @@ class LaunchdAgent(LoginAgent):
             print("not installed")
             return 0
         _launchctl("unload", "-w", str(PLIST_PATH))
-        PLIST_PATH.unlink()
+        _unlink_config(PLIST_PATH)
         print(f"removed {PLIST_PATH}")
         return 0
 
@@ -212,7 +292,7 @@ class SystemdUserAgent(LoginAgent):
             print("not installed")
             return 0
         _systemctl("disable", "--now", UNIT_NAME)
-        UNIT_PATH.unlink()
+        _unlink_config(UNIT_PATH)
         _systemctl("daemon-reload")
         print(f"removed {UNIT_PATH}")
         return 0

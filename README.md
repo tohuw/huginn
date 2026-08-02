@@ -61,6 +61,23 @@ a separate tab and starts a guided walkthrough in the Ask panel.
 
 ### macOS menu-bar app
 
+There are now two menu-bar options, and this is one of them. The other is
+[Roost](https://github.com/tohuw/roost), the shared status menu bar described in
+[Shared status menu bar](#shared-status-menu-bar) below. If you run Muninn as well
+as Huginn, or you are on Windows, Roost is the one to want; the native app below
+is superseded for that case, and neither is going away.
+
+| | Native app (below) | Roost |
+| --- | --- | --- |
+| Shows | Huginn only | every running raven — Huginn and Muninn in one item |
+| Platforms | macOS | macOS and Windows |
+| Dependencies | none: Swift compiled against AppKit by `macos/build-app.sh` | a Python environment (`rumps` on macOS, `pystray` on Windows, plus `markdown`/`nh3` for its help page) |
+| Daemon lifecycle | owns it — launches, quits, and restarts the daemon | none: it reports status and launches nothing |
+| Extensibility | fixed menu, compiled in | renders whatever menu Huginn's `/api/menu` returns, with no change on its side |
+
+The two can be installed at once — they are separate processes reading the same
+API — but two icons for one console is the situation the shared bar exists to end.
+
 Build the native menu-bar app into `~/Applications`:
 
 ```sh
@@ -105,6 +122,14 @@ menu bar that can show several tools at once. It is opt-out only in the sense
 that a menu bar has to be installed separately — Huginn publishes whether or not
 one is running, and publishing is best-effort, so nothing about the console
 depends on it.
+
+The menu bar itself is **[Roost](https://github.com/tohuw/roost)**, a separate
+Apache-2.0 project: one macOS menu bar / Windows tray item that renders whichever
+ravens are running — today Huginn and [Muninn](https://github.com/tohuw/muninn).
+Its `SPEC.md` is normative for the wire format below, and nothing here is specific
+to it: Huginn publishes a descriptor and serves a menu, and any host implementing
+that protocol would work. Install it from its own repository; Huginn does not
+depend on it, ship it, or install it.
 
 While the daemon is serving it writes one descriptor:
 
@@ -429,11 +454,13 @@ package example.
 Several parts of Huginn are reusable outside it, and were being reimplemented
 elsewhere purely because nothing promised they would keep working. They now live
 in **[`corvidae`](packages/corvidae/)**, a stdlib-only package in this repo that
-is published separately and depends on nothing (least of all on Huginn):
+is published separately — [on PyPI](https://pypi.org/project/corvidae/), Apache-2.0
+— and depends on nothing (least of all on Huginn):
 
 - `Tail` — the seek-from-end JSONL transcript tailer, with its awkward edges
   (a record larger than the read window, truncation below the stored offset,
-  rotation, partial-line carry).
+  rotation, partial-line carry) — plus `ClaudeAnalyzer` / `CodexAnalyzer`, the
+  per-dialect readers that turn tailed records into an activity dictionary.
 - `redact_secrets` — credential redaction for text leaving a transcript.
 - `Session` / `SessionState` / `STATE_RANK` / `ATTENTION_STATES`.
 - `LoginAgentSpec` / `get_login_agent` and the launchd/systemd/Windows backends —
@@ -478,15 +505,14 @@ The repo is a `uv` workspace: `packages/corvidae/` is a second distributable, so
 `uv build --all-packages` builds both wheels and `uv sync` resolves corvidae from
 the checkout rather than an index.
 
-One release prerequisite, since Huginn's wheel now declares `corvidae` as an
-ordinary dependency: **corvidae must be reachable from an index before the next
-Huginn release is published.** A consumer that installs Huginn by Git reference
-(`huginn @ git+https://…@<sha>`) cannot resolve a workspace member from that URL,
-so until corvidae is on PyPI such a consumer needs to point at it explicitly:
+That workspace layout used to be a release prerequisite: Huginn's wheel declares
+`corvidae` as an ordinary dependency, and a consumer installing Huginn by Git
+reference (`huginn @ git+https://…@<sha>`) cannot resolve a workspace member from
+that URL. **That is settled — `corvidae` is on PyPI**, so a Git-reference consumer
+resolves it from the index like any other dependency and needs no
+`[tool.uv.sources]` override. Recorded because the constraint is easy to
+reintroduce: a *new* workspace member that Huginn depends on would have the same
+problem again, and the fix is publishing it, not pinning around it.
 
-```toml
-[tool.uv.sources]
-corvidae = { git = "https://github.com/tohuw/huginn", tag = "<tag>", subdirectory = "packages/corvidae" }
-```
-
-In-repo development is unaffected.
+In-repo development is unaffected either way — `uv sync` still resolves corvidae
+from the checkout, so a local change to it is picked up without a release.

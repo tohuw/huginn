@@ -21,12 +21,22 @@ it and route each OS boundary back through this module's ``_launchctl``/
 against ``corvidae.LoginAgent`` and each corvidae backend still holds, which is
 the property a consumer could actually depend on.
 
-The hardening from #41/#43 came along unchanged and is documented at its new
-home: ``plistlib.dumps`` rather than an XML template, systemd rejecting ``\\n``
+The hardening came along unchanged and is documented at its new home:
+``plistlib.dumps`` rather than an XML template, systemd rejecting ``\\n``
 /``\\r``/``%``, ``_write_with_backup``'s symlink refusal and ``mkstemp`` +
 0600-before-content discipline, launchd keeping ``KeepAlive`` while systemd uses
 ``Restart=on-failure``, and the Windows path refusing to install while the tray
 owns startup.
+
+Where it came from, stated precisely because the test files below cite it by
+number: it is the output of a **security review of the surface #41 added**, not of
+#41's own scope. #41 was "Plugin registry is purely additive: no way to express
+'only these models may be used'" -- the model-policy chokepoint -- and the review
+of that change swept this file too, which is where the ``C``/``H``/``M`` finding
+ids in ``tests/test_agent_install.py`` come from. #39 is the issue that built this
+mechanism ("No lag reporting for derived state, and background install is
+launchd-only" -- it covered both halves). #43 contributed the teardown ordering,
+not the file discipline.
 
 Restart policy differs per OS on purpose:
 

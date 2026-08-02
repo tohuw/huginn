@@ -16,9 +16,12 @@ cases that are expensive to get right once (issue
   second consumer describes agent state the same way Huginn does.
 - **`LoginAgentSpec` / `get_login_agent`** — start-at-login supervision, one
   backend per OS (launchd, systemd user units, the Windows Run key), with the
-  injection and file-permission hardening from
-  [#41](https://github.com/tohuw/huginn/issues/41) intact. Originally
-  [#39](https://github.com/tohuw/huginn/issues/39), built with sharing in mind.
+  injection and file-permission hardening intact. Originally
+  [#39](https://github.com/tohuw/huginn/issues/39) ("No lag reporting for derived
+  state, and background install is launchd-only"), built with sharing in mind; the
+  hardening came out of a security review of the surface
+  [#41](https://github.com/tohuw/huginn/issues/41) added, not from #41's own scope,
+  which was the model-policy chokepoint.
 - **`state_dir` / `publish_descriptor` / `withdraw_descriptor` /
   `descriptor_is_live`** — the raven descriptor protocol's shared directory and
   file discipline. The resolution rule in particular *must* match every other

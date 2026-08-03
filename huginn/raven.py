@@ -33,6 +33,28 @@ attacker-influenceable text on its way into a desktop menu -- and the host
 sanitising them at its end is defence in depth for the host, not permission for
 us to emit control characters.
 
+**Lifecycle belongs to the raven, and starting belongs to the OS.** Huginn
+publishes ``quit`` and ``restart`` rows, which is what the native macOS and
+Windows menu-bar apps offered before the shared host replaced them. They are
+ordinary action ids: the host draws the label and posts the id back exactly as it
+does for ``focus:claude:1``, and it never learns that one of them ends the process
+it is talking to. That is why adding them moved neither ``MAX_API`` nor anything
+on the host side.
+
+There is no ``start`` id, and there cannot be one. A stopped daemon has withdrawn
+its descriptor, so there is no menu for the row to live in and no process to serve
+it -- the row would have to be offered by something that is not running. Asking the
+host to spawn us instead would hand a shared menu bar an interpreter path to
+execute, which is the shape ``daemon.json``'s ``python``/``repo`` fields already
+needed 0600, an ownership check, and a group/world-writable check on every parent
+directory to make safe (issue #41 M5), and multiplying that across every raven is
+worse than not having a start button. Start-at-login is ``install-agent``'s job,
+where the exec path sits with launchd, systemd, or the Run key -- a supervisor
+already built to hold one. Note the consequence a user will meet: launchd's
+``KeepAlive`` relaunches the daemon after a clean exit, so with the login agent
+installed a **Quit** may not stick, which is the same conflict the macOS app
+documented and not something a menu row can mediate.
+
 The parts of this that are the *protocol* rather than Huginn's opinion moved to
 ``corvidae.descriptor`` and ``corvidae.label`` -- issue #42: the shared
 state-directory resolution, the atomic 0600 publish, the ownership-checked
@@ -186,6 +208,26 @@ FOCUS_PREFIX = "focus:"
 DISMISS_PREFIX = "dismiss:"
 OPEN_CONSOLE = "open-console"
 
+#: Lifecycle ids. These carry the two things the superseded macOS and Windows
+#: menu-bar apps did that the shared host deliberately will not: **Quit Huginn**
+#: stopped the daemon and Option-click swapped in **Restart**. Both are now rows
+#: Huginn publishes and handles itself.
+#:
+#: They are ordinary ids, and that is the whole design. The host draws the label
+#: and posts the id back exactly as it does for ``focus:claude:1``; it does not
+#: know that one of these ends the process it is talking to, and Roost's SPEC.md
+#: §10 makes that indistinguishability normative. Nothing about the protocol
+#: reserves these words -- which is why adding them needed no version bump and
+#: why ``MAX_API`` below is unchanged.
+#:
+#: There is deliberately **no start id.** A stopped daemon has withdrawn its
+#: descriptor, so there is no menu for a "Start Huginn" row to live in and no
+#: process to serve it. Starting at login is ``huginn install-agent``'s job
+#: (launchd/systemd/Run key), which puts the exec path in the OS supervisor
+#: rather than in a menu bar -- see the module docstring's closing note.
+QUIT = "quit"
+RESTART = "restart"
+
 
 def _action_id(prefix: str, key: str) -> str:
     """Return an action id for ``key``, or "" when it cannot be one.
@@ -335,6 +377,20 @@ def build_menu(sessions: Iterable[Session], *, now: float | None = None) -> dict
         "items": [_row("Open Console", action=OPEN_CONSOLE)],
     })
 
+    # Lifecycle, last: it is the destructive part of the menu and belongs below
+    # everything a user opens the menu to read. Both rows are what the native
+    # menu-bar apps offered ("Quit Huginn", and Restart behind Option-click);
+    # Restart is a plain row here rather than a hidden alternate because the host
+    # renders labels and has no modifier-key vocabulary to hide one behind -- and
+    # a menu item nobody can discover is not a replacement for one they could.
+    sections.append({
+        "id": "lifecycle",
+        "items": [
+            _row(f"Quit {DISPLAY}", action=QUIT, style="muted"),
+            _row(f"Restart {DISPLAY}", action=RESTART, style="muted"),
+        ],
+    })
+
     return {
         "api_version": MAX_API,
         # Replaces the descriptor's display name for this render. Kept constant:
@@ -367,6 +423,10 @@ def perform_action(daemon: Any, action_id: object) -> dict:
     try:
         if action_id == OPEN_CONSOLE:
             return _open_console(daemon)
+        if action_id == QUIT:
+            return _stop(daemon, restart=False)
+        if action_id == RESTART:
+            return _stop(daemon, restart=True)
         if action_id.startswith(FOCUS_PREFIX):
             session = daemon.reducer.sessions.get(action_id[len(FOCUS_PREFIX):])
             if session is None:
@@ -399,6 +459,32 @@ def _open_console(daemon: Any) -> dict:
     port = daemon.cfg.get("server", "port")
     webbrowser.open(f"http://127.0.0.1:{port}/#t={daemon.token}")
     return {"ok": True}
+
+
+def _stop(daemon: Any, *, restart: bool) -> dict:
+    """Stop (or restart) this daemon, answering the host before we go.
+
+    The ordering is the substance of this function. ``daemon.request_stop`` only
+    *asks* -- it sets uvicorn's ``should_exit`` and returns -- so this returns a
+    normal reply that gets serialised and written to the socket, and the process
+    unwinds afterwards. Exiting here instead would make a successful quit look to
+    the host like an action that failed: it is still holding an open request with
+    a 5 s budget, and a dropped connection is indistinguishable from a wedged
+    raven.
+
+    It routes through ``request_stop`` rather than signalling or exiting for a
+    second reason: that path is uvicorn's graceful shutdown, so the ``finally`` in
+    ``Daemon.run`` runs and withdraws the descriptor, ``daemon.json``, and the
+    token (issue #43). The macOS app this replaces sent SIGTERM and escalated to
+    SIGKILL after a second, which is precisely how those three files got orphaned.
+
+    A daemon that is not serving refuses instead of pretending: the row was drawn
+    from a live menu, so this should not happen, but "no server to stop" is a fact
+    to report rather than a success to fake.
+    """
+    if not daemon.request_stop(restart=restart):
+        return {"ok": False, "error": "daemon is not serving"}
+    return {"ok": True, "restarting" if restart else "stopping": True}
 
 
 def _dismiss(daemon: Any, key: str) -> dict:
@@ -494,7 +580,7 @@ def withdraw(pid: int | None = None) -> None:
 
 __all__ = [
     "ACTION_ENDPOINT", "DISMISS_PREFIX", "DISPLAY", "FOCUS_PREFIX", "MAX_ACTION_BODY",
-    "MAX_API", "MENU_ENDPOINT", "MIN_API", "NAME", "OPEN_CONSOLE",
+    "MAX_API", "MENU_ENDPOINT", "MIN_API", "NAME", "OPEN_CONSOLE", "QUIT", "RESTART",
     "build_menu", "descriptor_path", "descriptor_payload", "perform_action",
     "publish", "safe_text", "state_dir", "withdraw",
 ]

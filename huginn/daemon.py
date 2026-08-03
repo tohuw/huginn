@@ -52,6 +52,15 @@ class Daemon:
         self.active_chat: asyncio.Task | None = None
         self.steering_confirmations = ConfirmationStore()
         self.diagnostics = Diagnostics()   # issue #15
+        # The uvicorn server, once run() has one. Held so a menu-bar lifecycle
+        # action can ask for the *same* graceful shutdown a signal gets (issue
+        # #43) rather than a second, harder stop path of its own. None until
+        # serving, which is why request_stop() refuses instead of assuming.
+        self._server = None
+        #: Set by a Restart action so the exit path knows to come back up. Read
+        #: after asyncio.run() returns, where the teardown has already withdrawn
+        #: the descriptor, the state file, and the token.
+        self._restart_requested = False
         self.plugins = get_registry()
         from .llm.blurb import BlurbWorker
         self.blurbs = BlurbWorker(self)
@@ -425,6 +434,7 @@ class Daemon:
             timeout_graceful_shutdown=2,
         )
         server = uvicorn.Server(uv_cfg)
+        self._server = server
         # Uvicorn handles SIGTERM by setting should_exit, but on the way out of
         # capture_signals() it restores the default handler and *re-raises* the
         # captured signal. For SIGINT that re-raise becomes KeyboardInterrupt,
@@ -538,18 +548,60 @@ class Daemon:
         LOG.info("huginn: %s received, shutting down", signal_name)
         server.should_exit = True
 
+    def request_stop(self, *, restart: bool = False) -> bool:
+        """Ask the running server to shut down gracefully. True if it will.
+
+        This is what a menu-bar **Quit**/**Restart** row reaches (see
+        ``raven.perform_action``), and it deliberately sets the same
+        ``should_exit`` flag a SIGTERM does rather than adding a shutdown path of
+        its own. That matters because the reliable teardown is the *finally* in
+        ``run()``: it withdraws the raven descriptor, ``daemon.json``, and the
+        token, and it only runs if uvicorn returns from ``serve()`` normally
+        (issue #43). A hard kill from here -- the thing the superseded Swift app
+        escalated to -- would orphan exactly those three files.
+
+        ``should_exit``, not ``force_exit``: the caller is an in-flight HTTP
+        request, and forcing would drop the very response that tells the menu bar
+        the quit was accepted. This returns *without* waiting, so the response is
+        written first and the shutdown happens once the loop is next free -- which
+        is the whole reason the action does not simply exit.
+
+        Returns False when there is no server to stop (a daemon constructed in a
+        test, or one not yet serving) so the caller can report that rather than
+        silently appearing to succeed.
+        """
+        server = self._server
+        if server is None:
+            return False
+        # Recorded before the flag is set: once should_exit is observed the loop
+        # may unwind at any moment, and the exit path reads this.
+        self._restart_requested = bool(restart)
+        LOG.info("huginn: menu asked for %s", "restart" if restart else "quit")
+        server.should_exit = True
+        return True
+
     def _write_daemon_state(self, port: int) -> None:
-        # "python"/"repo" let a tray app relaunch a dead daemon without
-        # guessing where Huginn lives -- the macOS app used to hardcode one
-        # developer's checkout (issue #37). Additive: pid/port/started keep
-        # their meaning for existing readers.
+        # "python"/"repo" were added so a tray app could relaunch a dead daemon
+        # without guessing where Huginn lives -- the macOS app used to hardcode
+        # one developer's checkout (issue #37).
         #
-        # 0600, not the bare write_text's 0644 -- issue #41 M5. This holds no
-        # secret, but macos/HuginnMenuBar.swift *executes* the "python" path
-        # from it, so integrity matters even where confidentiality does not.
-        # Only the 0700 parent stood between that and any process able to write
-        # here, and its 0600 siblings (token, sessions.json) already set the
-        # precedent.
+        # **Nothing executes them any more.** Both menu-bar apps that did are
+        # deleted, and their replacement (Roost) deliberately starts nothing, so
+        # these two fields now have no consumer in this repository. They are kept
+        # rather than dropped because the file is a documented surface others read
+        # (`huginn doctor` reports on it, and an external script may well parse
+        # it), and because "which interpreter is this daemon running under" is
+        # genuinely useful diagnostic output. If a future reader wants to remove
+        # them, the thing to check first is that nothing outside this tree reads
+        # them -- not that nothing inside it does.
+        #
+        # 0600, not the bare write_text's 0644 -- issue #41 M5. The original
+        # reason was that the Swift app *executed* the "python" path from here, so
+        # integrity mattered where confidentiality did not. That executor is gone
+        # and the mode stays: it costs nothing, its 0600 siblings (token,
+        # sessions.json) already set the precedent, and re-loosening a file
+        # because its most dangerous reader happens to be absent today is how it
+        # ends up 0644 when the next one arrives.
         state_path = config.STATE_DIR / "daemon.json"
         state_path.write_text(json.dumps({
             "pid": os.getpid(),
@@ -563,13 +615,40 @@ class Daemon:
 
 
 def run(cfg: config.Config, open_browser: bool = True) -> int:
-    daemon = Daemon(cfg)
-    try:
-        return asyncio.run(daemon.run(open_browser=open_browser))
-    except KeyboardInterrupt:
-        return 0
-    except OSError as e:
-        if "address already in use" in str(e).lower():
-            print("huginn: daemon already running (port busy)")
-            return 1
-        raise
+    """Serve until asked to stop, coming back up if a Restart was requested.
+
+    The loop is what makes the menu bar's **Restart** row work, and it restarts
+    *in this process* rather than re-execing. That is deliberate: re-exec would
+    mean building an argv and an interpreter path to run, which is the
+    write-then-execute shape issue #41 M5 hardened ``daemon.json`` against. There
+    is nothing to resolve here -- the code is already loaded and the config is
+    already parsed.
+
+    A fresh ``Daemon`` per iteration rather than reusing one, because a restart
+    has to look like a restart to everything watching: ``boot_id`` is new (which
+    is how the dashboard tells "same daemon" from "it came back"), the reducer and
+    tails start clean, and the snapshot written by the previous teardown is what
+    carries state across. Reusing the instance would keep a stale ``_server`` and a
+    sticky ``_restart_requested``, and would make the second run's teardown the
+    first run's teardown all over again.
+    """
+    while True:
+        daemon = Daemon(cfg)
+        try:
+            result = asyncio.run(daemon.run(open_browser=open_browser))
+        except KeyboardInterrupt:
+            return 0
+        except OSError as e:
+            if "address already in use" in str(e).lower():
+                print("huginn: daemon already running (port busy)")
+                return 1
+            raise
+        if not daemon._restart_requested:
+            return result
+        # The teardown in Daemon.run has already withdrawn the descriptor, the
+        # token, and daemon.json, and uvicorn closed the listening socket it was
+        # handed -- so the next iteration binds the same port cleanly and
+        # republishes. Never open a browser on the way back: a restart is not a
+        # first launch, and the user is looking at the menu, not asking for a tab.
+        LOG.info("huginn: restarting")
+        open_browser = False

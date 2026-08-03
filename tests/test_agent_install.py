@@ -65,10 +65,13 @@ class LaunchdAgentTests(unittest.TestCase):
     """macOS behaviour, including the deliberate KeepAlive conflict."""
 
     def test_keepalive_stays_in_the_plist(self):
-        # Huginn.app owns the daemon lifecycle; launchd's KeepAlive would
-        # resurrect a daemon the user quit. README documents removing this
-        # agent first, so the incompatibility must remain real, not silently
-        # papered over by dropping KeepAlive.
+        # launchd's KeepAlive resurrects a daemon the user quit. That used to
+        # conflict with Huginn.app owning the lifecycle; with that app deleted it
+        # conflicts with the menu bar's Quit row instead, which is the same
+        # trade-off and is documented the same way (uninstall-agent first). The
+        # incompatibility must stay real rather than be papered over by dropping
+        # KeepAlive, which would quietly change the restart policy for every user
+        # who installed the agent for it.
         xml = agent_install._plist_xml()
         self.assertIn("<key>KeepAlive</key>", xml)
         self.assertIn("<key>RunAtLoad</key>", xml)
@@ -503,7 +506,9 @@ class WindowsStartupAgentTests(unittest.TestCase):
     """Windows behaviour, verified on the macOS dev host through the seam."""
 
     def test_install_writes_a_separate_run_value_from_the_tray(self):
-        # windows/Huginn.Tray owns "Huginn"; the CLI must not overwrite it.
+        # The deleted windows tray owned "Huginn". The CLI must still not
+        # overwrite it: the code is gone, but the registry value it wrote is
+        # still on the machines that ran it.
         winreg = _FakeWinreg()
         with (patch.object(agent_install, "_winreg", return_value=winreg),
               redirect_stdout(io.StringIO()) as out):
@@ -515,19 +520,22 @@ class WindowsStartupAgentTests(unittest.TestCase):
         # The Run key starts a process once; it is not a supervisor.
         self.assertIn("does not restart it", out.getvalue())
 
-    def test_install_defers_to_the_tray_when_it_owns_startup(self):
-        # Two supervisors is the same double-owner mistake as launchd vs
-        # Huginn.app: the tray would fight a daemon the user just quit.
+    def test_install_defers_to_a_leftover_tray_autostart(self):
+        # Two autostarts would resurrect a daemon the user just quit. This is the
+        # test that matters *more* now the tray is deleted, not less: an upgraded
+        # machine has the stale "Huginn" value and no tray to explain it, so the
+        # refusal is the only thing that tells the user what is going on.
         winreg = _FakeWinreg({agent_install.TRAY_RUN_VALUE: r'"C:\Huginn\Huginn.exe"'})
         with (patch.object(agent_install, "_winreg", return_value=winreg),
               redirect_stderr(io.StringIO()) as stderr):
             self.assertEqual(WindowsStartupAgent().install(), 1)
         self.assertNotIn(agent_install.DAEMON_RUN_VALUE, winreg.values)
-        self.assertIn("tray app already starts huginn at login", stderr.getvalue())
+        self.assertIn("already starts huginn at login", stderr.getvalue())
 
     def test_install_prefers_pythonw_to_avoid_a_console_window(self):
-        # python.exe would flash a console window at every login, which the
-        # tray shell already goes out of its way to avoid.
+        # python.exe would flash a console window at every login. Still the right
+        # behaviour with the tray gone: this is the only Windows autostart now, so
+        # it is the only thing standing between a login and a stray console.
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / "pythonw.exe").write_text("")
             with patch.object(agent_install.sys, "executable", str(Path(tmp) / "python.exe")):

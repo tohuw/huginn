@@ -4,7 +4,12 @@ name: CI
 # metered Actions minutes are spent on every push/PR (this matrix is macOS +
 # Windows, the expensive 10x/2x multipliers). Trigger this by hand when you want
 # the full cross-OS matrix — e.g. before a release or after touching anything
-# portability-sensitive (LaunchAgent, iTerm focus, the Windows tray).
+# portability-sensitive (LaunchAgent, iTerm focus, the Windows paths in
+# huginn/platform/windows.py).
+#
+# There is no tray build step any more: the .NET tray shell and the Swift
+# menu-bar app were removed in favour of Roost, which is a separate repository
+# with its own CI. Nothing in this workflow needs a dotnet or swiftc toolchain.
 on:
   workflow_dispatch:
 
@@ -90,11 +95,3 @@ jobs:
 
       - name: Build wheels
         run: uv build --all-packages
-
-      - name: Build Windows tray
-        run: dotnet build windows/Huginn.Tray/Huginn.Tray.csproj --configuration Release
-
-      - name: Package portable tray
-        if: matrix.python-version == '3.12'
-        shell: pwsh
-        run: .\windows\build.ps1

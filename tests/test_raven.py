@@ -535,7 +535,8 @@ class MenuShapeTests(unittest.TestCase):
         payload = raven.build_menu(sessions)
         ids = [i["action_id"] for s in parse_menu(payload)["sections"]
                for i in s["items"] if i["action_id"]]
-        handled = {raven.OPEN_CONSOLE, *(f"focus:{s.key}" for s in sessions),
+        handled = {raven.OPEN_CONSOLE, raven.QUIT, raven.RESTART,
+                   *(f"focus:{s.key}" for s in sessions),
                    *(f"dismiss:{s.key}" for s in sessions)}
 
         self.assertTrue(ids)
@@ -749,7 +750,13 @@ class ActionTests(unittest.TestCase):
         self.assertIn("#t=test-token", opener.call_args.args[0])
 
     def test_unknown_action_is_refused_cleanly(self):
-        for action_id in ("nope", "focus", "focus:", "restart", "dismiss:claude:1",
+        # "restart" used to belong in this list and no longer does -- it is a real
+        # id now (see LifecycleActionTests). It was removed rather than left to
+        # pass, because it would have passed for the wrong reason: a daemon with no
+        # server refuses it, so the assertion would have held while testing
+        # nothing. "quit"/"restart" near-misses stand in for the shape instead.
+        for action_id in ("nope", "focus", "focus:", "quit:", "re-start", "Restart",
+                          "dismiss:claude:1",
                           "focus:../../etc/passwd", "f" * 200, "", None, 7, {"id": "x"}):
             with self.subTest(action_id=action_id):
                 result = raven.perform_action(self.daemon, action_id)
@@ -787,6 +794,213 @@ class ActionTests(unittest.TestCase):
         self.assertNotIn("/secret/path", json.dumps(self.daemon.diagnostics.snapshot()))
         self.assertEqual(
             self.daemon.diagnostics.snapshot()["raven_action"]["last_error_class"], "RuntimeError")
+
+
+# ── Lifecycle actions ─────────────────────────────────────────────────────────
+
+class LifecycleActionTests(unittest.TestCase):
+    """Quit and Restart, which the superseded native menu-bar apps owned.
+
+    The property that matters is not "the flag gets set" but *which* path gets
+    taken: uvicorn's graceful shutdown, so the ``finally`` in ``Daemon.run``
+    withdraws the descriptor, ``daemon.json``, and the token (issue #43). The
+    macOS app sent SIGTERM and escalated to SIGKILL, which is how those files got
+    orphaned in the first place.
+    """
+
+    def setUp(self):
+        self.daemon = Daemon(Config({}))
+        self.daemon.token = "test-token"
+
+    def test_quit_and_restart_are_rows_huginn_publishes(self):
+        payload = raven.build_menu([])
+        section = next(s for s in parse_menu(payload)["sections"] if s["id"] == "lifecycle")
+
+        self.assertEqual([i["action_id"] for i in section["items"]],
+                         [raven.QUIT, raven.RESTART])
+        # Both must survive the host's parser as live rows. The host forces an
+        # item with neither an id nor a url inert, so this also proves the ids
+        # were not silently dropped for being unpublishable.
+        for item in section["items"]:
+            self.assertTrue(item["enabled"])
+
+    def test_quit_asks_the_server_for_a_graceful_shutdown(self):
+        """should_exit, never force_exit -- and never a signal or a kill.
+
+        force_exit would drop the in-flight response that tells the menu bar the
+        quit was accepted, and would skip the drain Ctrl-C has always got.
+        """
+        class _Server:
+            should_exit = False
+            force_exit = False
+
+        server = _Server()
+        self.daemon._server = server
+
+        result = raven.perform_action(self.daemon, raven.QUIT)
+
+        self.assertEqual(result, {"ok": True, "stopping": True})
+        self.assertTrue(server.should_exit)
+        self.assertFalse(server.force_exit)
+        self.assertFalse(self.daemon._restart_requested)
+
+    def test_restart_asks_for_the_same_shutdown_and_marks_the_comeback(self):
+        class _Server:
+            should_exit = False
+            force_exit = False
+
+        server = _Server()
+        self.daemon._server = server
+
+        result = raven.perform_action(self.daemon, raven.RESTART)
+
+        self.assertEqual(result, {"ok": True, "restarting": True})
+        self.assertTrue(server.should_exit)
+        self.assertFalse(server.force_exit)
+        self.assertTrue(self.daemon._restart_requested)
+
+    def test_quit_answers_without_exiting_the_process(self):
+        """The ordering rule: reply first, unwind afterwards.
+
+        A raven that exits inside its own request handler makes a successful quit
+        look like a failed action -- the host is holding an open request with a 5 s
+        budget, and a dropped connection reads as a wedged raven. Asserted by the
+        fact that this test keeps running and gets a return value at all: a
+        ``sys.exit`` or ``os._exit`` in ``_stop`` would take the test process with
+        it.
+        """
+        class _Server:
+            should_exit = False
+            force_exit = False
+
+        self.daemon._server = _Server()
+
+        result = raven.perform_action(self.daemon, raven.QUIT)
+
+        self.assertTrue(result["ok"])
+        # Still here, still the same process, and the server was only *asked*.
+        self.assertTrue(self.daemon._server.should_exit)
+
+    def test_lifecycle_actions_refuse_when_nothing_is_serving(self):
+        """No server is a fact to report, not a success to fake."""
+        self.assertIsNone(self.daemon._server)
+
+        for action_id in (raven.QUIT, raven.RESTART):
+            with self.subTest(action_id=action_id):
+                result = raven.perform_action(self.daemon, action_id)
+
+                self.assertEqual(result, {"ok": False, "error": "daemon is not serving"})
+
+    def test_a_near_miss_lifecycle_id_is_refused(self):
+        """Matched exactly, never parsed for intent.
+
+        These are the ids a host bug, a stale menu, or a hostile caller would
+        produce. An id that merely *looks* like a quit must not stop the daemon.
+        """
+        class _Server:
+            should_exit = False
+            force_exit = False
+
+        server = _Server()
+        self.daemon._server = server
+
+        for action_id in ("quit:", "quit ", "QUIT", "Quit", "restart-now",
+                          "quit\nrestart", "re start", "shutdown", "stop"):
+            with self.subTest(action_id=action_id):
+                result = raven.perform_action(self.daemon, action_id)
+
+                self.assertFalse(result["ok"])
+                # The important half: nothing was asked to shut down.
+                self.assertFalse(server.should_exit, action_id)
+
+    def test_no_start_action_is_published_or_accepted(self):
+        """There is no start id, by construction -- see the module docstring.
+
+        A stopped daemon has no descriptor, so a "Start Huginn" row would have to
+        be served by a process that is not running. This pins that nothing pretends
+        otherwise: no such row is emitted, and an id claiming to be one is refused.
+        """
+        ids = {i["action_id"] for s in parse_menu(raven.build_menu([]))["sections"]
+               for i in s["items"] if i["action_id"]}
+        for candidate in ("start", "launch", "start-daemon", "serve"):
+            self.assertNotIn(candidate, ids)
+
+            result = raven.perform_action(self.daemon, candidate)
+            self.assertFalse(result["ok"])
+
+    def test_the_lifecycle_rows_sort_last(self):
+        """Destructive rows below everything the menu is opened to read."""
+        sections = [s["id"] for s in parse_menu(raven.build_menu([]))["sections"]]
+
+        self.assertEqual(sections[-1], "lifecycle")
+
+    def test_a_quit_action_reaches_the_real_teardown(self):
+        """End to end: a POSTed quit id withdraws the descriptor and the token.
+
+        The other tests here assert the flag and the reply; this one runs the
+        actual ``Daemon.run`` teardown and checks the files are gone, which is the
+        behaviour the Swift app's SIGKILL escalation broke. It drives the action
+        through ``perform_action`` rather than calling ``request_stop`` directly, so
+        the wiring from a menu click to the teardown is what is covered.
+        """
+        import asyncio
+        import socket
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        orig_state, orig_token = config.STATE_DIR, config.TOKEN_PATH
+        config.STATE_DIR = Path(tmp.name) / "huginn"
+        config.STATE_DIR.mkdir(parents=True)
+        config.TOKEN_PATH = config.STATE_DIR / "token"
+        orig_env = os.environ.get("RAVENS_STATE_DIR")
+        os.environ["RAVENS_STATE_DIR"] = str(Path(tmp.name) / "ravens")
+
+        def restore():
+            config.STATE_DIR, config.TOKEN_PATH = orig_state, orig_token
+            if orig_env is None:
+                os.environ.pop("RAVENS_STATE_DIR", None)
+            else:
+                os.environ["RAVENS_STATE_DIR"] = orig_env
+
+        self.addCleanup(restore)
+
+        daemon = Daemon(Config({}))
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.bind(("127.0.0.1", 0))
+            daemon.cfg.update("server", "port", probe.getsockname()[1])
+
+        seen: dict[str, object] = {}
+
+        async def fake_serve(_server, sockets=None):
+            # Mid-flight, exactly where a menu click lands: the descriptor is
+            # published and the daemon is serving.
+            seen["published"] = raven.descriptor_path().exists()
+            seen["reply"] = raven.perform_action(daemon, raven.QUIT)
+            # A real server returns from serve() once should_exit is observed;
+            # returning here is that same unwinding.
+
+        with patch("uvicorn.Server.serve", new=fake_serve), \
+             patch("huginn.daemon.Daemon.claude_watcher", new=_noop), \
+             patch("huginn.daemon.Daemon.transcript_watcher", new=_noop), \
+             patch("huginn.daemon.Daemon.codex_poller", new=_noop), \
+             patch("huginn.daemon.Daemon.codex_rollout_watcher", new=_noop), \
+             patch("huginn.daemon.Daemon.ticker", new=_noop), \
+             patch("huginn.daemon.Daemon.desktop_poller", new=_noop), \
+             patch("huginn.daemon.Daemon.chatgpt_desktop_poller", new=_noop), \
+             patch("huginn.daemon.Daemon.wsl_poller", new=_noop), \
+             patch("huginn.daemon.Daemon.reducer_loop", new=_noop):
+            asyncio.run(daemon.run(open_browser=False))
+
+        self.assertTrue(seen["published"])
+        self.assertEqual(seen["reply"], {"ok": True, "stopping": True})
+        # The teardown ran: a stopped raven leaves no descriptor, no state file,
+        # and no token behind. This is the issue #43 guarantee, reached from a
+        # menu click rather than from a signal.
+        self.assertFalse(raven.descriptor_path().exists())
+        self.assertFalse((config.STATE_DIR / "daemon.json").exists())
+        self.assertFalse(config.TOKEN_PATH.exists())
+        # Quit, not restart: nothing asked for a comeback.
+        self.assertFalse(daemon._restart_requested)
 
 
 if __name__ == "__main__":

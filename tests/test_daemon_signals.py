@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import signal
 import unittest
+import unittest.mock
 
 from huginn import config
 from huginn.daemon import Daemon
@@ -131,6 +132,169 @@ class TerminationHandlerTests(unittest.IsolatedAsyncioTestCase):
                 loop.remove_signal_handler(sig)
             except (NotImplementedError, RuntimeError, ValueError):   # pragma: no cover
                 pass
+
+
+class MenuRequestedShutdownTests(unittest.TestCase):
+    """``request_stop`` is the seam a menu-bar Quit/Restart row reaches.
+
+    It exists so a menu click takes the *same* path a signal does rather than a
+    second stop path of its own -- which is what keeps the teardown above the only
+    teardown there is.
+    """
+
+    def setUp(self):
+        self.daemon = Daemon(config.Config({}))
+
+    def test_it_asks_for_the_same_graceful_shutdown_a_signal_does(self):
+        server = _FakeServer()
+        self.daemon._server = server
+
+        self.assertTrue(self.daemon.request_stop())
+
+        self.assertTrue(server.should_exit)
+        # force_exit would drop the in-flight response that tells the menu bar the
+        # quit was accepted, and skip the drain SIGTERM already gets.
+        self.assertFalse(server.force_exit)
+
+    def test_a_restart_records_the_comeback_before_setting_the_flag(self):
+        """Order matters: once should_exit is set the loop may unwind at once.
+
+        Setting the flag first and the intent second would race -- the exit path
+        could read ``_restart_requested`` before it was written and quit instead of
+        restarting.
+        """
+        import inspect
+
+        source = inspect.getsource(Daemon.request_stop)
+        recorded_at = source.find("_restart_requested =")
+        flagged_at = source.find("should_exit = True")
+        self.assertNotEqual(recorded_at, -1)
+        self.assertNotEqual(flagged_at, -1)
+        self.assertLess(recorded_at, flagged_at)
+
+    def test_restart_and_quit_are_distinguishable_to_the_exit_path(self):
+        self.daemon._server = _FakeServer()
+        self.assertTrue(self.daemon.request_stop(restart=True))
+        self.assertTrue(self.daemon._restart_requested)
+
+        other = Daemon(config.Config({}))
+        other._server = _FakeServer()
+        self.assertTrue(other.request_stop(restart=False))
+        self.assertFalse(other._restart_requested)
+
+    def test_it_refuses_when_there_is_no_server(self):
+        """A daemon that is not serving reports that rather than faking success."""
+        self.assertIsNone(self.daemon._server)
+        self.assertFalse(self.daemon.request_stop())
+        self.assertFalse(self.daemon.request_stop(restart=True))
+        # And a refusal must not leave a restart armed for a later run.
+        self.assertFalse(self.daemon._restart_requested)
+
+    def test_it_never_signals_or_exits(self):
+        """The stop is a flag, not a kill.
+
+        The superseded macOS app sent SIGTERM and escalated to SIGKILL after a
+        second, which is how the descriptor, ``daemon.json``, and the token got
+        orphaned. Nothing in this path may reach a signal or an exit.
+        """
+        import ast
+        import inspect
+        import textwrap
+
+        # The *code*, not the prose: the docstring names SIGKILL deliberately, to
+        # say what this path must not do. Walking the AST for calls is what
+        # distinguishes "explains the hazard" from "is the hazard".
+        tree = ast.parse(textwrap.dedent(inspect.getsource(Daemon.request_stop)))
+        called = {
+            ast.unparse(node.func)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+        }
+        for forbidden in ("os.kill", "kill", "signal.raise_signal", "sys.exit",
+                          "os._exit", "server.terminate", "exit"):
+            self.assertNotIn(forbidden, called)
+        # And no signal constant is *used* as a value anywhere in the body.
+        attributes = {
+            ast.unparse(node)
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.Attribute, ast.Name))
+        }
+        for forbidden in ("signal.SIGTERM", "signal.SIGKILL", "SIGKILL"):
+            self.assertNotIn(forbidden, attributes)
+
+
+class RestartLoopTests(unittest.TestCase):
+    """``daemon.run`` serves again when a Restart was requested, and not otherwise."""
+
+    def test_a_quit_returns_instead_of_serving_again(self):
+        from huginn import daemon as daemon_module
+
+        starts = []
+
+        async def once(self, open_browser=True):
+            starts.append(open_browser)
+            return 0
+
+        with unittest.mock.patch.object(daemon_module.Daemon, "run", once):
+            result = daemon_module.run(config.Config({}), open_browser=False)
+
+        self.assertEqual(result, 0)
+        self.assertEqual(len(starts), 1)
+
+    def test_a_restart_serves_again_with_a_fresh_daemon(self):
+        """A restart must look like a restart to everything watching it.
+
+        A new ``Daemon`` per iteration means a new ``boot_id`` -- which is how the
+        dashboard tells "still the daemon I was talking to" from "it came back" --
+        and a clean reducer. Reusing the instance would also carry the previous
+        run's ``_restart_requested`` and loop forever.
+        """
+        from huginn import daemon as daemon_module
+
+        boot_ids = []
+        browser_flags = []
+
+        async def serve_then_stop(self, open_browser=True):
+            boot_ids.append(self.boot_id)
+            browser_flags.append(open_browser)
+            # Restart on the first pass only, then exit for real.
+            self._restart_requested = len(boot_ids) == 1
+            return 0
+
+        with unittest.mock.patch.object(daemon_module.Daemon, "run", serve_then_stop):
+            result = daemon_module.run(config.Config({}), open_browser=True)
+
+        self.assertEqual(result, 0)
+        self.assertEqual(len(boot_ids), 2)
+        # Fresh instance, so a fresh boot id: the dashboard can see the restart.
+        self.assertNotEqual(boot_ids[0], boot_ids[1])
+        # A restart is not a first launch, so no second browser tab.
+        self.assertEqual(browser_flags, [True, False])
+
+    def test_a_port_conflict_still_reports_rather_than_looping(self):
+        """The pre-existing "address already in use" path must not become a spin."""
+        from huginn import daemon as daemon_module
+
+        attempts = []
+
+        async def busy(self, open_browser=True):
+            attempts.append(1)
+            raise OSError("address already in use")
+
+        with unittest.mock.patch.object(daemon_module.Daemon, "run", busy):
+            result = daemon_module.run(config.Config({}), open_browser=False)
+
+        self.assertEqual(result, 1)
+        self.assertEqual(len(attempts), 1)
+
+    def test_keyboard_interrupt_still_exits_zero(self):
+        from huginn import daemon as daemon_module
+
+        async def interrupted(self, open_browser=True):
+            raise KeyboardInterrupt
+
+        with unittest.mock.patch.object(daemon_module.Daemon, "run", interrupted):
+            self.assertEqual(daemon_module.run(config.Config({}), open_browser=False), 0)
 
 
 if __name__ == "__main__":

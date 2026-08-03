@@ -1,8 +1,15 @@
-"""The daemon.json contract (issue #37). A tray app that finds no live daemon
-has to relaunch one, so the file must say which interpreter and root the
-daemon ran from -- the macOS menu bar used to hardcode a developer's checkout
-instead. Additive only: existing readers (huginn/cli.py, huginn/doctor.py, the
-Windows tray) keep working off pid/port/started."""
+"""The daemon.json contract (issue #37). The file records which interpreter and
+root the daemon ran from, because a tray app that found no live daemon had to
+relaunch one and the macOS menu bar used to hardcode a developer's checkout
+instead.
+
+Both of those trays are now deleted and their replacement (Roost) starts nothing,
+so **no code in this repository executes "python" any more.** The tests below are
+kept as-is regardless, for two reasons worth stating so nobody relaxes them: the
+file is still read by huginn/cli.py and huginn/doctor.py off pid/port/started, and
+the 0600 mode should not be loosened just because its most dangerous reader left.
+A file whose permissions track whoever happens to read it today is a file that is
+0644 when the next reader arrives."""
 from __future__ import annotations
 
 import json
@@ -69,10 +76,11 @@ class DaemonStateFileTests(unittest.TestCase):
     def test_is_not_group_or_world_writable(self):
         # issue #41 M5: written with a bare write_text, so 0644 at the default
         # umask, unlike its 0600 siblings (token, sessions.json). It holds no
-        # secret, but macos/HuginnMenuBar.swift *executes* the "python" path
-        # from it, so integrity matters where confidentiality does not -- and
-        # only the 0700 parent stood between that and any process able to write
-        # here.
+        # secret, but the (now deleted) macos/HuginnMenuBar.swift *executed* the
+        # "python" path from it, so integrity mattered where confidentiality did
+        # not -- and only the 0700 parent stood between that and any process able
+        # to write here. Still asserted with the executor gone: see the module
+        # docstring.
         self._write()
         mode = stat.S_IMODE((config.STATE_DIR / "daemon.json").stat().st_mode)
 

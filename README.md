@@ -59,61 +59,47 @@ API, so it is safe for screenshots, recordings, and demonstrations; closing the
 tab discards all demo changes. The dashboard's **help** button opens the demo in
 a separate tab and starts a guided walkthrough in the Ask panel.
 
-### macOS menu-bar app
+### Menu bar and system tray
 
-There are now two menu-bar options, and this is one of them. The other is
-[Roost](https://github.com/tohuw/roost), the shared status menu bar described in
-[Shared status menu bar](#shared-status-menu-bar) below. If you run Muninn as well
-as Huginn, or you are on Windows, Roost is the one to want; the native app below
-is superseded for that case, and neither is going away.
+Huginn's menu bar is **[Roost](https://github.com/tohuw/roost)**, a separate
+project, described in [Shared status menu bar](#shared-status-menu-bar) below.
+Install it from its own repository; Huginn does not ship, depend on, or install
+it, and publishes its status whether or not one is running.
 
-| | Native app (below) | Roost |
-| --- | --- | --- |
-| Shows | Huginn only | every running raven — Huginn and Muninn in one item |
-| Platforms | macOS | macOS and Windows |
-| Dependencies | none: Swift compiled against AppKit by `macos/build-app.sh` | a Python environment (`rumps` on macOS, `pystray` on Windows, plus `markdown`/`nh3` for its help page) |
-| Daemon lifecycle | owns it — launches, quits, and restarts the daemon | none: it reports status and launches nothing |
-| Extensibility | fixed menu, compiled in | renders whatever menu Huginn's `/api/menu` returns, with no change on its side |
+Huginn used to carry two menu bars of its own — a Swift `Huginn.app` for macOS
+(`macos/`) and a .NET 8 tray shell for Windows (`windows/Huginn.Tray`). **Both are
+removed.** Each showed only Huginn, each was a whole second UI to maintain per
+platform, and the two had already drifted apart. Roost shows every running raven in
+one item on both platforms, and renders whatever `/api/menu` returns without
+needing a change on its side.
 
-The two can be installed at once — they are separate processes reading the same
-API — but two icons for one console is the situation the shared bar exists to end.
+What the old apps did, and where it went:
 
-Build the native menu-bar app into `~/Applications`:
+| Old behaviour | Now |
+| --- | --- |
+| Attention count in the menu bar | Roost's badge, from the same count the dashboard tab title shows |
+| Open the console, focus an agent | rows Huginn publishes; Roost forwards the click back |
+| **Quit Huginn** / Option-click **Restart Huginn** | `quit` and `restart` rows Huginn publishes and handles itself (`huginn/raven.py`), taking the same graceful shutdown a SIGTERM does |
+| Windows **Start at login** toggle | `huginn install-agent` |
+| Launching a stopped daemon | `huginn serve`, or `huginn install-agent` for start-at-login |
 
-```sh
-macos/build-app.sh
-open ~/Applications/Huginn.app
-```
+That last row is the one real loss, and it is deliberate. Nothing in the menu bar
+starts a stopped daemon any more, because a stopped daemon has withdrawn its
+descriptor — a shared menu bar cannot see it, so there is nothing to attach a
+"Start Huginn" row to. Manufacturing one would mean a file naming an interpreter
+for the menu bar to execute, which is exactly what `daemon.json`'s `python`/`repo`
+fields needed 0600, an ownership check, and a group/world-writable check on every
+parent directory to make safe. Multiplying that into a process shared across every
+raven is worse than not having the button. Starting things at login is what
+`install-agent` is for, and it puts the exec path in launchd, systemd, or the
+Windows `Run` key — supervisors already built to hold one.
 
-The app owns the daemon lifecycle, shows an attention count in the menu bar,
-opens the web console, and focuses an agent when you select its permission,
-input, or error entry. **Quit Huginn** stops the daemon; hold Option while the
-menu is open to replace it with **Restart Huginn**. Remove the launchd version
-first with `uv run huginn uninstall-agent`; its `KeepAlive` policy is
-intentionally incompatible with app-owned shutdown.
-
-To relaunch a dead daemon the app looks for an interpreter in this order: a
-runtime bundled in the `.app`, a checkout enclosing the `.app`, the `python`
-and `repo` recorded in `~/.local/state/huginn/daemon.json` by the last daemon,
-the checkout that ran `build-app.sh`, then a `huginn` console script in
-`~/.local/bin`, `/opt/homebrew/bin`, or `/usr/local/bin`. Each candidate is
-verified on disk, so a moved or deleted checkout falls through instead of
-failing to start.
-
-### Windows 11 tray app
-
-Native Windows support includes AppData-backed state, Claude/Codex discovery,
-portable hooks, Windows process/window focus, a .NET 8 tray shell, and a
-portable packaging script. Build from PowerShell with:
-
-```powershell
-.\windows\build.ps1
-```
-
-The current package needs a staged Python runtime or `huginn.exe` on `PATH`.
-Windows Terminal focus is window-level; exact selection of an arbitrary existing
-tab remains a documented limitation. WSL sessions are discovered through a
-bounded in-distribution helper and namespaced separately. See [WINDOWS.md](WINDOWS.md).
+Native Windows support (AppData-backed state, Claude/Codex discovery, portable
+hooks, process/window focus, WSL session discovery) is unaffected by the tray's
+removal: it lives in `huginn/platform/windows.py` and the sources, not in the
+deleted shell. Windows Terminal focus is window-level; exact selection of an
+arbitrary existing tab remains a documented limitation. See
+[WINDOWS.md](WINDOWS.md).
 
 ### Shared status menu bar
 
@@ -158,6 +144,17 @@ and calls two authenticated routes:
   `dismiss:<key>` removes an ended card, and `open-console` opens the dashboard
   with a fresh auth bootstrap. An id Huginn no longer recognises — a session that
   ended between the menu being drawn and clicked — is refused, never guessed at.
+  `quit` and `restart` stop or restart the daemon, replacing what the deleted
+  native apps did. Both go through the *same* graceful shutdown a SIGTERM gets, so
+  the descriptor, `daemon.json`, and the token are withdrawn on the way out rather
+  than orphaned by a kill. Both also reply *before* the process unwinds: a raven
+  that exited inside its own request handler would make a successful quit look to
+  the menu bar like an action that failed.
+
+None of these ids mean anything to the menu bar. `quit` is forwarded exactly as
+`focus:claude:1` is, which is why adding it needed no change in Roost and no
+protocol version bump — and why there is no `start`: see the note under
+[Menu bar and system tray](#menu-bar-and-system-tray).
 
 Both routes sit behind the same token and `Origin`/`Host` checks as the rest of
 the API; there is no unauthenticated menu surface. Session names, titles, and
@@ -179,13 +176,20 @@ The mechanism and its restart policy follow the platform:
 | Windows | `HKCU\...\CurrentVersion\Run\HuginnDaemon` | not restarted |
 
 The differences are deliberate. launchd's `KeepAlive` restarts the daemon even
-after a clean exit, which is why the menu-bar app needs it removed first. The
-systemd unit uses `Restart=on-failure` instead so `systemctl --user stop huginn`
-stays effective; add `loginctl enable-linger $USER` to keep it running between
-logins on a headless host. On Windows the tray app already supervises the daemon
-and registers its own startup entry, so `install-agent` writes a separate value
-name and refuses to run when the tray is already claiming that job — two
-supervisors would resurrect a daemon you just quit.
+after a clean exit. **That means a Quit from the menu bar will not stick while the
+launchd agent is installed** — the daemon shuts down cleanly, withdraws its
+descriptor, and launchd starts it straight back up. That is the agent doing its
+job, not a bug, and it is not something a menu row can mediate: run
+`uv run huginn uninstall-agent` if you want quitting to be final. The systemd unit
+uses `Restart=on-failure` instead so `systemctl --user stop huginn` stays
+effective; add `loginctl enable-linger $USER` to keep it running between logins on
+a headless host. Windows does not restart it at all.
+
+On Windows, `install-agent` writes `HuginnDaemon` and still refuses to run while a
+`Huginn` value — the removed tray's own startup entry — is present under the same
+`Run` key. The guard is kept because a machine that ran the old portable tray still
+has that value, and two autostarts would resurrect a daemon you just quit. See
+[WINDOWS.md](WINDOWS.md).
 
 ### Agent access
 

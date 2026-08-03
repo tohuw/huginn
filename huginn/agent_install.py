@@ -41,19 +41,21 @@ not the file discipline.
 Restart policy differs per OS on purpose:
 
 macOS
-    launchd ``KeepAlive`` restarts the daemon even after a clean exit. That is
-    intentionally incompatible with the menu-bar app owning the daemon
-    lifecycle, so ``Huginn.app`` documents removing this agent first, and the
-    behaviour is preserved unchanged.
+    launchd ``KeepAlive`` restarts the daemon even after a clean exit. It is
+    preserved unchanged, and the consequence is now a *documented* one rather than
+    a conflict with a bundled app: the menu bar's **Quit** row (``raven.QUIT``)
+    shuts the daemon down cleanly, and launchd starts it straight back up. Quitting
+    for good means ``uninstall-agent`` first. That was already true of the deleted
+    ``Huginn.app`` -- which documented the same thing -- so nothing about the policy
+    changed when it went away.
 Linux
     systemd ``Restart=on-failure`` recovers from a crash but honours a
-    deliberate stop. There is no Linux Huginn UI to fight over the lifecycle,
-    so there is no reason to import launchd's known conflict.
+    deliberate stop, so a **Quit** from the menu bar sticks here.
 Windows
-    The tray app already supervises the daemon and owns its own start-at-login
-    registration, so this installs a headless autostart only when the tray is
-    not already claiming that job -- two supervisors is the same double-owner
-    mistake as launchd versus Huginn.app.
+    Not restarted at all. This installs a headless autostart under
+    ``DAEMON_RUN_VALUE`` and still refuses while ``TRAY_RUN_VALUE`` is present --
+    see the note on that constant below: the tray it belonged to is gone, but the
+    registry value it left on real machines is not.
 """
 from __future__ import annotations
 
@@ -76,8 +78,16 @@ LOG_PATH = Path.home() / ".local" / "state" / "huginn" / "agent.log"
 
 UNIT_NAME = "huginn.service"
 
-# windows/Huginn.Tray writes "Huginn" for its own "Start at login" item. A
-# separate value name keeps the two from silently overwriting each other.
+# The removed windows tray shell wrote "Huginn" for its own "Start at login"
+# item. A separate value name kept the two from silently overwriting each other.
+#
+# Kept after that tray was deleted, deliberately. The code is gone from this
+# repository; the registry value it wrote is still sitting in HKCU on every machine
+# that ran it, and nothing removed it on the way out. Dropping this constant would
+# make ``install-agent`` write ``HuginnDaemon`` beside a live ``Huginn`` autostart
+# and produce two daemons at login -- the double-owner bug the guard exists to
+# prevent, reintroduced by a cleanup. It costs one string to keep the refusal
+# working for those users, and the refusal explains itself.
 TRAY_RUN_VALUE = "Huginn"
 DAEMON_RUN_VALUE = "HuginnDaemon"
 
@@ -112,8 +122,12 @@ def spec() -> LoginAgentSpec:
         unit_path=UNIT_PATH,
         registry_value=DAEMON_RUN_VALUE,
         tray_registry_value=TRAY_RUN_VALUE,
-        tray_owner="Windows tray app",
-        windows_note="the tray app supervises the daemon",
+        # Worded for what a user can act on: the tray that wrote this value no
+        # longer exists, so "the tray supervises the daemon" would be advice about
+        # software they cannot find. What they need to know is that a leftover
+        # autostart is in the way and removing it is the fix.
+        tray_owner="a previously installed Huginn tray",
+        windows_note="a removed tray app left its own startup entry behind",
         program_label="the Python executable",
         working_dir_label="the Huginn checkout path",
     )

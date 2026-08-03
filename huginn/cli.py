@@ -102,7 +102,10 @@ def _daemon_api(
 ) -> dict:
     """Call the local authenticated daemon without exposing token mechanics."""
     if not (config.STATE_DIR / "daemon.json").exists():
-        raise RuntimeError("daemon not running (open Huginn.app or run `huginn serve`)")
+        # Names only things that still exist: Huginn.app is deleted, and the shared
+        # menu bar deliberately cannot start a stopped daemon, so pointing a user
+        # at a menu here would be pointing at nothing.
+        raise RuntimeError("daemon not running (try `huginn serve`)")
     try:
         port = (config.STATE_DIR / "port").read_text().strip()
         token = config.TOKEN_PATH.read_text().strip()

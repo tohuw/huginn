@@ -7,6 +7,21 @@ description: Read and explicitly control live Claude, Codex, and Claude Desktop 
 
 Use Huginn's compact CLI as the public boundary to the live agent roster. Retrieve only the session detail needed for the question.
 
+## Command availability
+
+Prefer the installed `huginn` command. Before treating it as unavailable, run
+`command -v huginn`. If it is not on `PATH` but this skill is linked from a
+Huginn checkout, run the same command through that checkout instead:
+
+```sh
+uv run --directory <huginn-checkout> huginn <arguments>
+```
+
+This fallback is intentional: it lets an agent use the public CLI immediately
+from a checkout without mutating the user's shell configuration or installing a
+global tool. Report a daemon-unavailable result normally; do not confuse a
+missing shell command with a stopped daemon.
+
 ## Workflow
 
 1. Start with the smallest useful roster query:

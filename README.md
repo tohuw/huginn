@@ -199,6 +199,16 @@ Install the CLI on `PATH` from this checkout:
 uv tool install --editable .
 ```
 
+Agent skills may also run the checkout-local command without a global install:
+
+```sh
+uv run --directory /path/to/huginn huginn roster
+```
+
+That is the preferred fallback for an agent whose shell cannot resolve
+`huginn`: it keeps the CLI's stable public boundary available without modifying
+the user's `PATH`.
+
 Huginn includes one canonical cross-agent skill at
 `.agents/skills/huginn/SKILL.md`; `.claude/skills/huginn` links to it for
 Claude Code. Install or link that directory into `~/.agents/skills/huginn`

@@ -4,6 +4,7 @@ from __future__ import annotations
 import datetime as dt
 import ctypes
 import os
+from pathlib import Path
 import subprocess
 
 from .base import FocusResult, Platform
@@ -15,6 +16,27 @@ def run(cmd: list[str], timeout: float = 5) -> str:
                           encoding="utf-8", errors="replace").stdout.strip()
     except (subprocess.SubprocessError, OSError):
         return ""
+
+
+def _iterm_control(action: str, tty: str, text: str | None = None) -> bool:
+    """Use an installed native Huginn app when one explicitly owns automation."""
+    helper = os.environ.get("HUGINN_ITERM_CONTROL_APP")
+    if helper:
+        path = Path(helper)
+        if path.is_file() and os.access(path, os.X_OK):
+            command = [str(path), action, tty]
+            if text is not None:
+                command.append(text)
+            return run(command, timeout=10) == "ok"
+    script = {
+        "--iterm-focus": _OSA_FOCUS_TTY,
+        "--iterm-send": _OSA_SEND_TTY,
+        "--iterm-interrupt": _OSA_INTERRUPT_TTY,
+    }[action]
+    command = ["osascript", "-e", script, tty]
+    if text is not None:
+        command.append(text)
+    return run(command, timeout=10) == "ok"
 
 
 _OSA_FOCUS_TTY = '''
@@ -191,21 +213,21 @@ class MacOSPlatform(Platform):
         if not tty:
             return FocusResult(False, detail="terminal tty not found")
         dev = tty if tty.startswith("/dev/") else f"/dev/{tty}"
-        ok = run(["osascript", "-e", _OSA_FOCUS_TTY, dev], timeout=10) == "ok"
+        ok = _iterm_control("--iterm-focus", dev)
         return FocusResult(ok, "iTerm2" if ok else None, None if ok else "iTerm2 tab not found")
 
     def send_terminal_text(self, pid: int | None, tty: str | None, text: str) -> FocusResult:
         if not tty:
             return FocusResult(False, detail="terminal tty not found")
         dev = tty if tty.startswith("/dev/") else f"/dev/{tty}"
-        ok = run(["osascript", "-e", _OSA_SEND_TTY, dev, text], timeout=10) == "ok"
+        ok = _iterm_control("--iterm-send", dev, text)
         return FocusResult(ok, "iTerm2" if ok else None, None if ok else "iTerm2 tab not found")
 
     def interrupt_terminal(self, pid: int | None, tty: str | None) -> FocusResult:
         if not tty:
             return FocusResult(False, detail="terminal tty not found")
         dev = tty if tty.startswith("/dev/") else f"/dev/{tty}"
-        ok = run(["osascript", "-e", _OSA_INTERRUPT_TTY, dev], timeout=10) == "ok"
+        ok = _iterm_control("--iterm-interrupt", dev)
         return FocusResult(ok, "iTerm2" if ok else None, None if ok else "iTerm2 tab not found")
 
     def focus_vscode(self, cwd: str) -> FocusResult:

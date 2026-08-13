@@ -347,7 +347,7 @@ function upsertCard(s) {
   card.dataset.sourceFamily = source.family;
   card.querySelector(".src").textContent = s.source_label || source.label;
   card.querySelector(".name").textContent = s.name;
-  card.querySelector(".name").title = s.session_id;
+  card.querySelector(".name").title = s.name === s.session_id ? s.name : `${s.name}\n${s.session_id}`;
   card.querySelector(".badge").textContent = BADGES[s.state] || s.state;
   card.querySelector(".dur").textContent = fmtAge(s.state_since);
   card.querySelector(".cwd").textContent = s.cwd ? compactPath(s.cwd) : "";

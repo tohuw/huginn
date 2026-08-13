@@ -106,7 +106,11 @@ main { grid-area: main; position: relative; z-index: 0; overflow-y: auto; paddin
   text-transform: uppercase; letter-spacing: .07em; opacity: .82; }
 .card[data-source-family="claude"] .src { color: var(--claude-source); background: #b995730d; }
 .card[data-source-family="openai"] .src { color: var(--openai-source); background: #7798ae0d; }
-.name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.name {
+  flex: 1 1 auto; min-width: 0; font-weight: 700; line-height: 1.25;
+  overflow: hidden; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+}
 .badge { padding: 0 8px; border-radius: 999px; font-size: .8125rem; font-weight: 700;
   text-transform: uppercase; letter-spacing: .05em; color: #100e16; background: var(--idle); }
 .card[data-state="working"] .badge { background: var(--working); }
@@ -138,7 +142,7 @@ main { grid-area: main; position: relative; z-index: 0; overflow-y: auto; paddin
   overflow: hidden; white-space: nowrap; }
 .row2 .cwd { text-overflow: ellipsis; overflow: hidden; }
 .card-title-row { display: flex; align-items: center; min-height: 20px; margin-top: 3px; }
-.card-title { color: var(--fg); font-weight: 600; }
+.card-title { color: var(--fg); font-weight: 600; overflow-wrap: anywhere; }
 .card-title[data-origin="guessed"]::after { content: " guessed"; color: var(--dim);
   font-size: .6875rem; font-weight: 400; text-transform: uppercase; margin-left: 7px; }
 .edit-title { margin-left: auto; border: 0; background: transparent; color: var(--dim);
@@ -189,6 +193,9 @@ main { grid-area: main; position: relative; z-index: 0; overflow-y: auto; paddin
 }
 :is(#grid, #app-grid)[data-view="list"] .card-title {
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+:is(#grid, #app-grid)[data-view="list"] .name {
+  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 :is(#grid, #app-grid)[data-view="list"] .blurb-wrap {
   grid-area: blurb; margin: 0; min-width: 0;

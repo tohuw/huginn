@@ -28,6 +28,22 @@ class CardLayoutTests(unittest.TestCase):
         self.assertRegex(css, re.compile(r"\.card \{[^}]*display: flex; flex-direction: column;", re.S))
         self.assertRegex(css, re.compile(r"\.actions \{[^}]*margin-top: auto;", re.S))
 
+    def test_card_identity_keeps_two_lines_in_cards_and_one_in_lists(self):
+        css = STYLE_CSS.read_text(encoding="utf-8")
+
+        self.assertRegex(
+            css,
+            re.compile(r"\.name \{[^}]*-webkit-line-clamp: 2;", re.S),
+        )
+        self.assertRegex(
+            css,
+            re.compile(
+                r"\[data-view=\"list\"\] \.name \{[^}]*text-overflow: ellipsis;"
+                r"[^}]*white-space: nowrap;",
+                re.S,
+            ),
+        )
+
     def test_native_scale_does_not_use_css_zoom(self):
         css = STYLE_CSS.read_text(encoding="utf-8")
 

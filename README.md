@@ -167,6 +167,10 @@ Huginn's side, rather than relying on the menu bar to clean up after it.
 uv run huginn install-agent     # uv run huginn uninstall-agent to remove
 ```
 
+On macOS this also builds `~/Applications/Huginn.app`, a managed Finder/Spotlight
+entry that opens the running dashboard. `uninstall-agent` removes it, and Huginn
+refuses to overwrite an unrelated bundle at that location.
+
 The mechanism and its restart policy follow the platform:
 
 | Platform | Mechanism | On exit |

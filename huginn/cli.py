@@ -340,12 +340,27 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 def cmd_install_agent(args: argparse.Namespace) -> int:
     from .agent_install import install
-    return install()
+    result = install()
+    if result == 0:
+        from . import app_bundle
+        try:
+            bundle = app_bundle.install()
+        except (OSError, RuntimeError) as exc:
+            print(f"huginn: application bundle not installed: {exc}", file=sys.stderr)
+            return 1
+        if bundle is not None:
+            print(f"application: {bundle}")
+    return result
 
 
 def cmd_uninstall_agent(args: argparse.Namespace) -> int:
     from .agent_install import uninstall
-    return uninstall()
+    result = uninstall()
+    if result == 0:
+        from . import app_bundle
+        if app_bundle.uninstall():
+            print(f"removed application: {app_bundle.bundle_path()}")
+    return result
 
 
 def _bind_missing_std_streams() -> None:

@@ -236,5 +236,35 @@ class AgentCliTests(unittest.TestCase):
         self.assertEqual(calls[2][2]["confirmed"], False)
 
 
+class ConsoleFreeStartupTests(unittest.TestCase):
+    """A pythonw daemon has no standard streams and must still start.
+
+    ``install-agent`` registers pythonw.exe precisely so no console window
+    appears at login, and uvicorn's log config calls ``sys.stdout.isatty()``.
+    With sys.stdout None that raised before the daemon bound its port, so
+    start-at-login on Windows failed while a hand-started daemon worked.
+    """
+
+    def test_missing_streams_are_bound_before_anything_uses_them(self):
+        with patch.object(cli.sys, "stdout", None), patch.object(cli.sys, "stderr", None):
+            cli._bind_missing_std_streams()
+            self.assertIsNotNone(cli.sys.stdout)
+            self.assertIsNotNone(cli.sys.stderr)
+            # What uvicorn actually calls while building its formatter. The
+            # answer does not matter -- on Windows devnull is a character
+            # device and says True, which only costs colour codes nobody
+            # reads. Not raising is the whole point.
+            self.assertIsInstance(cli.sys.stdout.isatty(), bool)
+            cli.sys.stdout.write("discarded")
+            cli.sys.stderr.write("discarded")
+
+    def test_existing_streams_are_left_alone(self):
+        sentinel = io.StringIO()
+        with patch.object(cli.sys, "stdout", sentinel), patch.object(cli.sys, "stderr", sentinel):
+            cli._bind_missing_std_streams()
+            self.assertIs(cli.sys.stdout, sentinel)
+            self.assertIs(cli.sys.stderr, sentinel)
+
+
 if __name__ == "__main__":
     unittest.main()

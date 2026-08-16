@@ -232,7 +232,7 @@ class WindowsPlatform(Platform):
         return [int(row["ProcessId"]) for row in _process_json(f"Name='{escaped}'")]
 
     @staticmethod
-    def _is_app_window(hwnd: int) -> bool:
+    def _is_app_window(hwnd: int, *, require_visible: bool = True) -> bool:
         """Is this a window a user could actually switch to?
 
         ``IsWindowVisible`` alone is far too generous. Explorer keeps a pile of
@@ -243,9 +243,17 @@ class WindowsPlatform(Platform):
         ``WS_EX_TOOLWINDOW``, which is precisely the "keep me out of the
         switcher" flag, so honouring it is what separates them from a terminal.
         A real top-level window with a caption is what remains.
+
+        ``require_visible=False`` is for *activating an app*, where a hidden
+        window is the thing you want rather than the thing to skip. Claude
+        Desktop and ChatGPT both keep running with their main window hidden when
+        you close it -- the ordinary state for a tray app -- and asking Huginn to
+        jump to one is asking for it to be shown again. The other three checks
+        still stand, so an invisible helper is still rejected; only the test that
+        was answering the wrong question is dropped.
         """
         user32 = ctypes.windll.user32
-        if not user32.IsWindowVisible(hwnd):
+        if require_visible and not user32.IsWindowVisible(hwnd):
             return False
         if user32.GetAncestor(hwnd, GA_ROOT) != hwnd:
             return False
@@ -254,7 +262,7 @@ class WindowsPlatform(Platform):
         return user32.GetWindowTextLengthW(hwnd) > 0
 
     @staticmethod
-    def _window_for_processes(pids) -> int | None:
+    def _window_for_processes(pids, *, require_visible: bool = True) -> int | None:
         """First app window owned by these pids, in the order given.
 
         Order is the whole point when the caller passes a process ancestry:
@@ -262,6 +270,10 @@ class WindowsPlatform(Platform):
         Explorer owns perfectly legitimate windows of its own. Nearest ancestor
         first means the terminal hosting the session wins over the file manager
         that happened to start it.
+
+        ``require_visible`` is passed through to :meth:`_is_app_window`; see
+        there for why activating an app wants a hidden window and focusing a
+        terminal does not.
         """
         if os.name != "nt":
             return None
@@ -277,7 +289,9 @@ class WindowsPlatform(Platform):
             user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
             # EnumWindows runs in Z-order, so the first hit per pid is that
             # process's frontmost window.
-            if pid.value in wanted and pid.value not in by_pid and WindowsPlatform._is_app_window(hwnd):
+            if (pid.value in wanted and pid.value not in by_pid
+                    and WindowsPlatform._is_app_window(
+                        hwnd, require_visible=require_visible)):
                 by_pid[pid.value] = hwnd
             return True
 
@@ -484,12 +498,40 @@ class WindowsPlatform(Platform):
             return FocusResult(False, detail="VS Code could not be opened")
 
     def activate_app(self, name: str) -> FocusResult:
+        """Bring a desktop app to the front, showing it if it is hidden.
+
+        A visible window is preferred and a hidden one accepted, in that order.
+        Both Claude Desktop and ChatGPT keep running with their main window
+        hidden after you close it -- the ordinary state for a tray app, and the
+        state they are in most of the time. Requiring visibility meant jump
+        found no window for either and reported "window not found" about an
+        application that was plainly running, which is the bug this fixes.
+
+        A hidden window also has to be *shown*, not merely raised:
+        ``SetForegroundWindow`` on a window without WS_VISIBLE does nothing
+        anyone can see. ``_raise_window`` deliberately only un-minimizes, so
+        that it never un-maximizes a terminal someone maximized on purpose --
+        which makes showing the caller's job rather than its own.
+        """
         aliases = {
             "ChatGPT": ("ChatGPT", "Codex"),
             "Codex": ("Codex", "ChatGPT"),
             "Claude": ("Claude",),
         }
-        pids = {pid for candidate in aliases.get(name, (name,)) for pid in self.find_processes(candidate)}
+        pids = {pid for candidate in aliases.get(name, (name,))
+                for pid in self.find_processes(candidate)}
         hwnd = self._window_for_processes(pids)
-        ok = bool(hwnd and self._raise_window(hwnd))
-        return FocusResult(ok, name if ok else None, None if ok else f"{name} window not found")
+        hidden = False
+        if not hwnd:
+            hwnd = self._window_for_processes(pids, require_visible=False)
+            hidden = bool(hwnd)
+        if not hwnd:
+            return FocusResult(False, None, f"{name} window not found")
+        if hidden and os.name == "nt":
+            ctypes.windll.user32.ShowWindow(hwnd, 5)   # SW_SHOW
+        ok = bool(self._raise_window(hwnd))
+        detail = None
+        if ok and hidden:
+            detail = f"{name} was hidden; its window was restored"
+        return FocusResult(ok, name if ok else None,
+                           detail if ok else f"{name} window could not be raised")

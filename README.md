@@ -291,7 +291,9 @@ the app is present without that recent signal. Renderer activity can come from
 scrolling or other user interaction as well as generation, so app tiles are
 visually separated, sorted outside the urgency queue, and never raise attention.
 The `apps` control—or Ask commands such as “hide desktop presence”—can remove
-that section entirely when app-level context is not useful.
+that section entirely when app-level context is not useful. Jumping to a desktop
+tile restores the app even when it has been closed to the tray, which is the
+state both Claude Desktop and ChatGPT spend most of their time in.
 
 Rule-based states are always on and cost nothing. Automatic LLM titles and
 one-line **blurbs** remain enabled by default; toggle "blurbs" in the top bar

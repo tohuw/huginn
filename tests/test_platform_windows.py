@@ -121,6 +121,85 @@ def test_focus_prefers_the_window_hosting_this_session():
     assert searched == [[10, 11, 12]]
 
 
+def test_a_tray_app_with_a_hidden_window_can_still_be_activated():
+    """Jump reported "window not found" for apps that were plainly running.
+
+    Claude Desktop and ChatGPT keep running with their main window hidden once
+    you close it -- the ordinary state for a tray app, and the state they are in
+    most of the time. Observed live: both had a real captioned top-level window
+    owned by the right process, and IsWindowVisible said False for both, so the
+    visibility test rejected the one window worth having.
+    """
+    adapter = WindowsPlatform()
+    shown = []
+    user32 = MagicMock()
+    user32.ShowWindow.side_effect = lambda hwnd, cmd: shown.append((hwnd, cmd))
+
+    with patch.object(adapter, "find_processes", return_value=[7]), \
+         patch.object(adapter, "_raise_window", return_value=True), \
+         patch.object(WindowsPlatform, "_window_for_processes",
+                      side_effect=[None, 4242]) as lookup, \
+         patch("huginn.platform.windows.os.name", "nt"), \
+         patch("huginn.platform.windows.ctypes.windll", create=True) as windll:
+        windll.user32 = user32
+        result = adapter.activate_app("Claude")
+
+    # Visible first, hidden only as a fallback: a shown window still wins.
+    assert lookup.call_args_list[0].kwargs.get("require_visible") in (None, True)
+    assert lookup.call_args_list[1].kwargs["require_visible"] is False
+    # SW_SHOW, because raising a window without WS_VISIBLE shows nobody anything.
+    assert shown == [(4242, 5)]
+    assert result.ok
+    assert "hidden" in result.detail
+
+
+def test_a_visible_app_window_is_not_re_shown():
+    """SW_SHOW on an already-visible window is noise, and can un-maximize."""
+    adapter = WindowsPlatform()
+    user32 = MagicMock()
+
+    with patch.object(adapter, "find_processes", return_value=[7]), \
+         patch.object(adapter, "_raise_window", return_value=True), \
+         patch.object(WindowsPlatform, "_window_for_processes", return_value=99), \
+         patch("huginn.platform.windows.os.name", "nt"), \
+         patch("huginn.platform.windows.ctypes.windll", create=True) as windll:
+        windll.user32 = user32
+        result = adapter.activate_app("Claude")
+
+    user32.ShowWindow.assert_not_called()
+    assert result.ok
+    assert result.detail is None
+
+
+def test_an_app_that_is_not_running_still_reports_not_found():
+    adapter = WindowsPlatform()
+    with patch.object(adapter, "find_processes", return_value=[]), \
+         patch.object(WindowsPlatform, "_window_for_processes", return_value=None):
+        result = adapter.activate_app("Claude")
+    assert not result.ok
+    assert "not found" in result.detail
+
+
+def test_hidden_windows_stay_out_of_terminal_focus():
+    """The relaxation must not leak into focus_terminal.
+
+    Explorer's invisible bookkeeping windows are exactly what the visibility
+    test exists to reject, and a terminal that is not on screen is not the
+    terminal hosting a session.
+    """
+    user32 = MagicMock()
+    user32.IsWindowVisible.return_value = False
+    user32.GetAncestor.side_effect = lambda hwnd, _flag: hwnd
+    user32.GetWindowLongW.return_value = 0
+    user32.GetWindowTextLengthW.return_value = 12
+
+    with patch("huginn.platform.windows.os.name", "nt"), \
+         patch("huginn.platform.windows.ctypes.windll", create=True) as windll:
+        windll.user32 = user32
+        assert WindowsPlatform._is_app_window(1) is False
+        assert WindowsPlatform._is_app_window(1, require_visible=False) is True
+
+
 def test_helper_windows_are_not_focus_targets():
     """Explorer's visible bookkeeping windows must never be picked.
 

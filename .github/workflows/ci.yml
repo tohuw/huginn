@@ -1,17 +1,26 @@
 name: CI
 
-# Manual-only: the CI floor runs locally on pre-push (.githooks/pre-push) so no
-# metered Actions minutes are spent on every push/PR (this matrix is macOS +
-# Windows, the expensive 10x/2x multipliers). Trigger this by hand when you want
-# the full cross-OS matrix — e.g. before a release or after touching anything
-# portability-sensitive (LaunchAgent, iTerm focus, the Windows paths in
-# huginn/platform/windows.py).
+# Runs on pushes to the default branch and on PRs, matching Muninn and Roost.
+#
+# It was manual-only to save metered Actions minutes (this matrix is macOS +
+# Windows, the expensive 10x/2x multipliers), on the reasoning that the local
+# pre-push hook is the CI floor. That reasoning had a hole: the hook runs on one
+# developer's OS, so the *other* platforms were only ever checked when someone
+# remembered to press the button. Three macOS regressions and a Windows suite
+# that aborted mid-run all shipped through that gap. Cross-platform breakage is
+# precisely what this matrix exists to catch, and it cannot catch it on request.
+#
+# Scoped to the default branch rather than every branch, and dispatchable still,
+# to keep the bill honest.
 #
 # There is no tray build step any more: the .NET tray shell and the Swift
 # menu-bar app were removed in favour of Roost, which is a separate repository
 # with its own CI. Nothing in this workflow needs a dotnet or swiftc toolchain.
 on:
   workflow_dispatch:
+  pull_request:
+  push:
+    branches: [master]
 
 permissions:
   contents: read

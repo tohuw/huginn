@@ -18,7 +18,12 @@ def main() -> int:
         port = port_path.read_text().strip() if port_path.exists() else "47100"
         token_path = config.TOKEN_PATH
         token = token_path.read_text().strip() if token_path.exists() else ""
-        payload = sys.stdin.buffer.read() or b"{}"
+        # A windowless build may be handed no stdin at all, in which case
+        # sys.stdin is None rather than an empty stream. An empty payload is
+        # still a hook worth forwarding, so this degrades to "{}" instead of
+        # raising -- the one thing a hook is never allowed to do.
+        stream = getattr(sys.stdin, "buffer", None)
+        payload = (stream.read() if stream is not None else b"") or b"{}"
         json.loads(payload)
         request = urllib.request.Request(
             f"http://127.0.0.1:{port}/api/hook/{source}/{event}",
@@ -28,7 +33,8 @@ def main() -> int:
         )
         with urllib.request.urlopen(request, timeout=1):
             pass
-    except (IndexError, ValueError, OSError, json.JSONDecodeError, urllib.error.URLError):
+    except (IndexError, ValueError, OSError, AttributeError,
+            json.JSONDecodeError, urllib.error.URLError):
         pass
     return 0
 

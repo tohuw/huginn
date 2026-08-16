@@ -21,6 +21,13 @@ dependencies = [
 huginn = "huginn.cli:main"
 huginn-hook = "huginn.hooks.cli:main"
 
+# The same forwarder, built against the GUI subsystem. Hooks fire on every
+# prompt and every stop, and a console-subsystem executable launched without a
+# console to inherit makes Windows allocate one -- which on Windows 11 means
+# Windows Terminal opens and closes a window each time. See WINDOWS.md.
+[project.gui-scripts]
+huginn-hookw = "huginn.hooks.cli:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

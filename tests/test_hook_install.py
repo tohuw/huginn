@@ -21,6 +21,34 @@ class HookInstallTests(unittest.TestCase):
         self.assertTrue(command.startswith('"C:\\Program Files'))
         self.assertTrue(command.endswith("codex SessionStart"))
 
+    def test_windows_prefers_the_windowless_forwarder(self):
+        """Hooks fire constantly; a console build makes a window each time.
+
+        huginn-hook.exe is console-subsystem, so every launch without a console
+        to inherit made Windows allocate one -- measured at two windows per
+        launch on Windows 11, where that surfaces as Windows Terminal opening
+        and closing. huginn-hookw.exe is the same forwarder, GUI subsystem.
+        """
+        from huginn.hooks import install
+
+        with patch.object(install.os, "name", "nt"), \
+             patch.object(install.shutil, "which",
+                          side_effect=lambda name: {
+                              "huginn-hookw": r"C:\venv\Scripts\huginn-hookw.exe",
+                              "huginn-hook": r"C:\venv\Scripts\huginn-hook.exe",
+                          }.get(name)):
+            assert install._hook_bin().name == "huginn-hookw.exe"
+
+    def test_an_older_install_without_the_windowless_build_still_works(self):
+        from huginn.hooks import install
+
+        with patch.object(install.os, "name", "nt"), \
+             patch.object(install.shutil, "which",
+                          side_effect=lambda name: None if name == "huginn-hookw"
+                          else r"C:\venv\Scripts\huginn-hook.exe"), \
+             patch.object(Path, "exists", lambda _self: False):
+            assert install._hook_bin().name == "huginn-hook.exe"
+
     def test_codex_registers_only_observed_supported_events(self):
         self.assertEqual(CODEX_EVENTS, ["SessionStart", "UserPromptSubmit", "Stop"])
 

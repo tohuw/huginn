@@ -326,7 +326,10 @@ class Daemon:
                     self.bus.emit(Event("desktop.tile", sess.key, time.time(), "poll",
                                         {"session": sess}))
                 elif "claude-desktop" in self.reducer.sessions:
-                    self.bus.emit(Event("claude.dead", "claude-desktop",
+                    # Removed, not ended. A presence tile is not a session that
+                    # finished work -- the app is simply not running, and a row
+                    # reading "ended" forever says something else.
+                    self.bus.emit(Event("session.hide", "claude-desktop",
                                         time.time(), "poll"))
                 self.diagnostics.ok("desktop_poller")
             except Exception as e:
@@ -342,7 +345,8 @@ class Daemon:
                     self.bus.emit(Event("desktop.tile", sess.key, time.time(), "poll",
                                         {"session": sess}))
                 elif "chatgpt-desktop" in self.reducer.sessions:
-                    self.bus.emit(Event("claude.dead", "chatgpt-desktop", time.time(), "poll"))
+                    self.bus.emit(Event("session.hide", "chatgpt-desktop",
+                                        time.time(), "poll"))
                 self.diagnostics.ok("chatgpt_desktop_poller")
             except Exception as e:
                 self.diagnostics.error("chatgpt_desktop_poller", e)

@@ -108,9 +108,23 @@ async def _drain_stderr(stream: asyncio.StreamReader | None) -> bytes:
 
 
 def _spawn_options() -> dict[str, object]:
-    """Put each provider invocation in a separately terminable process tree."""
+    """Put each provider invocation in a separately terminable process tree.
+
+    ``CREATE_NO_WINDOW`` is not optional here, and leaving it out is not a
+    cosmetic defect. The daemon runs under ``pythonw`` so that nothing appears
+    at login, which means it has no console for a child to inherit; the
+    provider CLIs are console-subsystem programs, so Windows gave each one a
+    console of its own. Every blurb and every Ask popped a terminal window in
+    the user's face, and a batch of them arrived as dozens at once.
+
+    ``CREATE_NEW_PROCESS_GROUP`` does not imply it -- it only controls signal
+    delivery -- so both flags are set.
+    """
     if os.name == "nt":
-        return {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)}
+        return {"creationflags": (
+            getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+            | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        )}
     return {"start_new_session": True}
 
 

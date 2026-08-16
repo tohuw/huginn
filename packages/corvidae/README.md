@@ -14,7 +14,7 @@ cases that are expensive to get right once (issue
 - **`redact_secrets`** — credential redaction for text leaving a transcript.
 - **`Session` / `SessionState`** — one agreed session shape, so a plugin or a
   second consumer describes agent state the same way Huginn does.
-- **`LoginAgentSpec` / `get_login_agent`** — start-at-login supervision, one
+- **`LoginAgentSpec` / `get_login_agent` / `launch_descriptor`** — start-at-login supervision, one
   backend per OS (launchd, systemd user units, the Windows Run key), with the
   injection and file-permission hardening intact. Originally
   [#39](https://github.com/tohuw/huginn/issues/39) ("No lag reporting for derived
@@ -34,7 +34,7 @@ cases that are expensive to get right once (issue
 
 ```python
 from corvidae import ClaudeAnalyzer, Session, SessionState, Tail, redact_secrets
-from corvidae import LoginAgentSpec, get_login_agent
+from corvidae import LoginAgentSpec, get_login_agent, launch_descriptor
 from corvidae import publish_descriptor, sanitize_label, state_dir, withdraw_descriptor
 ```
 
@@ -176,9 +176,17 @@ class WindowsStartupAgent(LoginAgent):
     def tray_owns_startup(self) -> bool: ...
 
 def get_login_agent(spec: LoginAgentSpec, name: str | None = None) -> LoginAgent | None: ...
+def launch_descriptor(spec: LoginAgentSpec) -> dict[str, str] | None: ...
 
 RUN_KEY: str    # r"Software\Microsoft\Windows\CurrentVersion\Run"
 ```
+
+- **`launch_descriptor` returns an identifier, never a command** — the launchd
+  label, the systemd unit, or the `Run` value — for a raven to publish as the
+  `launch` block of its descriptor. The descriptor directory is writable by
+  anything running as this user, so a descriptor that named a program to execute
+  would be a write-then-execute path; the command itself stays in the
+  supervisor's own store. Returns `None` where there is no backend.
 
 Guaranteed behaviour, since these are the reasons the module is shared:
 

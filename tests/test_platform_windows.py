@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from huginn.platform.windows import WindowsPlatform
 
 
@@ -65,6 +67,27 @@ def test_windows_cwd_extracts_codex_flag():
     row = {"CommandLine": 'codex.exe --cwd "C:\\Users\\me\\project"'}
     with patch("huginn.platform.windows._process_json", return_value=[row]):
         assert adapter.process_cwd(10) == "C:\\Users\\me\\project"
+
+
+@pytest.mark.parametrize("command", [
+    "codex.exe --cwd ",          # the flag is the last thing on the line
+    "codex.exe --cwd",           # no trailing space, so no marker at all
+    "codex.exe -C   ",           # whitespace only after the short flag
+    'codex.exe --cwd "',         # an opened quote that never closes
+])
+def test_a_truncated_cwd_flag_is_none_rather_than_a_crash(command):
+    """A command line is external input, read during a routine roster scan.
+
+    ``value.split()[0]`` raises IndexError on an empty split, so a process
+    whose command line ends at the flag took the scan down with it -- and the
+    failure would have surfaced as a refresh that stopped, naming nothing about
+    a command line. Same shape as the exiting-shell IndexError that aborted the
+    Claude scan.
+    """
+    adapter = WindowsPlatform()
+    with patch("huginn.platform.windows._process_json",
+               return_value=[{"CommandLine": command}]):
+        assert adapter.process_cwd(10) in (None, "")
 
 
 def test_windows_terminal_reports_exact_tab_degradation():

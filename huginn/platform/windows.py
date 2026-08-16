@@ -206,7 +206,16 @@ class WindowsPlatform(Platform):
             marker = f"{flag} "
             if marker in command:
                 value = command.split(marker, 1)[1].strip()
-                return value[1:].split('"', 1)[0] if value.startswith('"') else value.split()[0]
+                if value.startswith('"'):
+                    return value[1:].split('"', 1)[0]
+                # ``split()[0]`` on its own raises IndexError when the flag is
+                # the last thing on the line -- `codex --cwd ` with nothing
+                # after it leaves the empty string here, and an empty split is
+                # an empty list. A command line is external input, and this is
+                # reached from a roster scan, so the crash would arrive as a
+                # failed refresh rather than as anything naming a command line.
+                parts = value.split()
+                return parts[0] if parts else None
         return None
 
     def process_name(self, pid: int) -> str | None:

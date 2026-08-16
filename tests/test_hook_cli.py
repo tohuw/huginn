@@ -46,3 +46,16 @@ class HookCLITests(unittest.TestCase):
         with (patch.object(sys, "argv", ["huginn-hook", "codex", "Stop"]),
               patch.object(sys, "stdin", _Stdin(b"not json"))):
             self.assertEqual(main(), 0)
+
+    def test_absent_stdin_never_fails(self):
+        """The windowless forwarder may be handed no stdin at all.
+
+        The hook is launched from a GUI-subsystem executable so no console
+        window appears, and such a process can have ``sys.stdin`` as None
+        rather than an empty stream. Reading ``.buffer`` off None raises
+        AttributeError, which is the one thing a hook must never do to the
+        agent process it is attached to. Platform-independent: None is None.
+        """
+        with (patch.object(sys, "argv", ["huginn-hook", "claude", "Stop"]),
+              patch.object(sys, "stdin", None)):
+            self.assertEqual(main(), 0)

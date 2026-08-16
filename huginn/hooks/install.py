@@ -20,7 +20,25 @@ LEGACY_HOOK_BIN = Path.home() / ".local" / "bin" / "huginn-hook"
 
 
 def _hook_bin() -> Path:
-    """Find the packaging-generated console script on POSIX or Windows."""
+    """Find the packaging-generated forwarder script on POSIX or Windows.
+
+    On Windows the windowless build wins when it exists. ``huginn-hook.exe`` is
+    a console-subsystem executable, and these hooks fire on every prompt and
+    every stop of every agent session on the machine; each launch without a
+    console to inherit makes Windows allocate one, so Windows Terminal opened
+    and closed a window over and over. ``huginn-hookw.exe`` is the identical
+    forwarder built against the GUI subsystem, which allocates nothing.
+
+    It is only a preference: an install predating that entry point still finds
+    the console build and keeps working, noisily rather than not at all.
+    """
+    if os.name == "nt":
+        windowless = shutil.which("huginn-hookw")
+        if windowless:
+            return Path(windowless)
+        candidate = Path(sys.executable).parent / "huginn-hookw.exe"
+        if candidate.exists():
+            return candidate
     found = shutil.which("huginn-hook")
     if found:
         return Path(found)

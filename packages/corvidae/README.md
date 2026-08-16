@@ -318,6 +318,9 @@ The compatibility promise above is keyed to the year component.
 `2026.8.1` added the login-agent, descriptor, and label surfaces listed above. It
 removed and renamed nothing, so it is a drop-in replacement for `2026.7.31`.
 
+`2026.08.16` added `launch_descriptor`. It removed and renamed nothing, so it is
+a drop-in replacement for `2026.08.01`.
+
 ## Not in scope
 
 Deliberately absent, to keep the surface tight: Huginn's `Event` bus shape, the

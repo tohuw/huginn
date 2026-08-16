@@ -31,6 +31,7 @@ from .login_agent import (
     SystemdUserAgent,
     WindowsStartupAgent,
     get_login_agent,
+    launch_descriptor,
 )
 from .model import ATTENTION_STATES, STATE_RANK, Session, SessionState
 from .redact import redact_secrets
@@ -63,6 +64,7 @@ __all__ = [
     "descriptor_is_live",
     "descriptor_path",
     "get_login_agent",
+    "launch_descriptor",
     "publish_descriptor",
     "read_descriptor",
     "redact_secrets",

@@ -526,6 +526,33 @@ class WindowsStartupAgent(LoginAgent):
         return 0
 
 
+def launch_descriptor(spec: LoginAgentSpec) -> dict[str, str] | None:
+    """How a shared host should ask this platform to start this service.
+
+    Returns the ``launch`` block a raven publishes in its descriptor, or None on
+    a platform with no start-at-login mechanism here.
+
+    **An identifier, never a command.** The descriptor directory is writable by
+    anything running as this user and the host is one process shared across
+    every raven, so a descriptor that named a program to execute would be a
+    write-then-execute path. This names the launchd label, the systemd unit, or
+    the ``Run`` value instead; the command itself stays in the supervisor's own
+    store, put there by an ``install-agent`` the user ran deliberately. The
+    worst a forged descriptor achieves is starting a service already installed.
+
+    Publishing this does not install anything, and does not check that anything
+    is installed. The host asks; the supervisor answers, including "no such
+    service".
+    """
+    if sys.platform == "darwin":
+        return {"kind": "launchd", "id": spec.label}
+    if sys.platform.startswith("linux"):
+        return {"kind": "systemd", "id": spec.unit_name}
+    if os.name == "nt":
+        return {"kind": "windows-run", "id": spec.run_value}
+    return None
+
+
 def get_login_agent(spec: LoginAgentSpec, name: str | None = None) -> LoginAgent | None:
     """Backend for a platform name (defaults to the host), or None if unsupported.
 

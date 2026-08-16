@@ -67,6 +67,7 @@ force a form neither project chose.
 """
 from __future__ import annotations
 
+import logging
 import os
 import time
 from pathlib import Path
@@ -80,11 +81,14 @@ from corvidae.descriptor import (
     withdraw_descriptor,
 )
 from corvidae.label import MAX_DETAIL, MAX_LABEL, sanitize_label
+from corvidae.login_agent import launch_descriptor
 
 from . import config
 from .llm.context import redact_secrets
 from .model import ATTENTION_STATES, Session, SessionState
 from .triage import ATTENTION_REASONS, build_triage
+
+log = logging.getLogger(__name__)
 
 # ── Protocol identity ─────────────────────────────────────────────────────────
 
@@ -542,7 +546,28 @@ def descriptor_payload(port: int, *, pid: int | None = None, started: float | No
         # Paths only: the host pins the origin to 127.0.0.1 and the port to the
         # one above, so an endpoint value cannot redirect it elsewhere.
         "endpoints": {"menu": MENU_ENDPOINT, "action": ACTION_ENDPOINT},
+        # How a shared host may ask this platform's supervisor to start Huginn
+        # again. An identifier, never a command: the host must never execute a
+        # path named in a file that anything running as this user can write.
+        # Omitted entirely when the platform has no such mechanism, so the host
+        # renders no Start row rather than one that cannot work.
+        **({"launch": launch} if (launch := _launch_block()) else {}),
     }
+
+
+def _launch_block() -> dict | None:
+    """The descriptor's ``launch`` block, or None if it cannot be derived.
+
+    Never fatal: a raven that cannot say how to restart itself still publishes a
+    usable descriptor, and the host degrades to a reason with no Start row.
+    """
+    try:
+        from . import agent_install
+
+        return launch_descriptor(agent_install.spec())
+    except Exception:  # noqa: BLE001 - a diagnostic must not cost the descriptor
+        log.debug("Could not derive the launch block", exc_info=True)
+        return None
 
 
 def publish(port: int, *, pid: int | None = None, started: float | None = None) -> Path:

@@ -170,6 +170,11 @@ class MacOSPlatform(Platform):
         value = run(["ps", "-o", "comm=", "-p", str(pid)])
         return os.path.basename(value) if value else None
 
+    def process_path(self, pid: int) -> str | None:
+        # ``comm`` is already the full path here; process_name is the basename
+        # of this same answer.
+        return run(["ps", "-o", "comm=", "-p", str(pid)]) or None
+
     def process_tty(self, pid: int) -> str | None:
         value = run(["ps", "-o", "tty=", "-p", str(pid)])
         return value if value and value != "??" else None

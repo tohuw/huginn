@@ -85,7 +85,8 @@ def _toolhelp_parents() -> dict[int, int] | None:
 def _process_json(where: str) -> list[dict]:
     raw = _powershell(
         f"Get-CimInstance Win32_Process -Filter \"{where}\" | "
-        "Select-Object ProcessId,ParentProcessId,Name,CreationDate,CommandLine | ConvertTo-Json -Compress"
+        "Select-Object ProcessId,ParentProcessId,Name,CreationDate,CommandLine,ExecutablePath"
+        " | ConvertTo-Json -Compress"
     )
     if not raw:
         return []
@@ -184,6 +185,10 @@ class WindowsPlatform(Platform):
         # `huginn doctor`, and any roster refresh that crossed the same exit.
         rows = _process_json(f"ProcessId={int(pid)}")
         return (str(rows[0].get("Name") or "") or None) if rows else None
+
+    def process_path(self, pid: int) -> str | None:
+        rows = _process_json(f"ProcessId={int(pid)}")
+        return (str(rows[0].get("ExecutablePath") or "") or None) if rows else None
 
     def process_tty(self, pid: int) -> str | None:
         return None

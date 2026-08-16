@@ -49,6 +49,14 @@ window appears at every login). The `Run` key starts the daemon once per login a
 does not restart it if it exits — which now matches the behaviour on the other
 platforms more closely than it did, because nothing is supervising it.
 
+**A pythonw process has no standard streams**, so `sys.stdout` and `sys.stderr`
+are `None`. Uvicorn's default log config calls `sys.stdout.isatty()` while
+building its formatter, which made the daemon die on startup — before binding
+its port — with `AttributeError: 'NoneType' object has no attribute 'isatty'`.
+Start-at-login therefore never worked on Windows, while starting the daemon by
+hand from a terminal always did, which is what kept it hidden. `cli.main` now
+binds missing streams to devnull before anything can touch them.
+
 A Scheduled Task was rejected when this was built: it would have added a third
 owner of the daemon's lifecycle, with a separate credential and trigger surface,
 to deliver what one registry value does. That reasoning still holds.
@@ -64,6 +72,31 @@ Remove the stale `Huginn` value (or uninstall the old tray) and the install
 proceeds. Roost registers its own startup entry under its own name and does not
 collide with either.
 
+## Why jump did nothing
+
+Two independent defects, both of which made the jump button look inert.
+
+**The foreground lock.** Windows only lets the process that currently owns the
+foreground hand it to someone else. The daemon is by definition not that
+process, so its `SetForegroundWindow` was simply refused — it returns 0, nothing
+moves, and the only visible effect is a taskbar button flashing. Attaching to
+the foreground thread's input queue (`AttachThreadInput`) for the duration of
+the call is the documented way through, and it is what makes the call actually
+take effect. Measured on this machine: refused before, granted after.
+
+**The wrong window.** Focus used to merge the session's process ancestry with
+*every* `WindowsTerminal.exe` pid into one candidate set, then take the first
+window `EnumWindows` returned — which enumerates in Z-order, so it picked
+whichever terminal was topmost rather than the one hosting the session. A shell
+under Windows Terminal does reach `WindowsTerminal.exe` by walking parents
+(`pwsh` → `claude` → `pwsh` → `WindowsTerminal`), so the ancestry is searched
+first and on its own. The all-terminals search remains only as a fallback for a
+session whose ancestry is broken, where one window still beats none.
+
+Exact tab selection is still unavailable, so the result says so
+(`exact tab unavailable`): with several sessions in tabs of one window, jump
+brings the right window forward but leaves the active tab alone.
+
 ## Implementation status
 
 - [x] Preserve macOS behavior behind explicit platform adapters.
@@ -74,6 +107,7 @@ collide with either.
 - [x] Publish a raven descriptor and menu so one shared tray can show Huginn.
 - [x] Retire the bespoke .NET tray in favour of Roost.
 - [ ] Validate the full suite on `windows-latest`.
+- [x] Make jump work from the daemon: foreground lock, and the session's own window.
 - [x] Add a normalized-session WSL bridge for Claude/Codex discovery.
 - [ ] Extend the WSL bridge with transcript tails, hooks, and exact terminal focus.
 

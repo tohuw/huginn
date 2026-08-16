@@ -41,6 +41,7 @@ STABLE_SURFACE = {
     "descriptor_is_live",
     "descriptor_path",
     "get_login_agent",
+    "launch_descriptor",
     "publish_descriptor",
     "read_descriptor",
     "redact_secrets",

@@ -62,6 +62,29 @@ def _session_view(session: Session, now: float) -> dict:
     }
 
 
+def _distinct_conversations(group: Iterable[Session]) -> dict[str, Session]:
+    """Collapse records that are the same conversation, keyed by identity.
+
+    ``Session.key`` is pid-based, and a resume keeps the conversation while
+    changing the pid: ``claude --resume`` therefore leaves two records with one
+    ``session_id`` between them, and contention -- which asks "are two agents in
+    one worktree" -- counted them as two agents and reported the user against
+    themselves. A session id is the conversation, so it is the right identity
+    here; ``key`` remains the fallback for a source that supplies no id.
+
+    The most recently active record wins, which is the live one whenever a stale
+    twin is still lingering.
+    """
+    unique: dict[str, Session] = {}
+    for session in group:
+        identity = (f"{session.source}:{session.session_id}"
+                    if session.session_id else session.key)
+        seen = unique.get(identity)
+        if seen is None or (session.last_activity or 0) >= (seen.last_activity or 0):
+            unique[identity] = session
+    return unique
+
+
 def build_triage(
     sessions: Iterable[Session],
     *,
@@ -98,7 +121,7 @@ def build_triage(
 
     contentions = []
     for root, group in sorted(by_worktree.items()):
-        unique = {session.key: session for session in group}
+        unique = _distinct_conversations(group)
         if len(unique) < 2:
             continue
         ordered = sorted(unique.values(), key=lambda session: session.name.lower())

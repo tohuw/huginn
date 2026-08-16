@@ -47,6 +47,54 @@ class TriageTests(unittest.TestCase):
         self.assertEqual(result["contentions"][0]["worktree"], str(root.resolve()))
         self.assertEqual(result["contentions"][0]["count"], 2)
 
+    def test_a_resumed_session_does_not_contend_with_itself(self):
+        """`claude --resume` keeps the conversation and changes the pid.
+
+        Session.key is pid-based, so the resumed run and the record it replaced
+        are two rows with one session_id between them. Counting both reported
+        the user as competing with themselves, in their own repo, for as long as
+        the stale twin lingered.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            (root / ".git").mkdir(parents=True)
+            before = _session("resumed", str(root), SessionState.WORKING, "claude")
+            after = _session("resumed", str(root), SessionState.WORKING, "claude")
+            object.__setattr__(before, "key", "claude:27144")   # the pid that exited
+            object.__setattr__(after, "key", "claude:77912")    # the pid that took over
+            object.__setattr__(after, "last_activity", 999)
+
+            result = build_triage([before, after], now=1000)
+
+        self.assertEqual(result["contentions"], [])
+        self.assertNotEqual(result["verdict"]["level"], "contention")
+
+    def test_two_conversations_in_one_worktree_still_contend(self):
+        """The dedupe must not blunt the check it lives inside."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            (root / ".git").mkdir(parents=True)
+            first = _session("one", str(root), SessionState.WORKING, "claude")
+            second = _session("two", str(root), SessionState.WORKING, "claude")
+
+            result = build_triage([first, second], now=1000)
+
+        self.assertEqual(result["verdict"]["level"], "contention")
+        self.assertEqual(result["contentions"][0]["count"], 2)
+
+    def test_a_source_with_no_session_id_falls_back_to_the_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            (root / ".git").mkdir(parents=True)
+            first = _session("one", str(root), SessionState.WORKING, "claude")
+            second = _session("two", str(root), SessionState.WORKING, "claude")
+            object.__setattr__(first, "session_id", None)
+            object.__setattr__(second, "session_id", None)
+
+            result = build_triage([first, second], now=1000)
+
+        self.assertEqual(result["verdict"]["level"], "contention")
+
     def test_separate_worktrees_with_same_basename_do_not_contend(self):
         with tempfile.TemporaryDirectory() as tmp:
             first_root = Path(tmp) / "primary" / "project"

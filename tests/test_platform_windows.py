@@ -44,8 +44,13 @@ def test_an_exited_process_is_not_alive_just_because_a_handle_opens():
     kernel32 = MagicMock()
     kernel32.OpenProcess.return_value = 1234
 
+    # create=True: ctypes has no WinDLL off Windows, and patching an attribute
+    # that does not exist is an error rather than a skip. This test needs no
+    # Windows host -- kernel32 is a mock either way -- so creating the name is
+    # what keeps it running on the macOS and Linux CI jobs.
     with patch("huginn.platform.windows.os.name", "nt"), \
-         patch("huginn.platform.windows.ctypes.WinDLL", return_value=kernel32):
+         patch("huginn.platform.windows.ctypes.WinDLL", create=True,
+               return_value=kernel32):
         kernel32.WaitForSingleObject.return_value = 0x102  # WAIT_TIMEOUT
         assert adapter.pid_alive(10) is True
 
@@ -119,7 +124,7 @@ def test_helper_windows_are_not_focus_targets():
     user32.GetWindowTextLengthW.side_effect = lambda hwnd: 0 if hwnd == 3 else 12
 
     with patch("huginn.platform.windows.os.name", "nt"), \
-         patch("huginn.platform.windows.ctypes.windll") as windll:
+         patch("huginn.platform.windows.ctypes.windll", create=True) as windll:
         windll.user32 = user32
         assert not WindowsPlatform._is_app_window(1)
         assert WindowsPlatform._is_app_window(2)

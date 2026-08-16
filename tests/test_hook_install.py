@@ -39,7 +39,17 @@ class HookInstallTests(unittest.TestCase):
                           }.get(name)):
             assert install._hook_bin().name == "huginn-hookw.exe"
 
+    @unittest.skipUnless(os.name == "nt", "constructs a real Path under os.name='nt'")
     def test_an_older_install_without_the_windowless_build_still_works(self):
+        """Windows-only because of how it has to be faked, not what it asserts.
+
+        ``patch.object(install.os, "name", "nt")`` mutates the *global* os
+        module -- there is only one -- so pathlib then hands back WindowsPath,
+        which cannot be instantiated off Windows. The sibling test above
+        survives that because ``which`` answers and it returns before reaching
+        ``Path(sys.executable)``; this one takes the fallback branch that does.
+        Covered by the Windows CI job.
+        """
         from huginn.hooks import install
 
         with patch.object(install.os, "name", "nt"), \

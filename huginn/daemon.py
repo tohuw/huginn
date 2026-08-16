@@ -280,6 +280,22 @@ class Daemon:
     async def wsl_poller(self) -> None:
         """Poll normalized sessions from configured WSL distributions."""
         from .sources import wsl
+        if not self.cfg.get("wsl", "enabled"):
+            return
+        # Asked once, before the loop, and the source is left unregistered when
+        # the answer is no -- so `doctor` says nothing about WSL rather than
+        # reporting a permanent failure. wsl.exe exists on every Windows install
+        # whether or not WSL does, so "the binary is there" was never evidence;
+        # a machine that simply does not use WSL was failing this probe every
+        # five seconds and spawning a process each time to do it.
+        #
+        # A distribution installed later is picked up on the next daemon start.
+        # That is the trade for not re-probing forever, and it is the right way
+        # round: installing WSL is a deliberate act, and this is a poller for a
+        # feature that is off for most users.
+        if not await asyncio.to_thread(wsl.available):
+            LOG.info("WSL is not installed; not polling for WSL sessions")
+            return
         known = {key for key in self.reducer.sessions if key.startswith("wsl:")}
         while self.cfg.get("wsl", "enabled"):
             seen: set[str] = set()

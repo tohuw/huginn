@@ -92,6 +92,46 @@ def _session(raw: dict[str, Any], distro: str) -> Session | None:
     )
 
 
+def _run(cmd: list[str], timeout: float) -> subprocess.CompletedProcess | None:
+    kwargs: dict[str, Any] = {"capture_output": True, "timeout": timeout, "check": False}
+    if hasattr(subprocess, "CREATE_NO_WINDOW"):
+        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+    try:
+        return subprocess.run(cmd, **kwargs)
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def available(*, timeout: float = 8.0) -> bool:
+    """Is there a WSL distribution to read at all?
+
+    ``wsl.exe`` ships with Windows whether or not WSL is installed, so finding
+    it on PATH proves nothing -- on a machine with no distribution it exists and
+    exits non-zero with "The Windows Subsystem for Linux is not installed."
+    Without this check the poller could not tell that apart from a real probe
+    failure, so it reported ``wsl_poller failing`` every five seconds forever on
+    every Windows machine that simply does not use WSL, and spawned a process
+    each time to do it.
+
+    ``--list --quiet`` writes **UTF-16LE**, which is why the output is decoded
+    rather than read as text: ``text=True`` gives back a string of alternating
+    NULs that matches nothing.
+    """
+    proc = _run(["wsl.exe", "--list", "--quiet"], timeout)
+    if proc is None or proc.returncode != 0:
+        return False
+    raw = proc.stdout or b""
+    for codec in ("utf-16-le", "utf-8"):
+        try:
+            listing = raw.decode(codec)
+            break
+        except UnicodeDecodeError:
+            continue
+    else:  # pragma: no cover - one of the two always decodes
+        return False
+    return any(line.strip().strip("\x00") for line in listing.splitlines())
+
+
 def scan(distro: str = "", *, timeout: float = 8.0) -> tuple[list[Session], bool]:
     """Return sessions and whether the bounded WSL probe succeeded."""
     cmd = ["wsl.exe"]

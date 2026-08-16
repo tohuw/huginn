@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 import urllib.error
@@ -340,7 +341,28 @@ def cmd_uninstall_agent(args: argparse.Namespace) -> int:
     return uninstall()
 
 
+def _bind_missing_std_streams() -> None:
+    """Give a console-free process real stdout/stderr objects.
+
+    ``install-agent`` starts the daemon with ``pythonw.exe`` so no console
+    window appears at login, and a pythonw process has no standard streams at
+    all: ``sys.stdout`` and ``sys.stderr`` are None. Uvicorn's default log
+    config calls ``sys.stdout.isatty()`` while building its formatter, so the
+    daemon died on startup with ``AttributeError: 'NoneType' has no attribute
+    'isatty'`` before it ever bound a port -- which meant start-at-login on
+    Windows silently never worked, while starting it by hand from a terminal
+    always did.
+
+    Binding the streams to devnull fixes it for every such caller at once,
+    rather than teaching one library that its output may have nowhere to go.
+    """
+    for name in ("stdout", "stderr"):
+        if getattr(sys, name, None) is None:
+            setattr(sys, name, open(os.devnull, "w", encoding="utf-8", errors="replace"))
+
+
 def main(argv: list[str] | None = None) -> int:
+    _bind_missing_std_streams()
     p = argparse.ArgumentParser(prog="huginn", description="Local AI coding-session monitor")
     sub = p.add_subparsers(dest="command", required=True)
 

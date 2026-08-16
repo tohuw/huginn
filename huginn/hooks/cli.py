@@ -29,12 +29,42 @@ def _terminal_identity() -> dict[str, str] | None:
     if not pane:
         return None
     identity = {"kind": "wezterm", "pane": pane}
-    for key, name in (("WEZTERM_UNIX_SOCKET", "socket"),
-                      ("WEZTERM_EXECUTABLE", "executable")):
-        value = (os.environ.get(key) or "").strip()
-        if value:
-            identity[name] = value
+    socket = (os.environ.get("WEZTERM_UNIX_SOCKET") or "").strip()
+    if socket:
+        identity["socket"] = socket
+    executable = _wezterm_cli()
+    if executable:
+        identity["executable"] = executable
     return identity
+
+
+def _wezterm_cli() -> str | None:
+    r"""The binary that speaks ``wezterm cli``, which is not the one running us.
+
+    ``WEZTERM_EXECUTABLE`` names whatever launched the pane, and when WezTerm is
+    started normally that is ``wezterm-gui.exe`` -- which rejects ``cli`` with
+    "unrecognized subcommand" and exit 2. Recording it verbatim produced an
+    identity that looked complete and failed at the one moment it was needed.
+    Only ``wezterm.exe`` implements the control protocol.
+
+    Preferred by directory, since ``WEZTERM_EXECUTABLE_DIR`` holds both; then by
+    name-substitution for a layout that sets only the executable; then the bare
+    name, letting PATH answer.
+    """
+    directory = (os.environ.get("WEZTERM_EXECUTABLE_DIR") or "").strip()
+    executable = (os.environ.get("WEZTERM_EXECUTABLE") or "").strip()
+    suffix = ".exe" if executable.lower().endswith(".exe") or os.name == "nt" else ""
+    if directory:
+        candidate = os.path.join(directory, f"wezterm{suffix}")
+        if os.path.exists(candidate):
+            return candidate
+    if executable:
+        candidate = executable.replace("wezterm-gui", "wezterm")
+        if candidate != executable and os.path.exists(candidate):
+            return candidate
+        if os.path.exists(executable) and "-gui" not in os.path.basename(executable):
+            return executable
+    return None
 
 
 def main() -> int:

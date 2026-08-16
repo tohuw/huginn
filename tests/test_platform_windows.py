@@ -68,6 +68,16 @@ def test_windows_cwd_extracts_codex_flag():
 
 
 def test_windows_terminal_reports_exact_tab_degradation():
+    """Focus half-succeeds here, and the detail has to say why.
+
+    Windows Terminal runs every window and every tab in one process behind one
+    top-level HWND, so ancestry resolves every session on the machine to the
+    same window -- and its UI Automation tree distinguishes them no better:
+    every element reports the same ProcessId, and tab items carry no
+    AutomationId, only whatever title the shell set. Raising the window can
+    therefore leave a different session's tab on screen, which is what made
+    jump look broken rather than limited.
+    """
     adapter = WindowsPlatform()
     with patch.object(adapter, "parent", return_value=None), \
          patch.object(adapter, "find_processes", return_value=[20]), \
@@ -76,7 +86,10 @@ def test_windows_terminal_reports_exact_tab_degradation():
         result = adapter.focus_terminal(10)
     assert result.ok
     assert result.target == "Windows Terminal"
-    assert result.detail == "Windows Terminal focused; exact tab unavailable"
+    # The reason, not just the symptom: "exact tab unavailable" reads as a
+    # defect in Huginn, and a user cannot act on it.
+    assert "one window" in result.detail
+    assert "tab could not be selected" in result.detail
 
 
 def test_focus_prefers_the_window_hosting_this_session():

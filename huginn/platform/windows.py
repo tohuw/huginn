@@ -312,7 +312,18 @@ class WindowsPlatform(Platform):
             return FocusResult(False, None, "Windows Terminal window not found")
         if not self._raise_window(hwnd):
             return FocusResult(False, None, "Windows Terminal could not be brought to the foreground")
-        return FocusResult(True, "Windows Terminal", "Windows Terminal focused; exact tab unavailable")
+        # Says *why*, because "exact tab unavailable" reads as a bug in Huginn
+        # and is not one. Windows Terminal runs every window and every tab in a
+        # single process with a single top-level HWND, so ancestry resolves all
+        # of a machine's sessions to the same window -- verified by walking four
+        # live sessions to one hwnd. Nothing in its UI Automation tree
+        # distinguishes them either: every element reports the same ProcessId,
+        # and the tab items carry no AutomationId, only the title the shell set.
+        # There is no supported mapping from a child process to its tab.
+        return FocusResult(
+            True, "Windows Terminal",
+            "Windows Terminal raised; it runs every tab in one window, so the "
+            "session's own tab could not be selected")
 
     def send_terminal_text(self, pid: int | None, tty: str | None, text: str) -> FocusResult:
         return FocusResult(

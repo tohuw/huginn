@@ -256,6 +256,13 @@ def cmd_focus(args: argparse.Namespace) -> int:
         print(f"huginn: focus failed: {result.get('error') or result}", file=sys.stderr)
         return 1
     print(f"focused @{session['name']}")
+    # Focus can half-succeed, and saying only "focused" when it did is why jump
+    # reads as broken rather than as limited: Windows Terminal hosts every tab
+    # in one window, so raising that window can leave a different session's tab
+    # on screen. The platform layer has always reported this; nothing surfaced it.
+    detail = result.get("detail")
+    if detail:
+        print(f"  note: {detail}")
     return 0
 
 

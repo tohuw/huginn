@@ -35,6 +35,24 @@ from huginn.agent_install import (
 )
 
 
+def _require_symlinks(directory: Path) -> None:
+    """Skip unless this machine will actually create a symlink.
+
+    Windows supports symlinks but refuses to create them without Developer Mode
+    or elevation, and that is a property of the machine rather than of the OS —
+    so this asks by trying. The attack these tests defend against is real on
+    NTFS, and a developer who can make a link should get the coverage.
+    """
+    probe = directory / "_symlink-probe"
+    try:
+        probe.symlink_to(directory)
+    except (OSError, NotImplementedError) as exc:
+        raise unittest.SkipTest(
+            f"this machine cannot create symlinks ({exc.__class__.__name__})"
+        ) from exc
+    probe.unlink()
+
+
 def _ok(stdout: str = "") -> subprocess.CompletedProcess:
     return subprocess.CompletedProcess([], 0, stdout, "")
 
@@ -240,7 +258,10 @@ class SystemdUserAgentTests(unittest.TestCase):
             self.assertIn("not installed", out.getvalue())
 
     def test_unit_path_follows_xdg_config_home(self):
-        self.assertTrue(str(agent_install.UNIT_PATH).endswith("systemd/user/huginn.service"))
+        # Path() on the expected tail too: UNIT_PATH is a Path, so it renders
+        # with the host separator and a POSIX literal would never match on NT.
+        self.assertTrue(str(agent_install.UNIT_PATH).endswith(
+            str(Path("systemd/user/huginn.service"))))
 
     def test_systemctl_itself_is_guarded_off_linux(self):
         with patch.object(agent_install.sys, "platform", "darwin"):
@@ -346,6 +367,7 @@ class WriteWithBackupHardeningTests(unittest.TestCase):
         # this content wherever the link pointed.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            _require_symlinks(root)
             secret = root / "secret"
             secret.write_text("sk-ant-PLANTEDSECRET")
             os.chmod(secret, 0o600)
@@ -363,6 +385,7 @@ class WriteWithBackupHardeningTests(unittest.TestCase):
         # itself an attacker-owned symlink.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            _require_symlinks(root)
             victim = root / "victim"
             victim.write_text("untouched")
             (root / "huginn.service.tmp").symlink_to(victim)
@@ -395,6 +418,7 @@ class WriteWithBackupHardeningTests(unittest.TestCase):
 
             self.assertEqual(len(set(names)), 3, names)
 
+    @unittest.skipIf(os.name == "nt", "POSIX mode bits do not model Windows ACLs")
     def test_a_fresh_config_file_is_not_world_readable(self):
         # Verified before the fix: 0644 at the default umask, unlike this
         # codebase's own config.secure_dir/write_token/_write_snapshot.
@@ -414,8 +438,11 @@ class WriteWithBackupHardeningTests(unittest.TestCase):
 
             backups = list(Path(tmp).glob("huginn.service.huginn-bak.*"))
             self.assertEqual(len(backups), 1)
-            self.assertEqual(stat.S_IMODE(backups[0].stat().st_mode), 0o600)
+            # That the backup is made from the old content holds everywhere;
+            # only its mode is a POSIX guarantee.
             self.assertEqual(backups[0].read_text(), "sk-ant-PLANTEDSECRET")
+            if os.name != "nt":
+                self.assertEqual(stat.S_IMODE(backups[0].stat().st_mode), 0o600)
 
     def test_an_existing_backup_name_is_not_silently_overwritten(self):
         # O_EXCL: a pre-planted backup name is an error, not a target.
@@ -444,6 +471,7 @@ class WriteWithBackupHardeningTests(unittest.TestCase):
         # that is worth refusing loudly rather than quietly tidying away.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            _require_symlinks(root)
             elsewhere = root / "elsewhere"
             elsewhere.write_text("not ours")
             unit = root / "huginn.service"

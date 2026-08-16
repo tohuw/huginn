@@ -13,6 +13,7 @@ A file whose permissions track whoever happens to read it today is a file that i
 from __future__ import annotations
 
 import json
+import os
 import stat
 import sys
 import tempfile
@@ -73,6 +74,7 @@ class DaemonStateFileTests(unittest.TestCase):
         self.assertEqual(
             set(json.loads(raw)), {"pid", "port", "started", "python", "repo"})
 
+    @unittest.skipIf(os.name == "nt", "POSIX mode bits do not model Windows ACLs")
     def test_is_not_group_or_world_writable(self):
         # issue #41 M5: written with a bare write_text, so 0644 at the default
         # umask, unlike its 0600 siblings (token, sessions.json). It holds no
@@ -87,6 +89,7 @@ class DaemonStateFileTests(unittest.TestCase):
         self.assertEqual(mode & (stat.S_IWGRP | stat.S_IWOTH), 0, oct(mode))
         self.assertEqual(mode, 0o600, oct(mode))
 
+    @unittest.skipIf(os.name == "nt", "POSIX mode bits do not model Windows ACLs")
     def test_rewriting_keeps_the_restricted_mode(self):
         # A restart must not silently widen it back to 0644.
         self._write()

@@ -178,11 +178,16 @@ class DescriptorLocationTests(unittest.TestCase):
 
     def test_diverges_from_huginns_own_state_dir_under_xdg(self):
         # Documented asymmetry, asserted so nobody "fixes" one to match the
-        # other by accident. config.STATE_DIR hardcodes ~/.local/state/huginn.
+        # other by accident. The divergence itself is the invariant and holds on
+        # every OS; where config.STATE_DIR actually lands is per-platform, so
+        # the ~/.local/state/huginn literal is only checked where it applies.
         os.environ["XDG_STATE_HOME"] = "/tmp/xdg"
         with patch.object(sys, "platform", "darwin"):
             self.assertEqual(raven.state_dir(), Path("/tmp/xdg/ravens"))
-        self.assertEqual(config.STATE_DIR, Path.home() / ".local" / "state" / "huginn")
+            self.assertNotEqual(config.STATE_DIR, raven.state_dir())
+        if os.name == "posix":
+            self.assertEqual(config.STATE_DIR,
+                             Path.home() / ".local" / "state" / "huginn")
 
     def test_windows_uses_localappdata(self):
         os.environ["LOCALAPPDATA"] = r"C:\Users\me\AppData\Local"
@@ -268,6 +273,7 @@ class DescriptorTests(unittest.TestCase):
 
         self.assertGreaterEqual(payload["started"], before)
 
+    @unittest.skipIf(os.name == "nt", "POSIX mode bits do not model Windows ACLs")
     def test_is_owner_only(self):
         # Same reasoning as daemon.json (issue #41): no secret, but another
         # process reads a port and a token path out of it and acts on them.
@@ -276,6 +282,7 @@ class DescriptorTests(unittest.TestCase):
 
         self.assertEqual(mode, 0o600, oct(mode))
 
+    @unittest.skipIf(os.name == "nt", "POSIX mode bits do not model Windows ACLs")
     def test_directory_is_created_owner_only(self):
         path = raven.publish(47100)
         mode = stat.S_IMODE(path.parent.stat().st_mode)
@@ -286,8 +293,11 @@ class DescriptorTests(unittest.TestCase):
         raven.publish(47100)
         path = raven.publish(47201)
 
+        # The rewrite is the point and holds everywhere; only its mode is a
+        # POSIX guarantee.
         self.assertEqual(json.loads(path.read_text())["port"], 47201)
-        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        if os.name != "nt":
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
 
     def test_publish_leaves_no_temp_file_behind(self):
         path = raven.publish(47100)
@@ -322,6 +332,7 @@ class DescriptorTests(unittest.TestCase):
         # unparseable descriptor with a visible reason anyway.
         self.assertTrue(path.exists())
 
+    @unittest.skipIf(os.name == "nt", "POSIX mode bits do not model Windows ACLs")
     def test_an_existing_shared_directory_is_not_retightened(self):
         # Shared with other ravens; silently changing another project's directory
         # mode is not ours to do.

@@ -307,7 +307,15 @@ async def _run_chat(daemon: "Daemon", provider, question: str, request_id: str,
             focus = s.name.lower() in mentioned
             fname = _safe_name(s.name) + ".md"
             digest_path = chat_dir / fname
-            digest_path.write_text(digest_for_session(s, max_lines=80 if focus else 30))
+            # encoding is not optional: this is transcript prose, and Path's
+            # default is the *locale* encoding -- cp1252 on Windows. One agent
+            # writing "→" or an em dash in a blurb raised UnicodeEncodeError
+            # here, which the wrapper below turned into a chat.error the panel
+            # renders as nothing. Ask appeared to hang forever, on every
+            # provider, for the lifetime of that session's digest.
+            digest_path.write_text(
+                digest_for_session(s, max_lines=80 if focus else 30),
+                encoding="utf-8")
             digest_path.chmod(0o600)
             age = int(time.time() - s.state_since)
             # title/blurb are excluded from per-session digests (current state

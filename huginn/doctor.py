@@ -47,7 +47,7 @@ def _warn(label: str, detail: str = "") -> None:
 
 
 def _authed_get(port: int, path: str) -> dict:
-    token = config.TOKEN_PATH.read_text().strip()
+    token = config.TOKEN_PATH.read_text(encoding="utf-8").strip()
     request = urllib.request.Request(
         f"http://127.0.0.1:{port}{path}",
         headers={"X-Huginn-Token": token},
@@ -72,7 +72,7 @@ def _snapshot_sessions() -> list[dict]:
     on-disk snapshot rather than skipping the check (issue #39).
     """
     try:
-        data = json.loads((config.STATE_DIR / "sessions.json").read_text())
+        data = json.loads((config.STATE_DIR / "sessions.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return []
     sessions = data.get("sessions")
@@ -232,7 +232,7 @@ def run_doctor() -> int:
     _check("forwarder installed", HOOK_BIN.exists(), str(HOOK_BIN))
     for path in (CLAUDE_SETTINGS, CODEX_HOOKS):
         try:
-            hooks = json.loads(path.read_text()).get("hooks", {})
+            hooks = json.loads(path.read_text(encoding="utf-8")).get("hooks", {})
             n = sum(1 for ev in hooks.values() if _has_huginn(ev))
             _check(f"{path.name} hook events", n > 0, f"{n} events wired")
         except (OSError, json.JSONDecodeError):
@@ -247,7 +247,7 @@ def run_doctor() -> int:
     daemon_json = config.STATE_DIR / "daemon.json"
     if daemon_json.exists():
         try:
-            info = json.loads(daemon_json.read_text())
+            info = json.loads(daemon_json.read_text(encoding="utf-8"))
             roster = _daemon_sessions(info["port"])
             _check("daemon running", True, f"port {info['port']}, {len(roster)} sessions")
             _report_source_health(info["port"])

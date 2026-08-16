@@ -37,8 +37,8 @@ def _rotate_notifications_log() -> None:
             return
     except OSError:
         return
-    lines = NOTIFICATIONS_LOG.read_text().splitlines()[-NOTIFICATIONS_LOG_KEEP_LINES:]
-    NOTIFICATIONS_LOG.write_text("\n".join(lines) + ("\n" if lines else ""))
+    lines = NOTIFICATIONS_LOG.read_text(encoding="utf-8").splitlines()[-NOTIFICATIONS_LOG_KEEP_LINES:]
+    NOTIFICATIONS_LOG.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
 
 
 def _log_notification(source: str, message: str, diagnostics: "Diagnostics") -> None:

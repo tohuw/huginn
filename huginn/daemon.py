@@ -78,7 +78,7 @@ class Daemon:
 
     def _restore_snapshot(self) -> None:
         try:
-            data = json.loads(self.SNAPSHOT_PATH.read_text())
+            data = json.loads(self.SNAPSHOT_PATH.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return
         self.reducer.restore(data.get("sessions", {}))
@@ -96,7 +96,7 @@ class Daemon:
         config.ensure_state_dirs()
         data = json.dumps({"sessions": self.reducer.snapshot(), "hook_hits": self.hook_hits})
         tmp = self.SNAPSHOT_PATH.with_suffix(".json.tmp")
-        tmp.write_text(data)
+        tmp.write_text(data, encoding="utf-8")
         tmp.chmod(0o600)
         os.replace(tmp, self.SNAPSHOT_PATH)
 
@@ -169,7 +169,7 @@ class Daemon:
 
     def _emit_claude_file(self, path: Path) -> None:
         try:
-            raw = json.loads(path.read_text())
+            raw = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return
         sess = claude_code.parse_session_file(path)
@@ -498,11 +498,11 @@ class Daemon:
                 raven.withdraw()
             with contextlib.suppress(Exception):
                 state_path = config.STATE_DIR / "daemon.json"
-                state = json.loads(state_path.read_text())
+                state = json.loads(state_path.read_text(encoding="utf-8"))
                 if state.get("pid") == os.getpid():
                     state_path.unlink()
             with contextlib.suppress(Exception):
-                if config.TOKEN_PATH.read_text().strip() == self.token:
+                if config.TOKEN_PATH.read_text(encoding="utf-8").strip() == self.token:
                     config.TOKEN_PATH.unlink()
         return 0
 
@@ -609,9 +609,9 @@ class Daemon:
             "started": time.time(),
             "python": sys.executable,
             "repo": str(Path(__file__).resolve().parent.parent),
-        }))
+        }), encoding="utf-8")
         state_path.chmod(0o600)
-        (config.STATE_DIR / "port").write_text(str(port))
+        (config.STATE_DIR / "port").write_text(str(port), encoding="utf-8")
 
 
 def run(cfg: config.Config, open_browser: bool = True) -> int:

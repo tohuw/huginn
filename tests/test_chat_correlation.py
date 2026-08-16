@@ -52,6 +52,39 @@ class ChatCorrelationTests(unittest.IsolatedAsyncioTestCase):
         for _event, data in events:
             self.assertEqual(data["request_id"], request_id)
 
+    async def test_a_non_latin1_blurb_does_not_break_ask(self):
+        """Ask hung forever on Windows whenever any session's text held "→".
+
+        The per-session digests were written with Path.write_text and no
+        encoding, so Python used the *locale* encoding -- cp1252 there. One
+        arrow or em dash raised UnicodeEncodeError, the wrapper turned it into
+        a chat.error, and the panel rendered that as nothing: an endless
+        throbber, on every provider, for as long as that text was on the roster.
+
+        Asserted through start_chat rather than by unit-testing the write, so a
+        future refactor that reintroduces a locale-encoded path still fails.
+        """
+        daemon = Daemon(Config({}))
+        events = []
+        daemon.bus.broadcast = lambda event, data: events.append((event, data))
+        daemon.reducer.sessions["claude:1"] = Session(
+            key="claude:1", source="claude", session_id="s1",
+            cwd="/tmp/repo", name="arrows", state=SessionState.WORKING,
+            state_since=0.0,
+            # Every one of these is outside cp1252.
+            blurb="fixed → verified · 100% ✓ — shipped",
+            title="macOS 481s → 34s",
+        )
+
+        with patch("huginn.llm.chat.get_provider", return_value=_AvailableProvider()):
+            result = await start_chat(daemon, {"question": "what is running?"})
+        self.assertTrue(result["ok"], result)
+        await daemon.active_chat
+
+        errors = [data for event, data in events if event == "chat.error"]
+        self.assertEqual(errors, [], f"Ask failed instead of answering: {errors}")
+        self.assertIn("chat.done", [event for event, _ in events])
+
     async def test_second_request_rejected_while_one_is_running(self):
         daemon = Daemon(Config({}))
         daemon.bus.broadcast = lambda *a, **k: None

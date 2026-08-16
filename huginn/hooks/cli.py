@@ -15,9 +15,9 @@ def main() -> int:
     try:
         source, event = sys.argv[1:3]
         port_path = config.STATE_DIR / "port"
-        port = port_path.read_text().strip() if port_path.exists() else "47100"
+        port = port_path.read_text(encoding="utf-8").strip() if port_path.exists() else "47100"
         token_path = config.TOKEN_PATH
-        token = token_path.read_text().strip() if token_path.exists() else ""
+        token = token_path.read_text(encoding="utf-8").strip() if token_path.exists() else ""
         # A windowless build may be handed no stdin at all, in which case
         # sys.stdin is None rather than an empty stream. An empty payload is
         # still a hook worth forwarding, so this degrades to "{}" instead of

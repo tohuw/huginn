@@ -284,14 +284,14 @@ def get_or_create_refresh_token() -> str:
     import secrets
     ensure_state_dirs()
     try:
-        token = REFRESH_TOKEN_PATH.read_text().strip()
+        token = REFRESH_TOKEN_PATH.read_text(encoding="utf-8").strip()
         if token:
             return token
     except OSError:
         pass
     token = secrets.token_urlsafe(32)
     tmp = REFRESH_TOKEN_PATH.with_suffix(".tmp")
-    tmp.write_text(token)
+    tmp.write_text(token, encoding="utf-8")
     tmp.chmod(0o600)
     os.replace(tmp, REFRESH_TOKEN_PATH)
     return token

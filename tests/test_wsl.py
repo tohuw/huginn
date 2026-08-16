@@ -42,6 +42,37 @@ class WslSourceTests(unittest.TestCase):
         run.return_value.stdout = "not json"
         self.assertEqual(wsl.scan(), ([], False))
 
+    @patch("huginn.sources.wsl.subprocess.run")
+    def test_a_listed_distribution_counts_as_available(self, run):
+        # --list --quiet writes UTF-16LE, so this is bytes on purpose.
+        run.return_value.returncode = 0
+        run.return_value.stdout = "Ubuntu-24.04\r\n".encode("utf-16-le")
+        self.assertTrue(wsl.available())
+
+    @patch("huginn.sources.wsl.subprocess.run")
+    def test_wsl_exe_existing_is_not_evidence_wsl_does(self, run):
+        """The false alarm. wsl.exe ships with Windows either way.
+
+        A machine with no distribution has the binary and gets a non-zero exit
+        with "The Windows Subsystem for Linux is not installed." The poller
+        could not tell that from a real probe failure, so it reported itself
+        failing every five seconds forever -- and spawned a process each time.
+        """
+        run.return_value.returncode = 1
+        run.return_value.stdout = (
+            "The Windows Subsystem for Linux is not installed.".encode("utf-16-le"))
+        self.assertFalse(wsl.available())
+
+    @patch("huginn.sources.wsl.subprocess.run")
+    def test_installed_with_no_distributions_is_not_available(self, run):
+        run.return_value.returncode = 0
+        run.return_value.stdout = b"\x00\x00"
+        self.assertFalse(wsl.available())
+
+    @patch("huginn.sources.wsl.subprocess.run", side_effect=FileNotFoundError)
+    def test_a_missing_binary_is_not_available(self, run):
+        self.assertFalse(wsl.available())
+
     def test_helper_uses_current_codex_recency_columns(self):
         self.assertIn("updated_at_ms", wsl._HELPER)
         self.assertIn("recency_at_ms", wsl._HELPER)

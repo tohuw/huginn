@@ -16,12 +16,28 @@ handler that only asks for shutdown, which has already happened.
 from __future__ import annotations
 
 import asyncio
+import os
 import signal
 import unittest
 import unittest.mock
 
 from huginn import config
 from huginn.daemon import Daemon
+
+# asyncio's add_signal_handler is POSIX-only; on Windows it raises
+# NotImplementedError, and ``Daemon._install_termination_handler`` documents that
+# a missing handler is *correct* there because the tray owns lifecycle.
+#
+# Skipped rather than merely expected to fail: with no handler installed,
+# ``signal.raise_signal(SIGTERM)`` runs the default action, which terminates the
+# process running the tests. Unguarded, these do not fail the suite -- they kill
+# it mid-run, taking every later test's result with them, which is how this went
+# unnoticed. The wiring assertion below inspects source instead of raising
+# anything, so it stays live on every OS.
+posix_signals_only = unittest.skipIf(
+    os.name == "nt", "asyncio signal handlers are POSIX-only; the tray owns "
+                     "lifecycle on Windows (see WINDOWS.md)"
+)
 
 
 class _FakeServer:
@@ -46,6 +62,7 @@ class TerminationHandlerTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.daemon = Daemon(config.Config({}))
 
+    @posix_signals_only
     async def test_sigterm_requests_graceful_shutdown(self):
         server = _FakeServer()
         self.daemon._install_termination_handler(server)
@@ -71,6 +88,7 @@ class TerminationHandlerTests(unittest.IsolatedAsyncioTestCase):
         finally:
             self._remove(signal.SIGTERM, signal.SIGHUP)
 
+    @posix_signals_only
     async def test_sigint_is_left_to_uvicorn(self):
         # SIGINT already reached the teardown via KeyboardInterrupt. Claiming it
         # here would swap a working path for an untested one.
@@ -85,6 +103,7 @@ class TerminationHandlerTests(unittest.IsolatedAsyncioTestCase):
         finally:
             self._remove(signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
 
+    @posix_signals_only
     async def test_installing_twice_is_harmless(self):
         # A restart in one process re-enters run(); the second install must not
         # raise and must still shut the current server down.

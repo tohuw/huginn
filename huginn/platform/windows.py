@@ -7,7 +7,9 @@ import json
 import os
 import shutil
 import subprocess
+import urllib.parse
 from ctypes import wintypes
+from pathlib import Path
 
 from .base import FocusResult, Platform
 
@@ -31,6 +33,28 @@ ERROR_ACCESS_DENIED = 5
 #: that made Ask hang and that killed the Claude scan. ``errors="replace"``
 #: because losing a glyph from a command line beats losing the whole scan.
 _PIPE_TEXT = {"encoding": "utf-8", "errors": "replace"}
+
+
+def _same_dir(reported: str | None, target: str) -> bool:
+    r"""Does a pane's reported cwd name the same directory as ``target``?
+
+    WezTerm reports it as a URL -- ``file:///C:/Users/me/repo/`` -- so this
+    unwraps the scheme, undoes percent-encoding, and normalises separators,
+    case and the trailing slash before comparing. Comparing the raw strings
+    matches nothing on Windows, where Huginn holds ``C:\Users\me\repo``.
+    """
+    if not reported:
+        return False
+    path = str(reported)
+    if path.startswith("file://"):
+        path = urllib.parse.unquote(urllib.parse.urlparse(path).path)
+        # A Windows URL path is "/C:/..."; the leading slash is not part of it.
+        if len(path) > 2 and path[0] == "/" and path[2] == ":":
+            path = path[1:]
+    try:
+        return os.path.normcase(os.path.abspath(path)) == target
+    except (OSError, ValueError):
+        return False
 
 
 def _powershell(script: str, timeout: float = 5) -> str:
@@ -293,6 +317,66 @@ class WindowsPlatform(Platform):
         finally:
             for tid in attached:
                 user32.AttachThreadInput(ours, tid, False)
+
+    def _wezterm_control(self) -> tuple[str, str] | None:
+        """A running WezTerm's cli binary and control socket, found from outside.
+
+        The hook cannot help here: it only ever runs for a session that has done
+        something since Huginn last started, and an idle tab may not have. So
+        this reconstructs what a pane would have reported, from the GUI process
+        itself -- its image path gives the sibling ``wezterm`` that speaks the
+        control protocol, and its pid names the socket, which WezTerm writes as
+        ``gui-sock-<pid>``.
+        """
+        for pid in self.find_processes("wezterm-gui"):
+            image = self.process_path(pid)
+            if not image:
+                continue
+            cli = os.path.join(os.path.dirname(image),
+                               "wezterm.exe" if os.name == "nt" else "wezterm")
+            socket = Path.home() / ".local" / "share" / "wezterm" / f"gui-sock-{pid}"
+            if os.path.exists(cli) and socket.exists():
+                return cli, str(socket)
+        return None
+
+    def discover_pane(self, cwd: str) -> dict[str, str] | None:
+        """The pane whose working directory is ``cwd``, if exactly one is.
+
+        A fallback for the sessions the hook has not reached yet, which on a
+        machine that has been running a while is most of them: a tab sitting
+        idle fires no hooks, so it carries no recorded pane and jump falls back
+        to raising a window -- the behaviour this whole line of work exists to
+        replace. WezTerm reports each pane's cwd, and Huginn knows each
+        session's, so the mapping is usually already there for the asking.
+
+        **Exactly one, or nothing.** Two sessions in one repository is ordinary,
+        and a guess between them would send the user to the wrong tab
+        confidently. Raising the window is a worse answer that is at least
+        honestly approximate; picking the wrong tab is not.
+        """
+        if not cwd:
+            return None
+        control = self._wezterm_control()
+        if control is None:
+            return None
+        cli, socket = control
+        env = dict(os.environ)
+        env["WEZTERM_UNIX_SOCKET"] = socket
+        try:
+            done = subprocess.run([cli, "cli", "list", "--format", "json"],
+                                  capture_output=True, timeout=10, env=env,
+                                  **_PIPE_TEXT,
+                                  creationflags=CREATE_NO_WINDOW if os.name == "nt" else 0)
+            panes = json.loads(done.stdout or "[]")
+        except (OSError, subprocess.SubprocessError, ValueError):
+            return None
+        target = os.path.normcase(os.path.abspath(cwd))
+        matches = {p.get("pane_id") for p in panes
+                   if isinstance(p, dict) and _same_dir(p.get("cwd"), target)}
+        if len(matches) != 1:
+            return None
+        return {"kind": "wezterm", "pane": str(matches.pop()),
+                "socket": socket, "executable": cli}
 
     def focus_pane(self, terminal: dict[str, str]) -> FocusResult:
         """Focus an exact tab, using coordinates its terminal issued.

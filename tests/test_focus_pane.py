@@ -179,6 +179,7 @@ class FocusRoutingPrefersTheExactTab(unittest.TestCase):
     def test_a_recorded_pane_wins_over_window_hunting(self):
         with patch("huginn.focus._platform") as plat:
             plat.pid_alive.return_value = True
+            plat.discover_pane.return_value = None
             plat.focus_pane.return_value = type(
                 "R", (), {"ok": True, "target": "WezTerm", "detail": "pane 7 focused"})()
             result = focus_session(claude_session(terminal=WEZ))
@@ -194,6 +195,7 @@ class FocusRoutingPrefersTheExactTab(unittest.TestCase):
         """
         with patch("huginn.focus._platform") as plat:
             plat.pid_alive.return_value = True
+            plat.discover_pane.return_value = None
             plat.focus_pane.return_value = type(
                 "R", (), {"ok": False, "target": None, "detail": "no such pane"})()
             plat.process_tty.return_value = None
@@ -205,9 +207,29 @@ class FocusRoutingPrefersTheExactTab(unittest.TestCase):
         plat.focus_terminal.assert_called_once()
         self.assertTrue(result["ok"])
 
-    def test_a_session_with_no_recorded_terminal_is_unchanged(self):
+    def test_an_unrecorded_session_is_discovered_from_the_terminal(self):
+        """A tab that has been idle since Huginn started reports nothing.
+
+        The hook only fires for a session that does something, so after any
+        daemon restart every open tab is unrecorded until it next takes a turn.
+        Waiting for that is the babysitting this exists to remove -- the
+        terminal already knows, so it gets asked.
+        """
+        found = {"kind": "wezterm", "pane": "5"}
         with patch("huginn.focus._platform") as plat:
             plat.pid_alive.return_value = True
+            plat.discover_pane.return_value = found
+            plat.focus_pane.return_value = type(
+                "R", (), {"ok": True, "target": "WezTerm", "detail": "pane 5 focused"})()
+            result = focus_session(claude_session())
+        plat.discover_pane.assert_called_once_with(r"C:\repo")
+        plat.focus_pane.assert_called_once_with(found)
+        self.assertEqual(result["target"], "WezTerm")
+
+    def test_nothing_recorded_and_nothing_discovered_raises_a_window(self):
+        with patch("huginn.focus._platform") as plat:
+            plat.pid_alive.return_value = True
+            plat.discover_pane.return_value = None
             plat.process_tty.return_value = None
             plat.children.return_value = []
             plat.parent.return_value = None
@@ -216,6 +238,25 @@ class FocusRoutingPrefersTheExactTab(unittest.TestCase):
             focus_session(claude_session())
         plat.focus_pane.assert_not_called()
         plat.focus_terminal.assert_called_once()
+
+    def test_a_stale_record_is_retried_by_discovery_before_giving_up(self):
+        """The tab moved; the terminal still knows where it went."""
+        found = {"kind": "wezterm", "pane": "9"}
+        attempts = []
+
+        def focus_pane(terminal):
+            attempts.append(terminal)
+            ok = terminal is found
+            return type("R", (), {"ok": ok, "target": "WezTerm" if ok else None,
+                                  "detail": "pane 9 focused" if ok else "no such pane"})()
+
+        with patch("huginn.focus._platform") as plat:
+            plat.pid_alive.return_value = True
+            plat.discover_pane.return_value = found
+            plat.focus_pane.side_effect = focus_pane
+            result = focus_session(claude_session(terminal=WEZ))
+        self.assertEqual(attempts, [WEZ, found])
+        self.assertEqual(result["target"], "WezTerm")
 
 
 class TheReducerRecordsIt(unittest.TestCase):

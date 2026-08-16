@@ -74,16 +74,30 @@ def _focus_recorded_pane(s: Session) -> dict[str, Any] | None:
     refusal. The distinction matters because a recorded pane id goes stale in
     the ordinary course of things -- the tab is closed, or the terminal is.
     """
-    terminal = getattr(s, "terminal", None)
-    if not terminal:
-        return None
     focuser = getattr(_platform, "focus_pane", None)
     if focuser is None:
         return None
-    result = focuser(terminal)
-    if not result.ok:
-        return None
-    return _result(True, result.target, detail=result.detail)
+
+    # What the session reported about itself, then what the terminal can be
+    # asked. The recorded pane is exact and comes first; discovery covers the
+    # sessions no hook has reached yet, which after any daemon restart is all
+    # of them until each one next does something. Without it, jump falls back
+    # to raising a window for an idle tab -- the behaviour this replaces.
+    candidates = []
+    recorded = getattr(s, "terminal", None)
+    if recorded:
+        candidates.append(recorded)
+    discover = getattr(_platform, "discover_pane", None)
+    if discover is not None and s.cwd:
+        found = discover(s.cwd)
+        if found and found != recorded:
+            candidates.append(found)
+
+    for terminal in candidates:
+        result = focuser(terminal)
+        if result.ok:
+            return _result(True, result.target, detail=result.detail)
+    return None
 
 
 def focus_session(s: Session) -> dict[str, Any]:

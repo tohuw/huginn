@@ -69,7 +69,7 @@ def _hook_command(source: str, event: str) -> str:
 def _load_json(path: Path) -> dict:
     if not path.exists():
         return {}
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -77,7 +77,7 @@ def _write_json(path: Path, data: dict) -> None:
     if path.exists():
         shutil.copyfile(path, backup)
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2) + "\n")
+    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     os.replace(tmp, path)
 
 

@@ -78,8 +78,8 @@ def cmd_open(args: argparse.Namespace) -> int:
     if not (config.STATE_DIR / "daemon.json").exists():
         print("huginn: daemon not running (try `huginn serve`)")
         return 1
-    port = (config.STATE_DIR / "port").read_text().strip()
-    token = config.TOKEN_PATH.read_text().strip()
+    port = (config.STATE_DIR / "port").read_text(encoding="utf-8").strip()
+    token = config.TOKEN_PATH.read_text(encoding="utf-8").strip()
     webbrowser.open(f"http://127.0.0.1:{port}/#t={token}")
     return 0
 
@@ -90,7 +90,7 @@ def cmd_demo(args: argparse.Namespace) -> int:
     if not (config.STATE_DIR / "port").exists():
         print("huginn: daemon not running (try `huginn serve`)")
         return 1
-    port = (config.STATE_DIR / "port").read_text().strip()
+    port = (config.STATE_DIR / "port").read_text(encoding="utf-8").strip()
     webbrowser.open(f"http://127.0.0.1:{port}/?demo=1")
     return 0
 
@@ -108,8 +108,8 @@ def _daemon_api(
         # at a menu here would be pointing at nothing.
         raise RuntimeError("daemon not running (try `huginn serve`)")
     try:
-        port = (config.STATE_DIR / "port").read_text().strip()
-        token = config.TOKEN_PATH.read_text().strip()
+        port = (config.STATE_DIR / "port").read_text(encoding="utf-8").strip()
+        token = config.TOKEN_PATH.read_text(encoding="utf-8").strip()
         data = json.dumps(body).encode() if body is not None else None
         headers = {"X-Huginn-Token": token}
         if data is not None:

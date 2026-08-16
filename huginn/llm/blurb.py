@@ -194,7 +194,7 @@ class BlurbWorker:
         self._budget_day = self._utc_day(now)
         self._budget_calls = 0
         try:
-            data = json.loads(path.read_text())
+            data = json.loads(path.read_text(encoding="utf-8"))
             if data.get("day") == self._budget_day:
                 self._budget_calls = max(0, int(data.get("calls", 0)))
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
@@ -207,7 +207,7 @@ class BlurbWorker:
         tmp.write_text(json.dumps({
             "day": self._budget_day,
             "calls": self._budget_calls,
-        }))
+        }), encoding="utf-8")
         tmp.chmod(0o600)
         os.replace(tmp, self._budget_path)
 

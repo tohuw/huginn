@@ -69,7 +69,7 @@ def find_transcript(session_id: str) -> str | None:
 def parse_session_file(path: Path) -> Session | None:
     """Parse one ~/.claude/sessions/<PID>.json tolerantly. None if unusable/dead."""
     try:
-        raw = json.loads(path.read_text())
+        raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
     pid = raw.get("pid")
@@ -122,7 +122,7 @@ def scan(include_dead: bool = False) -> list[Session]:
         return sessions
     for path in sorted(SESSIONS_DIR.glob("*.json")):
         try:
-            raw = json.loads(path.read_text())
+            raw = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
         try:

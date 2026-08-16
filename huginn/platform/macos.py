@@ -11,7 +11,8 @@ from .base import FocusResult, Platform
 
 def run(cmd: list[str], timeout: float = 5) -> str:
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout).stdout.strip()
+        return subprocess.run(cmd, capture_output=True, timeout=timeout,
+                          encoding="utf-8", errors="replace").stdout.strip()
     except (subprocess.SubprocessError, OSError):
         return ""
 

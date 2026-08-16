@@ -47,14 +47,22 @@ class HookCapturesTerminalIdentity(unittest.TestCase):
             return _terminal_identity()
 
     def test_a_wezterm_pane_reports_everything_needed(self):
-        identity = self._identity({
-            "WEZTERM_PANE": "7",
-            "WEZTERM_UNIX_SOCKET": "/tmp/gui-sock-1",
-            "WEZTERM_EXECUTABLE": "/usr/bin/wezterm",
-        })
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            # A real file, because the resolver verifies the binary exists
+            # rather than recording a path that might not run.
+            cli = os.path.join(tmp, "wezterm.exe" if os.name == "nt" else "wezterm")
+            open(cli, "wb").close()
+            identity = self._identity({
+                "WEZTERM_PANE": "7",
+                "WEZTERM_UNIX_SOCKET": "/tmp/gui-sock-1",
+                "WEZTERM_EXECUTABLE": cli,
+                "WEZTERM_EXECUTABLE_DIR": tmp,
+            })
         self.assertEqual(identity, {"kind": "wezterm", "pane": "7",
                                     "socket": "/tmp/gui-sock-1",
-                                    "executable": "/usr/bin/wezterm"})
+                                    "executable": cli})
 
     def test_the_socket_is_recorded_because_the_daemon_cannot_find_it(self):
         """The daemon runs outside every pane; only the pane knows its socket."""
@@ -64,6 +72,38 @@ class HookCapturesTerminalIdentity(unittest.TestCase):
     def test_a_pane_id_alone_is_enough(self):
         self.assertEqual(self._identity({"WEZTERM_PANE": "3"}),
                          {"kind": "wezterm", "pane": "3"})
+
+    def test_it_records_the_binary_that_speaks_cli_not_the_one_running_us(self):
+        """WEZTERM_EXECUTABLE is wezterm-gui.exe, which rejects `cli`.
+
+        Caught in production. Recording it verbatim produced an identity that
+        looked complete and failed at the only moment it was needed:
+        `wezterm-gui.exe cli list` exits 2 with "unrecognized subcommand".
+        """
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            gui = os.path.join(tmp, "wezterm-gui.exe")
+            cli = os.path.join(tmp, "wezterm.exe")
+            for path in (gui, cli):
+                open(path, "wb").close()
+            identity = self._identity({
+                "WEZTERM_PANE": "1",
+                "WEZTERM_EXECUTABLE": gui,
+                "WEZTERM_EXECUTABLE_DIR": tmp,
+            })
+        self.assertEqual(identity["executable"], cli)
+        self.assertNotIn("-gui", identity["executable"])
+
+    def test_a_gui_binary_with_no_sibling_cli_is_not_recorded(self):
+        """Better no executable -- and a PATH lookup -- than a wrong one."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            gui = os.path.join(tmp, "wezterm-gui.exe")
+            open(gui, "wb").close()
+            identity = self._identity({"WEZTERM_PANE": "1", "WEZTERM_EXECUTABLE": gui})
+        self.assertNotIn("executable", identity)
 
     def test_windows_terminal_records_nothing(self):
         """WT_SESSION identifies a pane but cannot be used to focus one.
@@ -118,6 +158,21 @@ class ActivatingThePane(unittest.TestCase):
     def test_an_unknown_terminal_is_refused(self):
         result = WindowsPlatform().focus_pane({"kind": "someterm", "pane": "1"})
         self.assertFalse(result.ok)
+
+    def test_the_pipe_is_decoded_as_utf8_not_the_locale(self):
+        """WezTerm echoes tab titles, and those are full of non-cp1252 text.
+
+        Caught in production: the first version used text=True, which decodes
+        with the *locale* encoding, and a tab titled "◐ Set up Huginn…" raised
+        UnicodeDecodeError. That is neither OSError nor SubprocessError, so it
+        escaped the handler below and would have taken the focus request with
+        it. Third time this class of bug appeared today.
+        """
+        with self._run() as run:
+            WindowsPlatform().focus_pane(WEZ)
+        self.assertEqual(run.call_args.kwargs.get("encoding"), "utf-8")
+        self.assertEqual(run.call_args.kwargs.get("errors"), "replace")
+        self.assertNotIn("text", run.call_args.kwargs)
 
 
 class FocusRoutingPrefersTheExactTab(unittest.TestCase):

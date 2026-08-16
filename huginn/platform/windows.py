@@ -24,12 +24,21 @@ WAIT_TIMEOUT = 0x0000_0102
 ERROR_ACCESS_DENIED = 5
 
 
+#: How a pipe from another program is decoded. ``text=True`` alone uses the
+#: *locale* encoding -- cp1252 on Windows -- and this reads back the command line
+#: of every process on the machine. One arrow or em dash in any of them raises
+#: UnicodeDecodeError out of a routine roster scan, which is the same failure
+#: that made Ask hang and that killed the Claude scan. ``errors="replace"``
+#: because losing a glyph from a command line beats losing the whole scan.
+_PIPE_TEXT = {"encoding": "utf-8", "errors": "replace"}
+
+
 def _powershell(script: str, timeout: float = 5) -> str:
     executable = shutil.which("pwsh") or shutil.which("powershell") or "powershell.exe"
     try:
         return subprocess.run(
             [executable, "-NoProfile", "-NonInteractive", "-Command", script],
-            capture_output=True, text=True, timeout=timeout,
+            capture_output=True, timeout=timeout, **_PIPE_TEXT,
             creationflags=CREATE_NO_WINDOW if os.name == "nt" else 0,
         ).stdout.strip()
     except (subprocess.SubprocessError, OSError):
@@ -312,7 +321,7 @@ class WindowsPlatform(Platform):
         try:
             done = subprocess.run(
                 [executable, "cli", "activate-pane", "--pane-id", str(pane)],
-                capture_output=True, text=True, timeout=10, env=env,
+                capture_output=True, timeout=10, env=env, **_PIPE_TEXT,
                 creationflags=CREATE_NO_WINDOW if os.name == "nt" else 0)
         except (OSError, subprocess.SubprocessError) as exc:
             return FocusResult(False, None, f"WezTerm CLI unavailable ({exc.__class__.__name__})")

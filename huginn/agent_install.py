@@ -174,13 +174,15 @@ def _write_with_backup(path: Path, text: str) -> None:
 def _launchctl(*args: str) -> subprocess.CompletedProcess:
     if sys.platform != "darwin":
         raise RuntimeError("LaunchAgent management is only available on macOS")
-    return subprocess.run(["launchctl", *args], capture_output=True, text=True)
+    return subprocess.run(["launchctl", *args], capture_output=True,
+                          encoding="utf-8", errors="replace")
 
 
 def _systemctl(*args: str) -> subprocess.CompletedProcess:
     if not sys.platform.startswith("linux"):
         raise RuntimeError("systemd user units are only available on Linux")
-    return subprocess.run(["systemctl", "--user", *args], capture_output=True, text=True)
+    return subprocess.run(["systemctl", "--user", *args], capture_output=True,
+                          encoding="utf-8", errors="replace")
 
 
 def _winreg():

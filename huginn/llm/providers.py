@@ -33,7 +33,8 @@ def claude_binary() -> str | None:
                 _claude_path = shutil.which("claude") or shutil.which("claude.exe") or ""
                 return _claude_path or None
             out = subprocess.run(["zsh", "-lc", "whence -p claude"],
-                                 capture_output=True, text=True, timeout=10).stdout.strip()
+                                 capture_output=True, timeout=10,
+                                 encoding="utf-8", errors="replace").stdout.strip()
             _claude_path = out or shutil.which("claude") or ""
         except (subprocess.SubprocessError, OSError):
             _claude_path = shutil.which("claude") or ""

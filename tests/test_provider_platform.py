@@ -17,9 +17,20 @@ class ProviderPlatformTests(unittest.TestCase):
 
     def test_windows_processes_start_in_new_process_group(self):
         with patch.object(os, "name", "nt"):
-            self.assertEqual(
-                _spawn_options(), {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)}
-            )
+            flags = _spawn_options()["creationflags"]
+        self.assertTrue(flags & getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200))
+
+    def test_windows_processes_open_no_console_window(self):
+        """The daemon runs under pythonw and has no console to lend a child.
+
+        The provider CLIs are console-subsystem programs, so without this flag
+        Windows gives each invocation a console of its own — measured at one
+        terminal window per call, and automatic enrichment made dozens appear.
+        CREATE_NEW_PROCESS_GROUP does not imply it; it only controls signals.
+        """
+        with patch.object(os, "name", "nt"):
+            flags = _spawn_options()["creationflags"]
+        self.assertTrue(flags & getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000))
 
     def test_windows_claude_lookup_does_not_invoke_zsh(self):
         providers._claude_path = None

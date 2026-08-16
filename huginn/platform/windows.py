@@ -285,6 +285,45 @@ class WindowsPlatform(Platform):
             for tid in attached:
                 user32.AttachThreadInput(ours, tid, False)
 
+    def focus_pane(self, terminal: dict[str, str]) -> FocusResult:
+        """Focus an exact tab, using coordinates its terminal issued.
+
+        This is the answer to what ``focus_terminal`` cannot do. A pid names a
+        process, and Windows Terminal hosts every tab of every window in one
+        process behind one HWND -- so no amount of window hunting can pick a
+        tab. WezTerm issues each pane an id and takes it back over a control
+        socket, which turns focus from a search into an address.
+
+        Everything needed came from the pane's own environment via the hook, so
+        nothing is discovered here: the executable that speaks the protocol and
+        the socket of the GUI hosting that pane are both recorded. The socket
+        especially -- the daemon runs outside any pane and could not find it.
+        """
+        if terminal.get("kind") != "wezterm":
+            return FocusResult(False, None, f"unknown terminal {terminal.get('kind')!r}")
+        pane = terminal.get("pane")
+        if not pane:
+            return FocusResult(False, None, "no pane recorded for this session")
+        executable = terminal.get("executable") or "wezterm"
+        env = dict(os.environ)
+        socket = terminal.get("socket")
+        if socket:
+            env["WEZTERM_UNIX_SOCKET"] = socket
+        try:
+            done = subprocess.run(
+                [executable, "cli", "activate-pane", "--pane-id", str(pane)],
+                capture_output=True, text=True, timeout=10, env=env,
+                creationflags=CREATE_NO_WINDOW if os.name == "nt" else 0)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return FocusResult(False, None, f"WezTerm CLI unavailable ({exc.__class__.__name__})")
+        if done.returncode != 0:
+            # The commonest reason is that the terminal has since closed, which
+            # is a fact about the world rather than a failure to report darkly.
+            detail = (done.stderr or "").strip().splitlines()
+            return FocusResult(False, None,
+                               f"WezTerm refused: {detail[-1] if detail else 'unknown error'}")
+        return FocusResult(True, "WezTerm", f"WezTerm pane {pane} focused")
+
     def focus_terminal(self, pid: int | None, tty: str | None = None) -> FocusResult:
         # The session's own ancestry, nearest first, and searched alone. A shell
         # hosted by Windows Terminal reaches WindowsTerminal.exe by walking

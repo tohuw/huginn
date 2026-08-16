@@ -321,6 +321,12 @@ removed and renamed nothing, so it is a drop-in replacement for `2026.7.31`.
 `2026.08.16` added `launch_descriptor`. It removed and renamed nothing, so it is
 a drop-in replacement for `2026.08.01`.
 
+`2026.08.16.1` added the optional `Session.terminal` field — where a session's
+*tab* is, when its terminal can say. Additive with a default, which the contract
+above already allows for, so it is a drop-in replacement for `2026.08.16`: a
+consumer that does not set it sees exactly the previous behaviour, and one that
+does not read it is unaffected.
+
 ## Not in scope
 
 Deliberately absent, to keep the surface tight: Huginn's `Event` bus shape, the

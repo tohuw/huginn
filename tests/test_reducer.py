@@ -37,6 +37,72 @@ class ReducerTests(unittest.TestCase):
         self.assertEqual(len(changed), 1)
         self.assertIn("claude:100", self.r.sessions)
 
+    def test_a_resume_retires_the_record_it_replaced(self):
+        """`claude --resume` keeps the conversation and changes the pid.
+
+        Keys are pid-based, so the resumed run and the record it replaced were
+        two rows for one conversation, sharing one transcript. Observed live as
+        @huginn-4c and @huginn-b5.
+        """
+        old = claude_session(key="claude:27144", pid=27144,
+                             state=SessionState.ERROR,
+                             transcript_path="/p/sid-100.jsonl")
+        self.r.sessions[old.key] = old
+
+        self.feed("claude.file", "claude:77912",
+                  {"session": claude_session(key="claude:77912", pid=77912,
+                                             transcript_path="/p/sid-100.jsonl")})
+
+        self.assertNotIn("claude:27144", self.r.sessions)
+        self.assertIn("claude:77912", self.r.sessions)
+        self.assertIn("claude:27144", self.r.removed)
+
+    def test_a_retired_record_survives_no_daemon_restart(self):
+        """The stale twin outlived restarts because ERROR is not ENDED.
+
+        snapshot() keeps everything that is not ENDED, and a session that dies
+        mid-work is recorded as ERROR -- so restoring brought the duplicate
+        straight back. Retiring on the next status file is what breaks that.
+        """
+        old = claude_session(key="claude:27144", pid=27144, state=SessionState.ERROR)
+        self.r.sessions[old.key] = old
+        self.assertIn("claude:27144", self.r.snapshot())   # the old behaviour
+
+        self.feed("claude.file", "claude:77912",
+                  {"session": claude_session(key="claude:77912", pid=77912)})
+
+        self.assertNotIn("claude:27144", self.r.snapshot())
+
+    def test_a_different_conversation_is_left_alone(self):
+        """Retiring must key on the conversation, not merely on the source."""
+        other = claude_session(key="claude:555", pid=555, session_id="sid-other")
+        self.r.sessions[other.key] = other
+
+        self.feed("claude.file", "claude:100", {"session": claude_session()})
+
+        self.assertIn("claude:555", self.r.sessions)
+        self.assertIn("claude:100", self.r.sessions)
+
+    def test_a_session_with_no_id_retires_nothing(self):
+        existing = claude_session(key="claude:1", pid=1, session_id="")
+        self.r.sessions[existing.key] = existing
+
+        self.feed("claude.file", "claude:2",
+                  {"session": claude_session(key="claude:2", pid=2, session_id="")})
+
+        self.assertIn("claude:1", self.r.sessions)
+
+    def test_transcript_lookup_prefers_a_session_that_has_not_ended(self):
+        """Routing activity to the corpse is what kept it looking alive."""
+        dead = claude_session(key="claude:1", pid=1, state=SessionState.ENDED,
+                              transcript_path="/p/t.jsonl")
+        live = claude_session(key="claude:2", pid=2, state=SessionState.WORKING,
+                              transcript_path="/p/t.jsonl")
+        self.r.sessions[dead.key] = dead
+        self.r.sessions[live.key] = live
+
+        self.assertIs(self.r.find_by_transcript("/p/t.jsonl"), live)
+
     def test_app_activity_never_counts_as_attention(self):
         tile = claude_session(
             key="claude-desktop", state=SessionState.ACTIVE,

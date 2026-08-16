@@ -176,8 +176,14 @@ class WindowsPlatform(Platform):
         return None
 
     def process_name(self, pid: int) -> str | None:
+        # Guarded like every sibling here, and for a reason this one hits
+        # hardest: callers reach it by walking children(), so the pid is one
+        # observed a moment ago rather than one they hold a handle to. A short
+        # lived shell that exits in between leaves no row, and the unguarded
+        # rows[0] raised IndexError out of a routine scan -- taking down
+        # `huginn doctor`, and any roster refresh that crossed the same exit.
         rows = _process_json(f"ProcessId={int(pid)}")
-        return str(rows[0].get("Name") or "") or None
+        return (str(rows[0].get("Name") or "") or None) if rows else None
 
     def process_tty(self, pid: int) -> str | None:
         return None

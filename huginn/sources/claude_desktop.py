@@ -13,8 +13,38 @@ from pathlib import Path
 from ..model import Session, SessionState
 from ..platform import platform as _platform
 
-APP_SUPPORT = (Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")) / "Claude"
-               if sys.platform == "win32"
+def _windows_app_support() -> Path:
+    r"""Where Claude Desktop keeps its data on Windows.
+
+    ``%APPDATA%\Claude`` is right for the plain installer and **wrong for the
+    Store build**, which is what ships today: an MSIX package gets a redirected
+    profile, so its "roaming appdata" is really
+    ``%LOCALAPPDATA%\Packages\<package>\LocalCache\Roaming\Claude``. Nothing is
+    created at the unredirected path at all, so ``scan()`` saw no directory and
+    returned None -- Claude Desktop was running and simply never appeared.
+
+    The package directory is looked up by prefix rather than hardcoded: the
+    suffix after ``Claude_`` is a publisher hash, stable per publisher but not
+    ours to assume. Falls back to the unredirected path so a non-Store install
+    keeps working, and so the glob below has somewhere to look either way.
+    """
+    roaming = Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming")
+    plain = roaming / "Claude"
+    if plain.is_dir():
+        return plain
+    packages = Path(os.environ.get("LOCALAPPDATA")
+                    or Path.home() / "AppData" / "Local") / "Packages"
+    try:
+        for package in sorted(packages.glob("Claude_*")):
+            redirected = package / "LocalCache" / "Roaming" / "Claude"
+            if redirected.is_dir():
+                return redirected
+    except OSError:
+        pass
+    return plain
+
+
+APP_SUPPORT = (_windows_app_support() if sys.platform == "win32"
                else Path.home() / "Library" / "Application Support" / "Claude")
 ACTIVE_S = 30
 

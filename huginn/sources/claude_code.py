@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import datetime
 import json
+import logging
 from pathlib import Path
 
 from ..model import Session, SessionState
 from ..platform import platform as _platform
+
+log = logging.getLogger(__name__)
 
 CLAUDE_DIR = Path.home() / ".claude"
 SESSIONS_DIR = CLAUDE_DIR / "sessions"
@@ -122,10 +125,21 @@ def scan(include_dead: bool = False) -> list[Session]:
             raw = json.loads(path.read_text())
         except (OSError, json.JSONDecodeError):
             continue
-        sess = parse_session_file(path)
-        if sess is None:
+        try:
+            sess = parse_session_file(path)
+            if sess is None:
+                continue
+            alive = pid_alive(sess.pid) and pid_matches_start(sess.pid, raw.get("procStart"))
+        except Exception:
+            # One unreadable session must not cost the roster every other one.
+            # This loop walks live processes, so it races them by nature: a
+            # child shell that exits mid-scan already raised IndexError out of
+            # child_shell_count and took the *whole* scan with it -- so dead
+            # sessions were never reaped and new ones never appeared, for as
+            # long as the session kept spawning shells. The file-level guards
+            # above only ever covered parse errors, not the OS underneath.
+            log.debug("Skipping unreadable Claude session %s", path, exc_info=True)
             continue
-        alive = pid_alive(sess.pid) and pid_matches_start(sess.pid, raw.get("procStart"))
         if not alive:
             if include_dead:
                 sess.state = SessionState.ENDED

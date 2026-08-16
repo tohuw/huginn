@@ -66,6 +66,26 @@ def _result(ok: bool, target: str | None = None, *, detail: str | None = None, *
     return value
 
 
+def _focus_recorded_pane(s: Session) -> dict[str, Any] | None:
+    """Focus the exact tab a hook reported, or None to fall back to a window.
+
+    None means "no exact route was available or it did not work", not failure:
+    the caller still has the window-level path, and a raised terminal beats a
+    refusal. The distinction matters because a recorded pane id goes stale in
+    the ordinary course of things -- the tab is closed, or the terminal is.
+    """
+    terminal = getattr(s, "terminal", None)
+    if not terminal:
+        return None
+    focuser = getattr(_platform, "focus_pane", None)
+    if focuser is None:
+        return None
+    result = focuser(terminal)
+    if not result.ok:
+        return None
+    return _result(True, result.target, detail=result.detail)
+
+
 def focus_session(s: Session) -> dict[str, Any]:
     if s.source == "codex":
         # A WSL Codex row is still source="codex" for reducer semantics, but
@@ -103,6 +123,15 @@ def focus_session(s: Session) -> dict[str, Any]:
     if s.entrypoint == "cli":
         if not s.pid or not _platform.pid_alive(s.pid):
             return _result(False, detail="Claude CLI process is no longer running")
+        # An exact tab first, when the terminal issued coordinates for one.
+        # Everything below searches for a *window*, which is the best a pid can
+        # do and is not good enough where one window holds many sessions.
+        # Falls through on failure rather than giving up: a stale pane id means
+        # the tab is gone, and raising the terminal is still better than
+        # nothing.
+        exact = _focus_recorded_pane(s)
+        if exact is not None:
+            return exact
         tty = s.tty or find_tty(s.pid)
         if tty:
             s.tty = tty

@@ -302,6 +302,13 @@ class Reducer:
             return []
         if not s.transcript_path and data.get("transcript_path"):
             s.transcript_path = data["transcript_path"]
+        # Where this session's tab is, as reported from inside it. Overwritten
+        # rather than only filled once: a session that is moved to a new window
+        # or restarted in a different pane keeps firing hooks, and the newest
+        # report is the one that still points at something.
+        terminal = data.get("huginn_terminal")
+        if isinstance(terminal, dict) and terminal.get("kind"):
+            s.terminal = {str(k): str(v) for k, v in terminal.items()}
         changed = False
         if event == "UserPromptSubmit":
             prompt = (data.get("prompt") or "")[:300]

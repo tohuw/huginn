@@ -37,7 +37,7 @@ from .model import ATTENTION_STATES, STATE_RANK, Session, SessionState
 from .redact import redact_secrets
 from .transcript import ATTACH_WINDOW, MAX_ATTACH_LINE, MAX_READ, ClaudeAnalyzer, CodexAnalyzer, Tail
 
-__version__ = "2026.08.16"
+__version__ = "2026.08.16.1"
 
 # Anything not listed here is an implementation detail carrying no promise --
 # issue #42 asked for a declared surface, so the absence of a name from this

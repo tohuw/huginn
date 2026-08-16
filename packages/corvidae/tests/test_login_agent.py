@@ -38,6 +38,33 @@ def _ok(stdout: str = "") -> subprocess.CompletedProcess:
     return subprocess.CompletedProcess([], 0, stdout, "")
 
 
+# Mode bits are POSIX-only: NTFS uses ACLs and os.chmod there moves nothing but
+# the read-only flag, so an owner-only assertion cannot hold on Windows whatever
+# the code does. Asserted where the mechanism exists rather than relaxed
+# everywhere, which would blunt it on the platforms where it is real.
+posix_modes_only = unittest.skipUnless(
+    os.name != "nt", "POSIX mode bits do not model Windows ACLs"
+)
+
+
+def _require_symlinks(directory: Path) -> None:
+    """Skip unless this machine will actually create a symlink.
+
+    Windows supports symlinks but refuses to create them without Developer Mode
+    or elevation, and that is a property of the machine rather than of the OS —
+    so this asks by trying. The attack these tests defend against is real on
+    NTFS, and a developer who can make a link should get the coverage.
+    """
+    probe = directory / "_symlink-probe"
+    try:
+        probe.symlink_to(directory)
+    except (OSError, NotImplementedError) as exc:
+        raise unittest.SkipTest(
+            f"this machine cannot create symlinks ({exc.__class__.__name__})"
+        ) from exc
+    probe.unlink()
+
+
 def _fail(stderr: str = "boom") -> subprocess.CompletedProcess:
     return subprocess.CompletedProcess([], 1, "", stderr)
 
@@ -183,7 +210,9 @@ class LaunchdAgentTests(unittest.TestCase):
         self.assertEqual(parsed["Label"], "is.example.testraven")
         self.assertEqual(parsed["ProgramArguments"], list(spec().argv))
         self.assertEqual(parsed["WorkingDirectory"], "/opt/testraven")
-        self.assertEqual(parsed["StandardOutPath"], "/tmp/testraven/agent.log")
+        # str() of the spec's own Path, not a literal: these backends are driven
+        # from any host on purpose, and a Path renders with the host separator.
+        self.assertEqual(parsed["StandardOutPath"], str(spec().log_path))
         self.assertEqual(parsed["StandardErrorPath"], parsed["StandardOutPath"])
 
     def test_install_backs_up_an_existing_plist_and_loads_it(self):
@@ -454,6 +483,7 @@ class WriteWithBackupHardeningTests(unittest.TestCase):
         # the link pointed.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            _require_symlinks(root)
             secret = root / "secret"
             secret.write_text("sk-ant-PLANTEDSECRET")
             os.chmod(secret, 0o600)
@@ -471,6 +501,7 @@ class WriteWithBackupHardeningTests(unittest.TestCase):
         # itself an attacker-owned symlink.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            _require_symlinks(root)
             victim = root / "victim"
             victim.write_text("untouched")
             (root / "unit.tmp").symlink_to(victim)
@@ -498,6 +529,7 @@ class WriteWithBackupHardeningTests(unittest.TestCase):
 
             self.assertEqual(len(set(names)), 3, names)
 
+    @posix_modes_only
     def test_a_fresh_config_file_is_not_world_readable(self):
         # Verified before the fix: 0644 at the default umask, unlike a consumer's
         # own token/state discipline.
@@ -517,8 +549,11 @@ class WriteWithBackupHardeningTests(unittest.TestCase):
 
             backups = list(Path(tmp).glob("unit.tr-bak.*"))
             self.assertEqual(len(backups), 1)
-            self.assertEqual(stat.S_IMODE(backups[0].stat().st_mode), 0o600)
+            # That the backup is made, and made from the old content, holds
+            # everywhere; only its mode is a POSIX guarantee.
             self.assertEqual(backups[0].read_text(), "sk-ant-PLANTEDSECRET")
+            if os.name != "nt":
+                self.assertEqual(stat.S_IMODE(backups[0].stat().st_mode), 0o600)
 
     def test_an_existing_backup_name_is_not_silently_overwritten(self):
         # O_EXCL: a pre-planted backup name is an error, not a target.
@@ -550,6 +585,7 @@ class WriteWithBackupHardeningTests(unittest.TestCase):
             elsewhere = root / "elsewhere"
             elsewhere.write_text("not ours")
             unit = root / "testraven.service"
+            _require_symlinks(unit.parent)
             unit.symlink_to(elsewhere)
 
             with self.assertRaisesRegex(ValueError, "symlink"):
@@ -612,8 +648,12 @@ class WindowsStartupAgentTests(unittest.TestCase):
 
     def test_a_single_word_argv_is_still_quoted(self):
         # The Run key takes a command line, so a space in the path would otherwise
-        # be read as an argument boundary.
-        self.assertEqual(login_agent._run_command(spec(argv=["/a b/app"])), '"/a b/app"')
+        # be read as an argument boundary. argv[0] goes through Path, so the
+        # expectation is built the same way — the quoting is what is asserted
+        # here, not the separator the host happens to use.
+        target = "/a b/app"
+        self.assertEqual(
+            login_agent._run_command(spec(argv=[target])), f'"{Path(target)}"')
 
     def test_installed_reports_only_the_daemon_value(self):
         s = spec(registry_value="TestravenDaemon", tray_registry_value="Testraven")

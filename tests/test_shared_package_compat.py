@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import unittest
 import unittest.mock
+from pathlib import Path
 
 import corvidae
 from huginn import agent_install as huginn_agent_install
@@ -105,9 +106,9 @@ class LoginAgentCompatTests(unittest.TestCase):
         self.assertNotEqual(huginn_agent_install.DAEMON_RUN_VALUE,
                             huginn_agent_install.TRAY_RUN_VALUE)
         self.assertTrue(str(huginn_agent_install.PLIST_PATH).endswith(
-            "Library/LaunchAgents/is.tohuw.huginn.plist"))
+            str(Path("Library/LaunchAgents/is.tohuw.huginn.plist"))))
         self.assertTrue(str(huginn_agent_install.UNIT_PATH).endswith(
-            "systemd/user/huginn.service"))
+            str(Path("systemd/user/huginn.service"))))
         self.assertTrue(callable(install))
         self.assertTrue(callable(uninstall))
 

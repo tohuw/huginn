@@ -28,6 +28,16 @@ from corvidae import (
 
 PAYLOAD = {"name": "testraven", "pid": 4321, "port": 47100, "started": 1_000.0}
 
+# NTFS does not honour mode bits, and corvidae takes no pywin32 dependency to set
+# a DACL instead, so ``descriptor._restrict`` is a documented no-op on Windows.
+# These assert that mechanism, so they run where the mechanism exists. Skipping
+# is honest here in a way that relaxing the assertion would not be: a weakened
+# check would still be green on POSIX, where the guarantee is real and worth
+# defending exactly.
+posix_modes_only = unittest.skipUnless(
+    os.name != "nt", "POSIX mode bits do not model Windows ACLs"
+)
+
 
 class StateDirTests(unittest.TestCase):
     """The resolution order *is* the contract."""
@@ -120,6 +130,7 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(path, self.dir / "testraven.json")
         self.assertEqual(json.loads(path.read_text()), PAYLOAD)
 
+    @posix_modes_only
     def test_is_owner_only(self):
         # No secret in it, but another process reads a port (and maybe a token
         # path) out of it and acts on them: integrity matters where
@@ -127,10 +138,12 @@ class PublishTests(unittest.TestCase):
         path = publish_descriptor("testraven", PAYLOAD, directory=self.dir)
         self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
 
+    @posix_modes_only
     def test_directory_is_created_owner_only(self):
         publish_descriptor("testraven", PAYLOAD, directory=self.dir)
         self.assertEqual(stat.S_IMODE(self.dir.stat().st_mode), 0o700)
 
+    @posix_modes_only
     def test_an_existing_shared_directory_is_not_retightened(self):
         # Shared with other ravens; silently changing another project's directory
         # mode is not ours to do.
@@ -143,8 +156,11 @@ class PublishTests(unittest.TestCase):
         publish_descriptor("testraven", PAYLOAD, directory=self.dir)
         path = publish_descriptor("testraven", {**PAYLOAD, "port": 47201},
                                   directory=self.dir)
+        # The rewrite itself is the point and is checked everywhere; only the
+        # mode half of it is POSIX-only.
         self.assertEqual(json.loads(path.read_text())["port"], 47201)
-        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        if os.name != "nt":
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
 
     def test_leaves_no_temp_file_behind(self):
         publish_descriptor("testraven", PAYLOAD, directory=self.dir)

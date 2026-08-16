@@ -34,6 +34,17 @@ class Platform(ABC):
     def process_name(self, pid: int) -> str | None: ...
 
     @abstractmethod
+    def process_path(self, pid: int) -> str | None:
+        """Full path to the executable behind ``pid``, or None if unknowable.
+
+        The name alone is not identity. Windows matches process names
+        case-insensitively, and the ChatGPT desktop app and the Codex CLI both
+        ship a binary called ``codex.exe`` -- so a name match cannot tell a
+        desktop app from a command-line tool, and Huginn drew a "ChatGPT
+        Desktop is running" tile whenever the CLI ran.
+        """
+
+    @abstractmethod
     def process_tty(self, pid: int) -> str | None: ...
 
     @abstractmethod

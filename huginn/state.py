@@ -64,10 +64,22 @@ class Reducer:
         return None
 
     def find_by_transcript(self, path: str) -> Session | None:
+        """The session that owns this transcript, preferring a live one.
+
+        Two records can briefly share a transcript across a resume, and routing
+        activity to the finished one is what kept a dead session looking alive:
+        each sweep marked it dead, and the next transcript write flipped it back
+        to working. Retiring the duplicate is the real fix; this makes the
+        window it existed in harmless.
+        """
+        fallback = None
         for s in self.sessions.values():
-            if s.transcript_path == path:
+            if s.transcript_path != path:
+                continue
+            if s.state != SessionState.ENDED:
                 return s
-        return None
+            fallback = fallback or s
+        return fallback
 
     def attention_count(self) -> int:
         return sum(1 for s in self.sessions.values() if s.state in ATTENTION_STATES)
@@ -97,9 +109,42 @@ class Reducer:
             return []
         return handler(ev, now)
 
+    def _retire_superseded(self, incoming: Session) -> None:
+        """Drop older records of the conversation ``incoming`` now owns.
+
+        A Claude ``session_id`` names a *conversation*, not a process, and
+        ``claude --resume`` continues one under a new pid. Keys are pid-based,
+        so the resumed run and the record it replaced coexisted: two rows for
+        one conversation, sharing one transcript.
+
+        Nothing cleaned that up, and three things conspired to keep it. A
+        session that dies mid-work becomes ERROR rather than ENDED, and
+        ``snapshot`` only drops ENDED -- so the stale twin survived daemon
+        restarts. ``find_by_transcript`` returns the first match, so the live
+        session's own transcript activity kept landing on whichever record came
+        first in the dict, flipping the dead one back to working after each
+        sweep marked it dead. And triage counted both, reporting the user as
+        competing with themselves in their own repo.
+
+        One process owns a conversation at a time, so the arrival of a status
+        file for a session_id is proof that any other record of it is finished.
+        Removal rather than ENDED: it is not a session that ended, it is a
+        duplicate that should never have been a second row.
+        """
+        if not incoming.session_id:
+            return
+        for key, other in list(self.sessions.items()):
+            if key == incoming.key or other.source != incoming.source:
+                continue
+            if other.session_id == incoming.session_id:
+                del self.sessions[key]
+                self.transitions.pop(key, None)
+                self.removed.append(key)
+
     # claude status file appeared/changed
     def _on_claude_file(self, ev: Event, now: float) -> list[Session]:
         incoming: Session = ev.payload["session"]
+        self._retire_superseded(incoming)
         s = self.sessions.get(incoming.key)
         if s is None:
             self.sessions[incoming.key] = incoming

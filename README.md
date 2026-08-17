@@ -517,6 +517,18 @@ Architecture: sources (fsevents watchers + pollers) → event bus → one reduce
 dashboard. No build step, three runtime dependencies (fastapi, uvicorn,
 watchfiles) plus the in-repo `corvidae`.
 
+**The console keeps itself current without a reload**, which takes more than the
+event stream. SSE is the fast path; a snapshot poll reconciles what the stream
+missed, in *both* directions — it adds sessions and removes them, but only once
+`/api/sessions` reports `complete`, meaning every roster source has either
+scanned or declined to run since the daemon booted. Until then absence just
+means nobody has looked yet, and removing on it would blank a roster still being
+assembled. The stream is also re-established after an HTTP error, which
+`EventSource` never does by itself: a daemon restart rotates the token, so the
+next connection answers 401 and the feed would otherwise stay dead for the life
+of the page. Returning to a background tab resyncs immediately rather than
+waiting out a throttled timer.
+
 The repo is a `uv` workspace: `packages/corvidae/` is a second distributable, so
 `uv build --all-packages` builds both wheels and `uv sync` resolves corvidae from
 the checkout rather than an index.

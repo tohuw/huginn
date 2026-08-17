@@ -1203,11 +1203,23 @@ async function snapshot() {
   try {
     const r = await apiFetch("/api/sessions");
     const data = await r.json();
-    // Snapshots are additive reconciliation. During daemon startup they may be
-    // temporarily incomplete, so absence is never evidence that a terminal
-    // session ended. Removal requires the source/reducer's explicit SSE event
-    // (confirmed dead/missing) or a definitive 404 when the card is used.
+    // Snapshots reconcile in both directions, but only once the daemon reports
+    // `complete` -- every roster source has scanned since it booted, so absence
+    // finally means something. While it is false (startup, a source still
+    // warming) reconciliation stays additive, which is what it always was.
+    //
+    // Additive-only was the bug behind "the console needs a refresh": removal
+    // depended entirely on catching a `session.remove` event live, so any that
+    // arrived while EventSource was reconnecting -- or while a *different*
+    // daemon was running, since a restart never replays them -- left a dead
+    // session on screen until someone reloaded the page.
     for (const s of data.sessions) upsertCard(s);
+    if (data.complete) {
+      const live = new Set(data.sessions.map((s) => s.key));
+      for (const key of [...sessions.keys()]) {
+        if (!live.has(key)) removeCard(key);
+      }
+    }
     setAttention(data.attention);
     setTriage(data.triage);
     syncChatBoot(data.boot_id);
@@ -1235,10 +1247,33 @@ async function snapshot() {
   }
 }
 
+let eventSource = null;
+let reconnectTimer = null;
+let reconnectDelay = 1000;
+const RECONNECT_MAX_MS = 15000;
+
+function scheduleReconnect() {
+  // EventSource retries network drops by itself, but **not** an HTTP error:
+  // per spec a non-2xx response fails the stream permanently. A daemon restart
+  // rotates the token, so the next connection answers 401 and the live feed is
+  // dead for the life of the page -- which is why the console appeared to stop
+  // keeping up until it was reloaded. apiFetch already recovers from a 401 by
+  // refreshing the cookie; the stream had no equivalent, so it gets one here.
+  if (reconnectTimer) return;
+  reconnectTimer = setTimeout(async () => {
+    reconnectTimer = null;
+    await refreshSession().catch(() => false);
+    connect();
+  }, reconnectDelay);
+  reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
+}
+
 function connect() {
   // Same-origin EventSource requests send cookies automatically -- no query
   // param needed (a bearer token must never ride in a URL).
+  if (eventSource) eventSource.close();
   const es = new EventSource("/api/events");
+  eventSource = es;
   es.addEventListener("session.upsert", (e) => upsertCard(JSON.parse(e.data)));
   es.addEventListener("session.remove", (e) => removeCard(JSON.parse(e.data).key));
   es.addEventListener("attention.count", (e) => setAttention(JSON.parse(e.data).count));
@@ -1271,13 +1306,20 @@ function connect() {
       persistTranscript();
     }
   });
-  es.onopen = snapshot;   // resync after every (re)connect
+  es.onopen = () => {
+    reconnectDelay = 1000;   // a good connection resets the backoff
+    snapshot();              // resync after every (re)connect
+  };
   es.onerror = () => {
     if (!sessions.size) {
       rosterLoading = true;
       renderEmpty();
     }
     pollRosterSoon();
+    // CLOSED means the browser has given up on this stream for good, which is
+    // what an HTTP error produces. CONNECTING is its own retry in progress and
+    // must be left alone, or every transient blip races two live streams.
+    if (es.readyState === EventSource.CLOSED) scheduleReconnect();
   };
 }
 
@@ -1300,8 +1342,24 @@ if (DEMO_MODE) {
   // Do not wait for EventSource's first open before attempting the initial
   // roster fetch; this also covers browsers delaying SSE reconnection.
   snapshot();
-  // SSE is the fast path; periodic additive reconciliation recovers session
-  // upserts that landed while the browser or daemon was reconnecting.
+  // SSE is the fast path; periodic reconciliation recovers whatever landed
+  // while the browser or daemon was reconnecting.
   setInterval(snapshot, 5000);
+
+  // A background tab has its timers throttled to about once a minute and may
+  // have had its stream suspended, so the roster is stale at exactly the moment
+  // it is looked at again. Resync on the way back rather than making someone
+  // wait out a tick -- this is the reload people were reaching for.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    snapshot();
+    if (!eventSource || eventSource.readyState === EventSource.CLOSED) connect();
+  });
+  // Waking from sleep or regaining a network drops the stream without always
+  // firing an error the page can see.
+  window.addEventListener("online", () => {
+    snapshot();
+    if (!eventSource || eventSource.readyState === EventSource.CLOSED) connect();
+  });
   setAttention(0);
 });

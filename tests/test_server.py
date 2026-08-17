@@ -12,6 +12,7 @@ from huginn import config as config_module
 from huginn.config import Config
 from huginn.daemon import Daemon
 from huginn.model import Session, SessionState
+from huginn.plugins import get_registry
 from huginn.server.app import create_app
 
 
@@ -493,6 +494,94 @@ class AuthTests(unittest.TestCase):
             )
         self.assertEqual(r.status_code, 409)
         self.assertEqual(r.json()["detail"], "a chat is already running")
+
+
+class RosterCompletenessTests(unittest.TestCase):
+    """Whether absence from a snapshot is evidence a session ended.
+
+    The console reconciles removals against this flag. Getting it wrong in one
+    direction leaves dead cards on screen until a manual reload — the bug this
+    was added for — and in the other blanks a roster the daemon is still
+    assembling at startup.
+    """
+
+    HEADERS = {"X-Huginn-Token": "secret-token"}
+
+    @staticmethod
+    def _all_sources_reported(daemon: Daemon) -> None:
+        for name in list(daemon._roster_pending):
+            daemon.roster_reported(name)
+
+    def _complete(self, client) -> bool:
+        return client.get("/api/sessions", headers=self.HEADERS).json()["complete"]
+
+    def test_a_fresh_daemon_is_incomplete(self):
+        """Nothing has looked yet, so an empty roster means nothing yet."""
+        c, _ = make_client_with_daemon()
+        self.assertFalse(self._complete(c))
+
+    def test_it_is_complete_once_every_source_has_reported(self):
+        c, daemon = make_client_with_daemon()
+        self._all_sources_reported(daemon)
+        self.assertTrue(self._complete(c))
+
+    def test_one_silent_source_holds_the_whole_snapshot_back(self):
+        """A roster missing one source's sessions must not license removals."""
+        c, daemon = make_client_with_daemon()
+        for name in list(daemon._roster_pending)[:-1]:
+            daemon.roster_reported(name)
+        self.assertFalse(self._complete(c))
+
+    def test_a_source_that_will_never_run_stops_holding_it_back(self):
+        """The bug the unit tests missed and the real daemon showed in seconds.
+
+        Every one of these pollers returns early when its feature is absent — no
+        WSL installed, a desktop app switched off — so an implementation that
+        waited for each to *scan* waited forever on an ordinary machine, and
+        removal reconciliation stayed off exactly where it was needed. Deciding
+        not to run is itself a report.
+        """
+        c, daemon = make_client_with_daemon()
+        self.assertIn("wsl_poller", daemon._roster_pending)
+        for name in list(daemon._roster_pending):
+            if name != "wsl_poller":
+                daemon.roster_reported(name)
+        self.assertFalse(self._complete(c))
+        daemon.roster_reported("wsl_poller")     # "WSL is not installed"
+        self.assertTrue(self._complete(c))
+
+    def test_a_source_that_never_reports_stops_blocking_after_the_grace(self):
+        """The backstop. Silence forever is the bug, not a safe default.
+
+        The precise path depends on every source remembering to report, and a
+        long-running plugin has no first-pass boundary to report at. One
+        omission would restore the original defect invisibly, so the deadline
+        bounds it: a blink is recoverable, a permanently stale roster is what
+        someone complained about.
+        """
+        c, daemon = make_client_with_daemon()
+        self.assertFalse(self._complete(c))
+        daemon._booted_at -= Daemon.ROSTER_GRACE_S + 1
+        self.assertTrue(self._complete(c))
+
+    def test_a_plugin_source_gates_absence_too(self):
+        """A plugin can put sessions on the roster, so it counts."""
+        class _Source:
+            name = "watcher"
+
+        class _Plugin:
+            name = "acme"
+
+        with patch.object(type(get_registry()), "sources",
+                          lambda _self: ((_Plugin(), _Source()),)):
+            c, daemon = make_client_with_daemon()
+            self.assertIn("plugin.acme.watcher", daemon._roster_pending)
+            for name in list(daemon._roster_pending):
+                if name != "plugin.acme.watcher":
+                    daemon.roster_reported(name)
+            self.assertFalse(self._complete(c))
+            daemon.roster_reported("plugin.acme.watcher")
+            self.assertTrue(self._complete(c))
 
 
 if __name__ == "__main__":

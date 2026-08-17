@@ -62,6 +62,15 @@ class Daemon:
         #: the descriptor, the state file, and the token.
         self._restart_requested = False
         self.plugins = get_registry()
+        #: Roster sources that have not yet said anything about absence. Seeded
+        #: full and drained as each one either completes a first scan or decides
+        #: it will not run at all — see `roster_complete`.
+        self._roster_pending: set[str] = set(self.ROSTER_SOURCES)
+        self._roster_pending.update(
+            f"plugin.{plugin.name}.{source.name}"
+            for plugin, source in self.plugins.sources()
+        )
+        self._booted_at = time.time()
         from .llm.blurb import BlurbWorker
         self.blurbs = BlurbWorker(self)
 
@@ -113,6 +122,73 @@ class Daemon:
         self._dirty = False
         return True
 
+    # -------------------------------------------------------- roster completeness
+    #: Sources that can put a session on the roster. A snapshot only carries
+    #: information about *absence* once every one of these has looked at least
+    #: once — before that, "not in the list" means "nobody has checked yet".
+    #:
+    #: Named explicitly rather than inferred from whatever has reported so far,
+    #: because inferring it makes the answer "complete" at boot, when it is
+    #: least true.
+    ROSTER_SOURCES = (
+        "claude_sweep",
+        "codex_poller",
+        "desktop_poller",
+        "chatgpt_desktop_poller",
+        "wsl_poller",
+    )
+
+    def roster_reported(self, name: str) -> None:
+        """Record that ``name`` has nothing further to add to a first scan.
+
+        Called both when a source finishes one pass **and** when it decides not
+        to run at all. Those are the same fact as far as absence is concerned: a
+        source that is switched off or has nothing installed to look at can no
+        longer be the reason a session is missing.
+
+        Reading this from `diagnostics` instead was the obvious shortcut and it
+        was wrong. Every one of these pollers returns early when its feature is
+        absent — no WSL installed, a desktop app disabled — so it never reports
+        health, and a machine without WSL would have waited forever for a scan
+        that was never going to happen. Caught only by running the real daemon;
+        the suite was green, because a test daemon has every source enabled.
+        """
+        self._roster_pending.discard(name)
+
+    #: After this long, a source that has still said nothing stops being waited
+    #: for. The precise mechanism above depends on every source remembering to
+    #: report, and the cost of one forgetting is *silence forever* — the exact
+    #: bug this feature exists to fix, reintroduced by omission and impossible to
+    #: see from the console.
+    #:
+    #: A long-running plugin source cannot report a "first pass" at all: `run()`
+    #: is a loop by contract, so there is no boundary to hook. Rather than
+    #: inventing one for plugins to get wrong, the deadline covers them.
+    #:
+    #: The cost of the backstop firing early is a card blinking out and back on
+    #: the next poll. The cost of not having it is a dead session on screen until
+    #: someone reloads the page, which is what a person actually complained
+    #: about. Comfortably longer than any observed source start.
+    ROSTER_GRACE_S = 60.0
+
+    def roster_complete(self) -> bool:
+        """Whether absence from the roster is evidence a session is gone.
+
+        The console needs this to reconcile *removals*. Its snapshot poll is
+        additive precisely because absence was never trustworthy, which left a
+        card for a dead session on screen until someone reloaded the page —
+        forever, if the removal event arrived while the browser was reconnecting
+        or while a different daemon was running.
+
+        A failing source still counts as having looked. Its errors are already
+        reported through `diagnostics`, and treating a broken source as
+        permanently-unscanned would silently disable removal reconciliation for
+        as long as the breakage lasted, which is the failure this exists to end.
+        """
+        if not self._roster_pending:
+            return True
+        return (time.time() - self._booted_at) >= self.ROSTER_GRACE_S
+
     # ------------------------------------------------------------ tail mgmt
     def ensure_tail(self, s: Session) -> None:
         if not s.transcript_path or s.key in self.tails:
@@ -142,6 +218,10 @@ class Daemon:
     async def claude_watcher(self) -> None:
         from watchfiles import awatch
         self._scan_claude()
+        # The first scan is what makes absence meaningful for Claude sessions:
+        # until it has run, a session missing from the roster only means nobody
+        # has looked yet. See `roster_complete`.
+        self.roster_reported("claude_sweep")
         sweep = asyncio.create_task(self._claude_sweep())
         try:
             if claude_code.SESSIONS_DIR.is_dir():
@@ -204,6 +284,10 @@ class Daemon:
                 if not claude_code.pid_alive(s.pid):
                     self.bus.emit(Event("claude.dead", key, time.time(), "timeout"))
             self._scan_claude()   # catch files awatch missed
+            # Reported so `roster_complete` can tell "Claude has been swept" from
+            # "Claude has not been looked at yet". The other pollers already do
+            # this for their own health; this one had nothing reading it.
+            self.diagnostics.ok("claude_sweep")
 
     async def transcript_watcher(self) -> None:
         from watchfiles import awatch
@@ -245,6 +329,7 @@ class Daemon:
                 self.diagnostics.ok("codex_poller")
             except Exception as e:
                 self.diagnostics.error("codex_poller", e)
+            self.roster_reported("codex_poller")
             await asyncio.sleep(self.cfg.get("codex", "poll_s"))
 
     def _poll_codex_once(self) -> None:
@@ -281,6 +366,11 @@ class Daemon:
         """Poll normalized sessions from configured WSL distributions."""
         from .sources import wsl
         if not self.cfg.get("wsl", "enabled"):
+            # Reported, not merely skipped: a source that will never run cannot
+            # be the reason a session is missing, so it must stop holding back
+            # `roster_complete`. This return is the common case on Windows and
+            # was what kept the console's removal reconciliation switched off.
+            self.roster_reported("wsl_poller")
             return
         # Asked once, before the loop, and the source is left unregistered when
         # the answer is no -- so `doctor` says nothing about WSL rather than
@@ -295,6 +385,7 @@ class Daemon:
         # feature that is off for most users.
         if not await asyncio.to_thread(wsl.available):
             LOG.info("WSL is not installed; not polling for WSL sessions")
+            self.roster_reported("wsl_poller")
             return
         known = {key for key in self.reducer.sessions if key.startswith("wsl:")}
         while self.cfg.get("wsl", "enabled"):
@@ -315,10 +406,14 @@ class Daemon:
                 self.diagnostics.ok("wsl_poller")
             else:
                 self.diagnostics.error("wsl_poller", RuntimeError("WSL probe failed"))
+            self.roster_reported("wsl_poller")
             await asyncio.sleep(self.cfg.get("wsl", "poll_s"))
 
     async def desktop_poller(self) -> None:
         from .sources import claude_desktop
+        if not self.cfg.get("claude_desktop", "enabled"):
+            self.roster_reported("desktop_poller")
+            return
         while self.cfg.get("claude_desktop", "enabled"):
             try:
                 sess = claude_desktop.scan()
@@ -334,10 +429,14 @@ class Daemon:
                 self.diagnostics.ok("desktop_poller")
             except Exception as e:
                 self.diagnostics.error("desktop_poller", e)
+            self.roster_reported("desktop_poller")
             await asyncio.sleep(self.cfg.get("claude_desktop", "poll_s"))
 
     async def chatgpt_desktop_poller(self) -> None:
         from .sources import chatgpt_desktop
+        if not self.cfg.get("chatgpt_desktop", "enabled"):
+            self.roster_reported("chatgpt_desktop_poller")
+            return
         while self.cfg.get("chatgpt_desktop", "enabled"):
             try:
                 sess = chatgpt_desktop.scan()
@@ -350,6 +449,7 @@ class Daemon:
                 self.diagnostics.ok("chatgpt_desktop_poller")
             except Exception as e:
                 self.diagnostics.error("chatgpt_desktop_poller", e)
+            self.roster_reported("chatgpt_desktop_poller")
             await asyncio.sleep(self.cfg.get("chatgpt_desktop", "poll_s"))
 
     async def ticker(self) -> None:
@@ -411,6 +511,11 @@ class Daemon:
             raise
         except Exception as exc:
             context.error(exc)
+        finally:
+            # Covers a source that returns or crashes; a healthy one is
+            # long-running by contract and never reaches here, which is what
+            # ROSTER_GRACE_S exists for.
+            self.roster_reported(context.diagnostic_name)
 
     async def run(self, open_browser: bool = True) -> int:
         import uvicorn

@@ -125,7 +125,12 @@ def create_app(daemon: "Daemon") -> FastAPI:
         return {"sessions": [s.to_dict() for s in items],
                 "attention": reducer.attention_count(),
                 "triage": build_triage(items),
-                "boot_id": daemon.boot_id}
+                "boot_id": daemon.boot_id,
+                # Whether absence from `sessions` is evidence. False during
+                # startup, when a source simply has not looked yet; the console
+                # reconciles removals only when this is true, so a slow boot
+                # cannot blank a roster it is still assembling.
+                "complete": daemon.roster_complete()}
 
     @api.get("/activity")
     def activity():

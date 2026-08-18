@@ -53,6 +53,7 @@ Deterministic triage:
 
 Question: {question}
 """
+ASK_TIMEOUT_S = 120
 
 
 def _safe_name(name: str) -> str:
@@ -364,10 +365,14 @@ async def _run_chat(daemon: "Daemon", provider, question: str, request_id: str,
         # a future caller reaching _run_chat another way is still governed.
         policy.check(model, provider_name)
         got_any = False
-        async for chunk in provider.stream(
-                prompt, model=model, cwd=str(chat_dir), allowed_tools="Read,Grep"):
-            got_any = True
-            broadcast("chat.delta", {"text": chunk})
+        try:
+            async with asyncio.timeout(ASK_TIMEOUT_S):
+                async for chunk in provider.stream(
+                        prompt, model=model, cwd=str(chat_dir), allowed_tools="Read,Grep"):
+                    got_any = True
+                    broadcast("chat.delta", {"text": chunk})
+        except TimeoutError as exc:
+            raise RuntimeError(f"Ask provider timed out after {ASK_TIMEOUT_S}s") from exc
         if not got_any:
             broadcast("chat.delta", {"text": "(no answer produced)"})
         broadcast("chat.done", {})

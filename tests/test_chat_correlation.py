@@ -134,6 +134,29 @@ class ChatCorrelationTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["ok"])
         self.assertNotIn("request_id", result)
 
+    async def test_stalled_provider_clears_the_ask_spinner_with_a_timeout_error(self):
+        daemon = Daemon(Config({}))
+        daemon.reducer.sessions["codex:test"] = Session(
+            key="codex:test", source="codex", session_id="test", cwd="/tmp", name="test-agent"
+        )
+        events = []
+        daemon.bus.broadcast = lambda event, data: events.append((event, data))
+
+        class _StalledProvider(_AvailableProvider):
+            async def stream(self, *args, **kwargs):
+                await asyncio.sleep(10)
+                yield "never"  # pragma: no cover
+
+        with (
+            patch("huginn.llm.chat.get_provider", return_value=_StalledProvider()),
+            patch("huginn.llm.chat.ASK_TIMEOUT_S", 0.01),
+        ):
+            result = await start_chat(daemon, {"question": "what is running?"})
+            self.assertTrue(result["ok"])
+            await daemon.active_chat
+        errors = [data["error"] for event, data in events if event == "chat.error"]
+        self.assertEqual(errors, ["Ask provider timed out after 0.01s"])
+
     async def test_ask_can_set_a_manual_card_title(self):
         daemon = Daemon(Config({}))
         daemon.bus.broadcast = lambda *a, **k: None

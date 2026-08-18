@@ -349,11 +349,13 @@ class PluginSourceTests(unittest.TestCase):
             "codex:manager",
             source_summary="presence: verified\nneeds: review",
             focus_handler="managed-agent",
+            source_label="Managed Agent",
         )
         event = self.bus.events.get_nowait()
         self.assertEqual(event.kind, "plugin.enrich")
         self.assertEqual(event.session_key, "codex:manager")
         self.assertNotIn("url", event.payload)
+        self.assertEqual(event.payload["source_label"], "Managed Agent")
 
     def test_reducer_applies_enrichment_to_existing_session(self):
         reducer = Reducer(Config({}))

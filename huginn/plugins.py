@@ -494,6 +494,7 @@ class SourceContext:
         state: Any = None,
         state_since: float | None = None,
         focus_handler: str | None = None,
+        source_label: str | None = None,
     ) -> None:
         """Attach bounded, source-read context to an already-known session.
 
@@ -508,6 +509,11 @@ class SourceContext:
             raise ValueError("plugin source summary is limited to 4000 characters")
         if focus_handler is not None and _invalid_name("focuser", focus_handler):
             raise ValueError("focuser name is invalid")
+        if source_label is not None and (
+            not isinstance(source_label, str) or not source_label.strip()
+            or len(source_label) > MAX_SOURCE_LABEL_CHARS
+        ):
+            raise ValueError("source label is invalid")
         if state_since is not None and (isinstance(state_since, bool) or not isinstance(state_since, (int, float))):
             raise ValueError("state_since must be a timestamp")
         self.bus.emit(Event("plugin.enrich", key, time.time(), self.diagnostic_name, {
@@ -515,6 +521,7 @@ class SourceContext:
             "state": state,
             "state_since": state_since,
             "focus_handler": focus_handler,
+            "source_label": source_label,
         }))
 
     def ok(self) -> None:

@@ -299,7 +299,7 @@ class Reducer:
             return []
         payload = ev.payload
         changed = False
-        for attr in ("source_summary", "focus_handler"):
+        for attr in ("source_summary", "focus_handler", "source_label"):
             value = payload.get(attr)
             if value != getattr(s, attr):
                 setattr(s, attr, value)

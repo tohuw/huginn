@@ -1125,7 +1125,7 @@ function applySettings(cfg) {
   liveToggle.textContent = liveUpdates ? "❚❚ pause" : "▶ play";
   liveToggle.title = liveUpdates
     ? "Pause dashboard card updates; monitoring continues"
-    : "Resume dashboard card updates; monitoring was continuous";
+    : "Resume dashboard card updates; monitoring is continuous";
   liveToggle.setAttribute("aria-pressed", String(!liveUpdates));
   document.body.classList.toggle("cards-paused", !liveUpdates);
   hiddenGroups = new Set(cfg.ui.hidden_groups || []);
@@ -1175,7 +1175,7 @@ document.getElementById("live-toggle").onclick = async () => {
   liveToggle.textContent = liveUpdates ? "❚❚ pause" : "▶ play";
   liveToggle.title = liveUpdates
     ? "Pause dashboard card updates; monitoring continues"
-    : "Resume dashboard card updates; monitoring was continuous";
+    : "Resume dashboard card updates; monitoring is continuous";
   liveToggle.setAttribute("aria-pressed", String(!liveUpdates));
   document.body.classList.toggle("cards-paused", !liveUpdates);
   const r = await saveSettings({ ui: { live: liveUpdates } });
@@ -1184,7 +1184,7 @@ document.getElementById("live-toggle").onclick = async () => {
     liveToggle.textContent = liveUpdates ? "❚❚ pause" : "▶ play";
     liveToggle.title = liveUpdates
       ? "Pause dashboard card updates; monitoring continues"
-      : "Resume dashboard card updates; monitoring was continuous";
+      : "Resume dashboard card updates; monitoring is continuous";
     liveToggle.setAttribute("aria-pressed", String(!liveUpdates));
     document.body.classList.toggle("cards-paused", !liveUpdates);
   }

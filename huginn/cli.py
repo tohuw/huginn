@@ -266,6 +266,18 @@ def cmd_focus(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_live(args: argparse.Namespace) -> int:
+    """Pause or resume dashboard card rendering without stopping collection."""
+    try:
+        _daemon_api("/api/settings", method="PUT", body={"ui": {"live": args.live}})
+    except RuntimeError as e:
+        print(f"huginn: {e}", file=sys.stderr)
+        return 1
+    print("live dashboard card updates resumed (monitoring never stopped)" if args.live
+          else "dashboard card view frozen (monitoring continues)")
+    return 0
+
+
 def cmd_authority(args: argparse.Namespace) -> int:
     try:
         session = _resolve_session(args.target, _live_sessions())
@@ -418,6 +430,11 @@ def main(argv: list[str] | None = None) -> int:
     sp = sub.add_parser("focus", help="focus a live session by name")
     sp.add_argument("target", help="session name, @name, or canonical key")
     sp.set_defaults(fn=cmd_focus)
+
+    sub.add_parser("pause", help="freeze the dashboard view; monitoring continues").set_defaults(
+        fn=cmd_live, live=False)
+    sub.add_parser("resume", help="resume dashboard updates; monitoring was continuous").set_defaults(
+        fn=cmd_live, live=True)
 
     sp = sub.add_parser("history", help="show a session's recorded state-transition history")
     sp.add_argument("target", help="session name, @name, or canonical key")

@@ -59,7 +59,19 @@ quick agent reading.
 huginn focus @session-name
 ```
 
-4. Steering is observe-only by default. Only when the user explicitly asks to
+4. Freeze the dashboard cards only when the user asks to pause or resume the
+live view. This is never an agent pause: monitoring, collection, CLI reads,
+and Ask continue normally while paused:
+
+```sh
+huginn pause
+huginn resume
+```
+
+Ask can perform the same action when the user says to pause/freeze or
+play/resume the cards. Do not pause as a side effect of inspecting a session.
+
+5. Steering is observe-only by default. Only when the user explicitly asks to
 control a specific session, grant the narrow authority, perform one confirmed
 action, then return it to observe unless the user asked for ongoing steering:
 
@@ -73,7 +85,7 @@ huginn authority @session-name observe
 `send` and `interrupt` present a separate preview and require the user to type
 `yes`. Do not attempt to answer that prompt on the user's behalf.
 
-5. Answer from observed state and digest. State uncertainty when the digest does not establish an answer.
+6. Answer from observed state and digest. State uncertainty when the digest does not establish an answer.
 
 `huginn status` is a one-shot table meant for a human to read. `huginn doctor`
 checks environment and configuration, and is the right call before diagnosing

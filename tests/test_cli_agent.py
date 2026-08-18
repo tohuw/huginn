@@ -147,6 +147,22 @@ class AgentCliTests(unittest.TestCase):
             self.assertEqual(cli.cmd_focus(Namespace(target="@huginn-abc")), 0)
         self.assertEqual(calls[-1], ("/api/sessions/codex%3Aabc/focus", "POST"))
 
+    def test_pause_and_resume_change_only_the_dashboard_live_setting(self):
+        calls = []
+
+        def api(path, method="GET", body=None, **_kwargs):
+            calls.append((path, method, body))
+            return {"ui": body["ui"]}
+
+        with patch("huginn.cli._daemon_api", side_effect=api), redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_live(Namespace(live=False)), 0)
+            self.assertEqual(cli.cmd_live(Namespace(live=True)), 0)
+
+        self.assertEqual(calls, [
+            ("/api/settings", "PUT", {"ui": {"live": False}}),
+            ("/api/settings", "PUT", {"ui": {"live": True}}),
+        ])
+
     def test_authority_targets_resolved_session(self):
         calls = []
 

@@ -48,6 +48,8 @@ uv run huginn serve          # daemon + dashboard at http://127.0.0.1:47100
 uv run huginn open           # reopen the dashboard tab with a fresh auth bootstrap
 uv run huginn demo           # privacy-safe interactive fictional roster
 uv run huginn status         # one-shot table in the terminal
+uv run huginn pause          # freeze only the dashboard card view; monitoring continues
+uv run huginn resume         # show current live card state again
 uv run huginn install-hooks  # sub-second state changes (recommended, once)
 uv run huginn doctor         # environment/hook/daemon health check
 ```
@@ -259,7 +261,10 @@ sessions open the workspace; Windows Terminal currently focuses the owning windo
 top-right) that reads current per-session digests and answers questions about
 what's going on. Ask stays in that monitoring scope; it can also toggle blurbs,
 switch its provider, change cards/list view, title a card, and hide its own
-panel. Ask answers render headings, lists, emphasis, inline code, and fenced
+panel. The top-bar **pause** control (or Ask: “freeze the cards”) freezes only
+the dashboard card snapshot: session monitoring, history, CLI reads, and Ask
+continue in the background; **play** resumes rendering from the current roster.
+Ask answers render headings, lists, emphasis, inline code, and fenced
 code blocks through DOM construction without HTML injection. The pencil edits a
 short ephemeral card title; absent a manual title,
 the configured LLM may guess one from current session evidence. Titles belong

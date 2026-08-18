@@ -45,6 +45,7 @@ const pluginGroupSections = new Map();   // group key -> { section, grid, count 
 const tpl = document.getElementById("card-tpl");
 let llmEnabled = true;
 let desktopVisible = true;
+let liveUpdates = true;
 let hiddenGroups = new Set();
 // Startup and daemon restarts are indeterminate until both the roster and the
 // cheap activity probe answer.  Begin with the honest state instead of briefly
@@ -1118,6 +1119,15 @@ function applySettings(cfg) {
   document.getElementById("llm-toggle").checked = llmEnabled;
   desktopVisible = cfg.ui.show_desktop !== false;
   document.getElementById("desktop-toggle").checked = desktopVisible;
+  const wasPaused = !liveUpdates;
+  liveUpdates = cfg.ui.live !== false;
+  const liveToggle = document.getElementById("live-toggle");
+  liveToggle.textContent = liveUpdates ? "❚❚ pause" : "▶ play";
+  liveToggle.title = liveUpdates
+    ? "Pause dashboard card updates; monitoring continues"
+    : "Resume dashboard card updates; monitoring was continuous";
+  liveToggle.setAttribute("aria-pressed", String(!liveUpdates));
+  document.body.classList.toggle("cards-paused", !liveUpdates);
   hiddenGroups = new Set(cfg.ui.hidden_groups || []);
   for (const [groupKey, entry] of pluginGroupSections) {
     entry.section.querySelector(".plugin-group-toggle input").checked = !hiddenGroups.has(groupKey);
@@ -1135,6 +1145,7 @@ function applySettings(cfg) {
   applyChatSpan(cfg.ui.chat_span || "vertical");
   openChat(cfg.ui.chat_open !== false);
   for (const s of sessions.values()) upsertCard(s);
+  if (wasPaused && liveUpdates && !DEMO_MODE) snapshot();
 }
 document.getElementById("llm-toggle").onchange = async (e) => {
   llmEnabled = e.target.checked;
@@ -1155,6 +1166,27 @@ document.getElementById("desktop-toggle").onchange = async (e) => {
     desktopVisible = previous;
     e.target.checked = previous;
     reorder();
+  }
+};
+document.getElementById("live-toggle").onclick = async () => {
+  const previous = liveUpdates;
+  liveUpdates = !liveUpdates;
+  const liveToggle = document.getElementById("live-toggle");
+  liveToggle.textContent = liveUpdates ? "❚❚ pause" : "▶ play";
+  liveToggle.title = liveUpdates
+    ? "Pause dashboard card updates; monitoring continues"
+    : "Resume dashboard card updates; monitoring was continuous";
+  liveToggle.setAttribute("aria-pressed", String(!liveUpdates));
+  document.body.classList.toggle("cards-paused", !liveUpdates);
+  const r = await saveSettings({ ui: { live: liveUpdates } });
+  if (!r.ok) {
+    liveUpdates = previous;
+    liveToggle.textContent = liveUpdates ? "❚❚ pause" : "▶ play";
+    liveToggle.title = liveUpdates
+      ? "Pause dashboard card updates; monitoring continues"
+      : "Resume dashboard card updates; monitoring was continuous";
+    liveToggle.setAttribute("aria-pressed", String(!liveUpdates));
+    document.body.classList.toggle("cards-paused", !liveUpdates);
   }
 };
 providerSelect.onchange = async (e) => {
@@ -1199,11 +1231,13 @@ function pollRosterSoon() {
   rosterPollTimer = setTimeout(snapshot, 750);
 }
 async function snapshot() {
+  if (!liveUpdates) return;
   if (snapshotInFlight) return;
   snapshotInFlight = true;
   try {
     const r = await apiFetch("/api/sessions");
     const data = await r.json();
+    if (!liveUpdates) return;
     // Snapshots reconcile in both directions, but only once the daemon reports
     // `complete` -- every roster source has scanned since it booted, so absence
     // finally means something. While it is false (startup, a source still
@@ -1275,10 +1309,10 @@ function connect() {
   if (eventSource) eventSource.close();
   const es = new EventSource("/api/events");
   eventSource = es;
-  es.addEventListener("session.upsert", (e) => upsertCard(JSON.parse(e.data)));
-  es.addEventListener("session.remove", (e) => removeCard(JSON.parse(e.data).key));
-  es.addEventListener("attention.count", (e) => setAttention(JSON.parse(e.data).count));
-  es.addEventListener("triage.changed", (e) => setTriage(JSON.parse(e.data)));
+  es.addEventListener("session.upsert", (e) => { if (liveUpdates) upsertCard(JSON.parse(e.data)); });
+  es.addEventListener("session.remove", (e) => { if (liveUpdates) removeCard(JSON.parse(e.data).key); });
+  es.addEventListener("attention.count", (e) => { if (liveUpdates) setAttention(JSON.parse(e.data).count); });
+  es.addEventListener("triage.changed", (e) => { if (liveUpdates) setTriage(JSON.parse(e.data)); });
   es.addEventListener("settings.changed", (e) => applySettings(JSON.parse(e.data)));
   es.addEventListener("session.focused", (e) => flashFocused(JSON.parse(e.data).key));
   es.addEventListener("session.peek", (e) => showPeek(JSON.parse(e.data)));
@@ -1328,7 +1362,7 @@ if (DEMO_MODE) {
   rosterLoading = false;
   applySettings({
     llm: { enabled: true, provider: "codex" },
-    ui: { show_desktop: true, view: "cards", sort: "state", chat_span: "vertical", chat_open: true },
+    ui: { show_desktop: true, view: "cards", sort: "state", live: true, chat_span: "vertical", chat_open: true },
   });
   const roster = demoSessions();
   for (const session of roster) upsertCard(session);

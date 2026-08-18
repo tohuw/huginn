@@ -48,6 +48,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "show_desktop": True,
         "view": "cards",                 # cards | list
         "sort": "state",                 # state | alpha | newest | oldest
+        "live": True,                     # false holds the dashboard card snapshot
         "chat_open": True,
         "chat_span": "vertical",        # vertical | horizontal
         "ended_ttl_s": 300,

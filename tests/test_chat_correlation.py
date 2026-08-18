@@ -271,6 +271,8 @@ class ChatCorrelationTests(unittest.IsolatedAsyncioTestCase):
             "hide the ask panel": ("ui", "chat_open", False),
             "hide desktop presence": ("ui", "show_desktop", False),
             "show app tiles": ("ui", "show_desktop", True),
+            "freeze the cards": ("ui", "live", False),
+            "resume live updates": ("ui", "live", True),
             "span ask horizontally": ("ui", "chat_span", "horizontal"),
             "dock ask on the right": ("ui", "chat_span", "vertical"),
             "sort by state": ("ui", "sort", "state"),
@@ -288,13 +290,15 @@ class ChatCorrelationTests(unittest.IsolatedAsyncioTestCase):
         daemon.bus.broadcast = lambda event, data: events.append((event, data))
         with patch("huginn.llm.chat.config.save"):
             result = await start_chat(
-                daemon, {"question": "switch to list view and hide the ask panel"})
+                daemon, {"question": "switch to list view, hide the ask panel, and freeze the cards"})
             self.assertTrue(result["ok"])
             self.assertEqual(result["settings"]["ui"]["view"], "list")
             self.assertFalse(result["settings"]["ui"]["chat_open"])
+            self.assertFalse(result["settings"]["ui"]["live"])
             await daemon.active_chat
         self.assertEqual(daemon.cfg.get("ui", "view"), "list")
         self.assertFalse(daemon.cfg.get("ui", "chat_open"))
+        self.assertFalse(daemon.cfg.get("ui", "live"))
         self.assertTrue(any(event == "settings.changed" for event, _ in events))
 
 

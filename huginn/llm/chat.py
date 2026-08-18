@@ -95,6 +95,10 @@ def _control_actions(question: str) -> list[tuple[str, str, object, str]]:
         actions.append(("ui", "sort", name, reply))
     if re.search(r"\b(?:hide|close|dismiss)\b.{0,25}\b(?:ask|chat)\s+(?:panel|sidebar)\b", q):
         actions.append(("ui", "chat_open", False, "Ask panel hidden."))
+    if re.search(r"\b(?:pause|freeze)\b.{0,30}\b(?:cards?|roster|state|updates?)\b|\b(?:pause|freeze)\b", q):
+        actions.append(("ui", "live", False, "Dashboard card view frozen; monitoring continues."))
+    elif re.search(r"\b(?:play|resume|unfreeze)\b.{0,30}\b(?:cards?|roster|state|updates?)\b|\b(?:play|resume|unfreeze)\b", q):
+        actions.append(("ui", "live", True, "Live dashboard updates resumed; monitoring never stopped."))
     if re.search(r"\b(?:hide|disable)\b.{0,30}\b(?:desktop presence|desktop apps?|app tiles?)\b", q):
         actions.append(("ui", "show_desktop", False, "Desktop presence hidden."))
     elif re.search(r"\b(?:show|enable)\b.{0,30}\b(?:desktop presence|desktop apps?|app tiles?)\b", q):

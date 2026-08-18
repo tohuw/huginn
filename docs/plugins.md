@@ -283,18 +283,32 @@ session = Session(
     name="example-session",
     group="example",                     # short, stable key
     group_label="Example workers",       # human-readable section heading
+    group_sort_key="member-a",           # this card's secondary-sort value
+    group_sort_label="cluster member",   # label for the optional UI control
 )
 ```
 
-`group` must match the same name pattern as a plugin/provider/source name
-(lowercase, `[a-z][a-z0-9._-]*`). `group_label` is optional -- it falls back
-to `group` itself -- but if you set it, keep it under 60 characters and
+`group` must be no more than 80 characters and match the same name pattern as
+a plugin/provider/source name (lowercase, `[a-z][a-z0-9._-]*`). `group_label`
+is optional -- it falls back to `group` itself -- but if you set it, keep it
+under 60 characters and
 non-empty. Every session sharing a `group` key renders together; the
 dashboard creates that section the first time a session declares it, and
 hides it entirely once no live session claims it. The toggle state persists
 per-browser through the existing settings sync (`ui.hidden_groups`), same as
 every other dashboard control. Leaving both fields unset (the default)
 renders sessions in the main grid exactly as before this existed.
+
+To offer an optional secondary ordering inside the section, set both
+`group_sort_key` and `group_sort_label`. The key is bounded non-empty text (up
+to 160 characters); the label is bounded non-empty display text (up to 60
+characters). The dashboard then adds a **sort by _label_** checkbox to that
+section. When enabled, cards are ordered by `group_sort_key` first and by the
+dashboard's selected primary sort (state, name, newest, or oldest) within each
+key. Each contiguous key is introduced by a full-width boundary carrying the
+key and card count. The choice persists in `ui.group_sorts`. Sessions without a
+sort key stay at the end of a secondarily sorted section. A sort key requires
+`group`; a sort label also requires a sort key.
 
 ## Installing a plugin
 

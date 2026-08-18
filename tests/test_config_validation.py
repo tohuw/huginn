@@ -63,6 +63,13 @@ class ValidateSettingTests(unittest.TestCase):
         self.assertIsNotNone(validate_setting("patterns", "permission", "not-a-list"))
         self.assertIsNotNone(validate_setting("patterns", "permission", ["a", 1]))
 
+    def test_group_sort_setting_accepts_only_bounded_group_keys(self):
+        self.assertIsNone(validate_setting("ui", "group_sorts", ["neo-cortex", "workers.2"]))
+        self.assertIsNotNone(validate_setting("ui", "group_sorts", "neo-cortex"))
+        self.assertIsNotNone(validate_setting("ui", "group_sorts", ["Not Valid!"]))
+        self.assertIsNotNone(validate_setting("ui", "group_sorts", ["x" * 81]))
+        self.assertIsNotNone(validate_setting("ui", "group_sorts", ["x"] * 101))
+
     def test_patterns_waiting_removed(self):
         # issue #19: the string-match fallback is a binary permission/
         # not-permission classification -- a separate "waiting" pattern

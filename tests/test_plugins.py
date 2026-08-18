@@ -421,9 +421,50 @@ class PluginSourceTests(unittest.TestCase):
             name="worker-1-run-2",
             group="neo-cortex",
             group_label="Neo-Cortex workers",
+            group_sort_key="member-a",
+            group_sort_label="cluster member",
         )
 
         self.context.upsert(session)   # must not raise
+
+    def test_context_rejects_group_sort_key_without_group(self):
+        session = Session(
+            key=self.context.key("run-2"), source="workers", session_id="run-2",
+            cwd="worker-1/repo", name="worker-1-run-2", group_sort_key="member-a",
+        )
+
+        with self.assertRaisesRegex(ValueError, "group_sort_key requires group"):
+            self.context.upsert(session)
+
+    def test_context_rejects_group_sort_label_without_key(self):
+        session = Session(
+            key=self.context.key("run-2"), source="workers", session_id="run-2",
+            cwd="worker-1/repo", name="worker-1-run-2", group="workers",
+            group_sort_label="cluster member",
+        )
+
+        with self.assertRaisesRegex(ValueError, "group_sort_label requires group_sort_key"):
+            self.context.upsert(session)
+
+    def test_context_rejects_group_sort_key_without_label(self):
+        session = Session(
+            key=self.context.key("run-2"), source="workers", session_id="run-2",
+            cwd="worker-1/repo", name="worker-1-run-2", group="workers",
+            group_sort_key="member-a",
+        )
+
+        with self.assertRaisesRegex(ValueError, "group_sort_key requires group_sort_label"):
+            self.context.upsert(session)
+
+    def test_context_rejects_oversized_group_sort_key(self):
+        session = Session(
+            key=self.context.key("run-2"), source="workers", session_id="run-2",
+            cwd="worker-1/repo", name="worker-1-run-2", group="workers",
+            group_sort_key="x" * 161,
+        )
+
+        with self.assertRaisesRegex(ValueError, "limited to 160"):
+            self.context.upsert(session)
 
     def test_context_rejects_malformed_group_key(self):
         session = Session(
@@ -436,6 +477,15 @@ class PluginSourceTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(ValueError, "session group must match"):
+            self.context.upsert(session)
+
+    def test_context_rejects_oversized_group_key(self):
+        session = Session(
+            key=self.context.key("run-2"), source="workers", session_id="run-2",
+            cwd="worker-1/repo", name="worker-1-run-2", group="x" * 81,
+        )
+
+        with self.assertRaisesRegex(ValueError, "at most 80"):
             self.context.upsert(session)
 
     def test_context_rejects_group_label_without_group(self):
@@ -561,23 +611,27 @@ class PluginSourceTests(unittest.TestCase):
         self.assertNotIn(key, reducer.sessions)
         self.assertEqual(reducer.removed, [key])
 
-    def test_reducer_refreshes_group_on_repeated_upsert(self):
+    def test_reducer_refreshes_group_metadata_on_repeated_upsert(self):
         key = self.context.key("run-1")
         reducer = Reducer(Config({}))
         self.context.upsert(Session(
             key=key, source="workers", session_id="run-1", cwd="node/repo",
             name="run-1", group="neo-cortex", group_label="Neo-Cortex workers",
+            group_sort_key="member-a", group_sort_label="cluster member",
         ))
         reducer.apply(self.bus.events.get_nowait())
         self.assertEqual(reducer.sessions[key].group, "neo-cortex")
         self.assertEqual(reducer.sessions[key].group_label, "Neo-Cortex workers")
+        self.assertEqual(reducer.sessions[key].group_sort_key, "member-a")
 
         self.context.upsert(Session(
             key=key, source="workers", session_id="run-1", cwd="node/repo",
             name="run-1", group="neo-cortex", group_label="Neo-Cortex workers",
+            group_sort_key="member-b", group_sort_label="cluster member",
         ))
         changed = reducer.apply(self.bus.events.get_nowait())
-        self.assertEqual(changed, [])   # unchanged group is not a spurious update
+        self.assertEqual(changed, [reducer.sessions[key]])
+        self.assertEqual(reducer.sessions[key].group_sort_key, "member-b")
 
     def test_reducer_picks_up_source_label_on_repeated_upsert(self):
         # A session that already exists in the reducer's in-memory state

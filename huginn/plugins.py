@@ -46,7 +46,9 @@ ENTRY_POINT_GROUP = "huginn.plugins"
 _NAME_RE = re.compile(r"^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$")
 _EXTERNAL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$")
 MAX_SOURCE_SUMMARY_CHARS = 4000
+MAX_GROUP_KEY_CHARS = 80
 MAX_GROUP_LABEL_CHARS = 60
+MAX_GROUP_SORT_KEY_CHARS = 160
 MAX_SOURCE_LABEL_CHARS = 40
 DEFAULT_STATE_LEASE_S = 90.0
 MAX_STATE_LEASE_S = 300.0
@@ -452,8 +454,14 @@ class SourceContext:
                 raise ValueError(
                     f"plugin source summary is limited to {MAX_SOURCE_SUMMARY_CHARS} characters"
                 )
-        if session.group is not None and not _NAME_RE.fullmatch(session.group):
-            raise ValueError(f"session group must match {_NAME_RE.pattern}: {session.group!r}")
+        if session.group is not None:
+            if (not isinstance(session.group, str)
+                    or len(session.group) > MAX_GROUP_KEY_CHARS
+                    or not _NAME_RE.fullmatch(session.group)):
+                raise ValueError(
+                    f"session group must match {_NAME_RE.pattern} and be at most "
+                    f"{MAX_GROUP_KEY_CHARS} characters: {session.group!r}"
+                )
         if session.group_label is not None:
             if not isinstance(session.group_label, str) or not session.group_label.strip():
                 raise ValueError("session group_label must be non-empty text")
@@ -463,6 +471,29 @@ class SourceContext:
                 )
         if session.group_label is not None and session.group is None:
             raise ValueError("session group_label requires group to be set")
+        if session.group_sort_key is not None:
+            if (not isinstance(session.group_sort_key, str)
+                    or not session.group_sort_key.strip()):
+                raise ValueError("session group_sort_key must be non-empty text")
+            if len(session.group_sort_key) > MAX_GROUP_SORT_KEY_CHARS:
+                raise ValueError(
+                    "session group_sort_key is limited to "
+                    f"{MAX_GROUP_SORT_KEY_CHARS} characters"
+                )
+        if session.group_sort_label is not None:
+            if (not isinstance(session.group_sort_label, str)
+                    or not session.group_sort_label.strip()):
+                raise ValueError("session group_sort_label must be non-empty text")
+            if len(session.group_sort_label) > MAX_GROUP_LABEL_CHARS:
+                raise ValueError(
+                    f"session group_sort_label is limited to {MAX_GROUP_LABEL_CHARS} characters"
+                )
+        if session.group_sort_key is not None and session.group is None:
+            raise ValueError("session group_sort_key requires group to be set")
+        if session.group_sort_key is not None and session.group_sort_label is None:
+            raise ValueError("session group_sort_key requires group_sort_label to be set")
+        if session.group_sort_label is not None and session.group_sort_key is None:
+            raise ValueError("session group_sort_label requires group_sort_key to be set")
         if session.source_label is not None:
             if not isinstance(session.source_label, str) or not session.source_label.strip():
                 raise ValueError("session source_label must be non-empty text")

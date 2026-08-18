@@ -1,6 +1,6 @@
 [project]
 name = "huginn"
-version = "2026.08.18.6"
+version = "2026.08.18.7"
 description = "Local monitor for AI coding-agent sessions (Claude Code, Codex, Claude Desktop)"
 license = "Apache-2.0"
 requires-python = ">=3.12"

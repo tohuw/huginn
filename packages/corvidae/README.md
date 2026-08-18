@@ -310,6 +310,12 @@ class Session:
 `Session.from_dict()` ignores keys it does not recognise, so a newer producer's
 snapshot is readable by an older consumer. New fields always have defaults.
 
+Dashboard-only plugin metadata is optional on every session. `group` and
+`group_label` place a session in a named dashboard section;
+`group_sort_key` and `group_sort_label` let that section offer a persisted,
+user-controlled secondary ordering. Consumers that do not render a dashboard
+may ignore all four fields.
+
 ## Versioning
 
 CalVer, `YYYY.MM.DD` with an optional numeric `.MICRO` suffix, matching Huginn.
@@ -326,6 +332,11 @@ a drop-in replacement for `2026.08.01`.
 above already allows for, so it is a drop-in replacement for `2026.08.16`: a
 consumer that does not set it sees exactly the previous behaviour, and one that
 does not read it is unaffected.
+
+`2026.08.18` added the optional `Session.group_sort_key` and
+`Session.group_sort_label` fields for dashboard secondary ordering. Both have
+defaults and are ignored by consumers that do not render grouped dashboards,
+so this is a drop-in replacement for `2026.08.16.1`.
 
 ## Not in scope
 

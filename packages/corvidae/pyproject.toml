@@ -1,6 +1,6 @@
 [project]
 name = "corvidae"
-version = "2026.08.16.1"
+version = "2026.08.18"
 description = "Shared internals for the raven agent-monitoring projects: JSONL transcript tailing, credential redaction, session shapes, start-at-login supervision, raven descriptors"
 license = "Apache-2.0"
 requires-python = ">=3.12"

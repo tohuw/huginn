@@ -67,7 +67,9 @@ class SessionTests(unittest.TestCase):
 
     def test_from_dict_round_trips_to_dict(self):
         original = session(state=SessionState.WAITING_INPUT, blurb="doing a thing",
-                           pid=4242, tokens=1234, subagents={"running": 2})
+                           pid=4242, tokens=1234, subagents={"running": 2},
+                           group="workers", group_sort_key="member-a",
+                           group_sort_label="cluster member")
 
         restored = Session.from_dict(original.to_dict())
 

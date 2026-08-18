@@ -41,12 +41,13 @@ const grid = document.getElementById("grid");
 const appGrid = document.getElementById("app-grid");
 const appTiles = document.getElementById("app-tiles");
 const pluginGroupsContainer = document.getElementById("plugin-groups");
-const pluginGroupSections = new Map();   // group key -> { section, grid, count }
+const pluginGroupSections = new Map();   // group key -> section controls + grid
 const tpl = document.getElementById("card-tpl");
 let llmEnabled = true;
 let desktopVisible = true;
 let liveUpdates = true;
 let hiddenGroups = new Set();
+let groupSorts = new Set();
 // Startup and daemon restarts are indeterminate until both the roster and the
 // cheap activity probe answer.  Begin with the honest state instead of briefly
 // claiming there are no sessions.
@@ -445,41 +446,74 @@ let reordering = false;
 // main grid and desktop tiles -- same treatment as desktop presence, but
 // keyed dynamically since Huginn doesn't know a group's key or label until
 // a plugin source's first session declares them. Sections are created once
-// and reused; toggling one persists to ui.hidden_groups (a set of group
-// keys, not a boolean per key, so an unrelated settings write from another
-// tab can't silently un-hide a group this tab hid).
-function getOrCreatePluginGroupSection(groupKey, groupLabel) {
+// and reused. Visibility persists to ui.hidden_groups; the optional secondary
+// ordering persists to ui.group_sorts. Both are sets of group keys rather than
+// one dynamic setting per plugin group, so Huginn's config shape stays fixed.
+function getOrCreatePluginGroupSection(groupKey, groupLabel, groupSortLabel) {
   let entry = pluginGroupSections.get(groupKey);
-  if (entry) return entry;
-  const section = document.createElement("section");
-  section.className = "plugin-group";
-  const head = document.createElement("div");
-  head.className = "plugin-group-head";
-  const label = document.createElement("label");
-  label.className = "section-label plugin-group-toggle";
-  const checkbox = document.createElement("input");
-  checkbox.type = "checkbox";
-  checkbox.checked = !hiddenGroups.has(groupKey);
-  checkbox.onchange = async (e) => {
-    const previous = !hiddenGroups.has(groupKey);
-    if (e.target.checked) hiddenGroups.delete(groupKey); else hiddenGroups.add(groupKey);
-    reorder();
-    const r = await saveSettings({ ui: { hidden_groups: [...hiddenGroups] } });
-    if (!r.ok) {
-      if (previous) hiddenGroups.delete(groupKey); else hiddenGroups.add(groupKey);
-      e.target.checked = previous;
+  if (!entry) {
+    const section = document.createElement("section");
+    section.className = "plugin-group";
+    const head = document.createElement("div");
+    head.className = "plugin-group-head";
+    const label = document.createElement("label");
+    label.className = "section-label plugin-group-toggle";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = !hiddenGroups.has(groupKey);
+    checkbox.onchange = async (e) => {
+      const previous = !hiddenGroups.has(groupKey);
+      if (e.target.checked) hiddenGroups.delete(groupKey); else hiddenGroups.add(groupKey);
       reorder();
-    }
-  };
-  label.append(checkbox, document.createTextNode(groupLabel));
-  head.appendChild(label);
-  const groupGrid = document.createElement("div");
-  groupGrid.className = "plugin-group-grid";
-  section.append(head, groupGrid);
-  pluginGroupsContainer.appendChild(section);
-  entry = { section, grid: groupGrid, count: 0 };
-  pluginGroupSections.set(groupKey, entry);
+      const r = await saveSettings({ ui: { hidden_groups: [...hiddenGroups] } });
+      if (!r.ok) {
+        if (previous) hiddenGroups.delete(groupKey); else hiddenGroups.add(groupKey);
+        e.target.checked = previous;
+        reorder();
+      }
+    };
+    label.append(checkbox, document.createTextNode(groupLabel));
+
+    const sortToggle = document.createElement("label");
+    sortToggle.className = "plugin-group-sort";
+    const sortCheckbox = document.createElement("input");
+    sortCheckbox.type = "checkbox";
+    sortCheckbox.checked = groupSorts.has(groupKey);
+    const sortText = document.createElement("span");
+    sortToggle.append(sortCheckbox, sortText);
+    sortCheckbox.onchange = async (e) => {
+      const previous = groupSorts.has(groupKey);
+      if (e.target.checked) groupSorts.add(groupKey); else groupSorts.delete(groupKey);
+      reorder();
+      const r = await saveSettings({ ui: { group_sorts: [...groupSorts] } });
+      if (!r.ok) {
+        if (previous) groupSorts.add(groupKey); else groupSorts.delete(groupKey);
+        e.target.checked = previous;
+        reorder();
+      }
+    };
+
+    head.append(label, sortToggle);
+    const groupGrid = document.createElement("div");
+    groupGrid.className = "plugin-group-grid";
+    section.append(head, groupGrid);
+    pluginGroupsContainer.appendChild(section);
+    entry = { section, grid: groupGrid, sortToggle, sortCheckbox, sortText };
+    pluginGroupSections.set(groupKey, entry);
+  }
+  entry.sortToggle.hidden = !groupSortLabel;
+  entry.sortCheckbox.checked = groupSorts.has(groupKey);
+  entry.sortText.textContent = groupSortLabel ? `sort by ${groupSortLabel}` : "";
   return entry;
+}
+
+function compareGroupSortKey(a, b) {
+  const left = a.group_sort_key || "";
+  const right = b.group_sort_key || "";
+  if (!left && !right) return 0;
+  if (!left) return 1;
+  if (!right) return -1;
+  return left.localeCompare(right, undefined, { sensitivity: "base", numeric: true });
 }
 
 function reorder() {
@@ -500,17 +534,20 @@ function reorder() {
     : null;
   const sessionFrag = document.createDocumentFragment();
   const appFrag = document.createDocumentFragment();
-  const groupFrags = new Map();   // group key -> { frag, label, view }
+  const grouped = new Map();   // group key -> plugin sessions + section metadata
   let appCount = 0;
   reordering = true;
   for (const s of sorted) {
     if (s.group) {
-      let g = groupFrags.get(s.group);
+      let g = grouped.get(s.group);
       if (!g) {
-        g = { frag: document.createDocumentFragment(), label: s.group_label || s.group, count: 0 };
-        groupFrags.set(s.group, g);
+        g = { sessions: [], label: s.group_label || s.group, sortLabel: null };
+        grouped.set(s.group, g);
       }
-      g.frag.appendChild(cards.get(s.key)); g.count += 1;
+      g.sessions.push(s);
+      if (!g.sortLabel && s.group_sort_key && s.group_sort_label) {
+        g.sortLabel = s.group_sort_label;
+      }
     } else if (s.source.endsWith("-desktop")) {
       appFrag.appendChild(cards.get(s.key)); appCount += 1;
     } else {
@@ -521,19 +558,53 @@ function reorder() {
   appGrid.replaceChildren(appFrag);
   appTiles.hidden = !desktopVisible || appCount === 0;
   const view = document.getElementById("view").value || "cards";
-  for (const [groupKey, g] of groupFrags) {
-    const entry = getOrCreatePluginGroupSection(groupKey, g.label);
+  for (const [groupKey, g] of grouped) {
+    const entry = getOrCreatePluginGroupSection(groupKey, g.label, g.sortLabel);
+    const showSortBoundaries = groupSorts.has(groupKey);
+    const groupSessions = showSortBoundaries
+      ? [...g.sessions].sort((a, b) => compareGroupSortKey(a, b) || compare(a, b))
+      : g.sessions;
+    const groupFrag = document.createDocumentFragment();
+    const sortCounts = new Map();
+    if (showSortBoundaries) {
+      for (const s of groupSessions) {
+        const sortKey = s.group_sort_key || "";
+        sortCounts.set(sortKey, (sortCounts.get(sortKey) || 0) + 1);
+      }
+    }
+    let previousSortKey;
+    for (const s of groupSessions) {
+      const sortKey = s.group_sort_key || "";
+      if (showSortBoundaries && sortKey !== previousSortKey) {
+        const boundary = document.createElement("h3");
+        boundary.className = "plugin-group-boundary";
+        const boundaryLabel = document.createElement("span");
+        boundaryLabel.className = "plugin-group-boundary-label";
+        boundaryLabel.textContent = sortKey || `no ${g.sortLabel || "sort value"}`;
+        const boundaryRule = document.createElement("span");
+        boundaryRule.className = "plugin-group-boundary-rule";
+        boundaryRule.setAttribute("aria-hidden", "true");
+        const boundaryCount = document.createElement("span");
+        boundaryCount.className = "plugin-group-boundary-count";
+        const count = sortCounts.get(sortKey) || 0;
+        boundaryCount.textContent = `${count} ${count === 1 ? "card" : "cards"}`;
+        boundary.append(boundaryLabel, boundaryRule, boundaryCount);
+        groupFrag.appendChild(boundary);
+        previousSortKey = sortKey;
+      }
+      groupFrag.appendChild(cards.get(s.key));
+    }
     entry.grid.dataset.view = view;
-    entry.grid.replaceChildren(g.frag);
+    entry.grid.replaceChildren(groupFrag);
     // Hiding the whole section (including its toggle) is only correct when
     // there's nothing to show. A user-hidden group still needs its checkbox
     // visible so they can turn it back on -- see issue where unchecking a
     // group's toggle hid the toggle itself along with the cards.
-    entry.section.hidden = g.count === 0;
+    entry.section.hidden = g.sessions.length === 0;
     entry.grid.hidden = hiddenGroups.has(groupKey);
   }
   for (const [groupKey, entry] of pluginGroupSections) {
-    if (!groupFrags.has(groupKey)) entry.section.hidden = true;
+    if (!grouped.has(groupKey)) entry.section.hidden = true;
   }
   reordering = false;
   if (restore) {
@@ -1135,8 +1206,10 @@ function applySettings(cfg) {
   liveToggle.setAttribute("aria-pressed", String(!liveUpdates));
   document.body.classList.toggle("cards-paused", !liveUpdates);
   hiddenGroups = new Set(cfg.ui.hidden_groups || []);
+  groupSorts = new Set(cfg.ui.group_sorts || []);
   for (const [groupKey, entry] of pluginGroupSections) {
     entry.section.querySelector(".plugin-group-toggle input").checked = !hiddenGroups.has(groupKey);
+    entry.sortCheckbox.checked = groupSorts.has(groupKey);
     entry.grid.hidden = hiddenGroups.has(groupKey);
   }
   providerSelect.value = cfg.llm.provider;
@@ -1368,7 +1441,8 @@ if (DEMO_MODE) {
   rosterLoading = false;
   applySettings({
     llm: { enabled: true, provider: "codex" },
-    ui: { show_desktop: true, view: "cards", sort: "state", live: true, chat_span: "vertical", chat_open: true },
+    ui: { show_desktop: true, view: "cards", sort: "state", live: true,
+          chat_span: "vertical", chat_open: true, hidden_groups: [], group_sorts: [] },
   });
   const roster = demoSessions();
   for (const session of roster) upsertCard(session);

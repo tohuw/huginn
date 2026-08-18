@@ -81,10 +81,15 @@ class Session:
     # sorted outside the urgency queue, one collective show/hide toggle),
     # generalized so a plugin source can opt into it. group is a short stable
     # key; group_label is the human-readable section heading (falls back to
-    # group itself if unset). Unset means "render in the main grid," exactly
-    # like every session before this field existed.
+    # group itself if unset). A plugin may also offer an optional secondary
+    # ordering inside the section: group_sort_key is this session's value and
+    # group_sort_label names the value in the dashboard control. Unset means
+    # "render in the main grid," exactly like every session before this field
+    # existed.
     group: str | None = None
     group_label: str | None = None
+    group_sort_key: str | None = None
+    group_sort_label: str | None = None
     # Display text for the per-card source badge (falls back to `source`
     # itself if unset, same convention as group/group_label). Lets a plugin's
     # internal source name -- lowercase, hyphenated, matched against

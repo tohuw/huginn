@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import os
+import re
 import sys
 import tomllib
 from pathlib import Path
@@ -58,6 +59,10 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         # Session.group keys currently collapsed to their one-line toggle --
         # see docs/plugins.md's "Dashboard session groups" section.
         "hidden_groups": [],
+        # Session.group keys whose cards are secondarily ordered by the
+        # plugin-contributed group_sort_key. The chosen primary sort still
+        # applies within each secondary value.
+        "group_sorts": [],
     },
     "claude": {"sweep_s": 10.0, "pending_tool_timeout_s": 20.0},
     "codex": {"poll_s": 5.0, "active_window_h": 24, "include_subagents": False},
@@ -95,6 +100,9 @@ _ENUM_KEYS: dict[tuple[str, str], set[str]] = {
     ("ui", "sort"): {"state", "alpha", "newest", "oldest"},
     ("ui", "chat_span"): {"vertical", "horizontal"},
 }
+_UI_GROUP_KEY_RE = re.compile(r"^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$")
+_MAX_UI_GROUP_KEYS = 100
+_MAX_UI_GROUP_KEY_CHARS = 80
 
 
 def validate_setting(section: str, key: str, value: Any) -> str | None:
@@ -136,6 +144,15 @@ def validate_setting(section: str, key: str, value: Any) -> str | None:
     if enum is not None:
         if value not in enum:
             return f"{section}.{key} must be one of {sorted(enum)}"
+        return None
+    if (section, key) == ("ui", "group_sorts"):
+        if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
+            return "ui.group_sorts must be a list of strings"
+        if len(value) > _MAX_UI_GROUP_KEYS:
+            return f"ui.group_sorts is limited to {_MAX_UI_GROUP_KEYS} groups"
+        if any(len(x) > _MAX_UI_GROUP_KEY_CHARS or not _UI_GROUP_KEY_RE.fullmatch(x)
+               for x in value):
+            return "ui.group_sorts contains an invalid group key"
         return None
     if isinstance(default, bool):
         if not isinstance(value, bool):

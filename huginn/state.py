@@ -27,20 +27,33 @@ class Reducer:
         self.sessions: dict[str, Session] = {}
         self.removed: list[str] = []          # keys removed on last apply
         self.transitions: dict[str, deque[dict]] = {}
+        self.plugin_state_leases: dict[str, tuple[str, float]] = {}
 
     # ------------------------------------------------------------------ util
     def _set_state(self, s: Session, state: SessionState, origin: str, now: float) -> bool:
         """Apply a state respecting origin priority + hook grace. True if changed."""
+        lease = self.plugin_state_leases.get(s.key)
+        leased_by_origin = False
+        if lease is not None:
+            lease_origin, expires_at = lease
+            if now >= expires_at:
+                self.plugin_state_leases.pop(s.key, None)
+            elif origin != lease_origin:
+                return False
+            else:
+                leased_by_origin = True
         if s.state == state:
             return False
         cur_pri = _ORIGIN_PRIORITY.get(s.state_origin, 0)
         new_pri = _ORIGIN_PRIORITY.get(origin, 0)
-        if (s.state_origin == "hook" and now - s.state_since < HOOK_GRACE_S
+        if (not leased_by_origin
+                and s.state_origin == "hook" and now - s.state_since < HOOK_GRACE_S
                 and new_pri < _ORIGIN_PRIORITY["hook"]):
             return False
         # WORKING from the status file is strong evidence regardless of what
         # lower-latency sources said earlier: busy means the process is running.
-        if new_pri < cur_pri and not (state == SessionState.WORKING and origin == "statusfile"):
+        if (not leased_by_origin and new_pri < cur_pri
+                and not (state == SessionState.WORKING and origin == "statusfile")):
             # allow lower-priority evidence only once the current state has aged
             if now - s.state_since < 30:
                 return False
@@ -139,6 +152,7 @@ class Reducer:
             if other.session_id == incoming.session_id:
                 del self.sessions[key]
                 self.transitions.pop(key, None)
+                self.plugin_state_leases.pop(key, None)
                 self.removed.append(key)
 
     # claude status file appeared/changed
@@ -266,6 +280,7 @@ class Reducer:
             return []
         del self.sessions[s.key]
         self.transitions.pop(s.key, None)
+        self.plugin_state_leases.pop(s.key, None)
         self.removed.append(s.key)
         return []
 
@@ -274,6 +289,7 @@ class Reducer:
         s = self.sessions.pop(ev.session_key or "", None)
         if s is not None:
             self.transitions.pop(s.key, None)
+            self.plugin_state_leases.pop(s.key, None)
             self.removed.append(s.key)
         return []
 
@@ -289,6 +305,7 @@ class Reducer:
         s = self.sessions.pop(ev.session_key or "", None)
         if s is not None:
             self.transitions.pop(s.key, None)
+            self.plugin_state_leases.pop(s.key, None)
             self.removed.append(s.key)
         return []
 
@@ -306,6 +323,11 @@ class Reducer:
                 changed = True
         state = payload.get("state")
         if isinstance(state, SessionState):
+            lease_s = payload.get("state_lease_s")
+            active = self.plugin_state_leases.get(s.key)
+            if isinstance(lease_s, (int, float)) and not isinstance(lease_s, bool):
+                if active is None or now >= active[1] or active[0] == ev.origin:
+                    self.plugin_state_leases[s.key] = (ev.origin, now + float(lease_s))
             changed |= self._set_state(s, state, ev.origin, float(payload.get("state_since") or now))
         return [s] if changed else []
 
@@ -425,5 +447,6 @@ class Reducer:
             if s.state == SessionState.ENDED and now - s.state_since >= ended_ttl:
                 del self.sessions[key]
                 self.transitions.pop(key, None)
+                self.plugin_state_leases.pop(key, None)
                 self.removed.append(key)
         return changed

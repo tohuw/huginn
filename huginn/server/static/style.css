@@ -85,6 +85,9 @@ main { grid-area: main; position: relative; z-index: 0; overflow-y: auto; paddin
 .card[data-source-family="openai"] {
   background: linear-gradient(120deg, #7798ae10, transparent 44%), var(--card);
 }
+.card[data-source-label="Ezra"] {
+  background: linear-gradient(120deg, #a678d910, transparent 44%), var(--card);
+}
 .card[data-state="working"] { border-left-color: var(--working); }
 .card[data-state="active"] { border-left-color: var(--dim); }
 .card[data-state="active"][data-source-family="claude"] { border-left-color: var(--claude-source); }
@@ -106,6 +109,7 @@ main { grid-area: main; position: relative; z-index: 0; overflow-y: auto; paddin
   text-transform: uppercase; letter-spacing: .07em; opacity: .82; }
 .card[data-source-family="claude"] .src { color: var(--claude-source); background: #b995730d; }
 .card[data-source-family="openai"] .src { color: var(--openai-source); background: #7798ae0d; }
+.card[data-source-label="Ezra"] .src { color: #b68aed; background: #a678d91a; }
 .name {
   flex: 1 1 auto; min-width: 0; font-weight: 700; line-height: 1.25;
   overflow: hidden; overflow-wrap: anywhere;

@@ -165,7 +165,7 @@ class ChatCorrelationTests(unittest.IsolatedAsyncioTestCase):
         daemon.reducer.sessions[session.key] = session
         result = await start_chat(daemon, {"question": "title @test-agent release cleanup"})
         self.assertTrue(result["ok"])
-        await daemon.active_chat
+        self.assertIn("Title set", result["reply"])
         self.assertEqual(session.title, "release cleanup")
         self.assertEqual(session.title_origin, "manual")
 
@@ -179,7 +179,7 @@ class ChatCorrelationTests(unittest.IsolatedAsyncioTestCase):
         with patch("huginn.focus.focus_session", return_value={"ok": True, "target": "iTerm2"}) as mock_focus:
             result = await start_chat(daemon, {"question": "jump @test-agent"})
         self.assertTrue(result["ok"])
-        await daemon.active_chat
+        self.assertEqual(result["reply"], "Jumped to @test-agent.")
         mock_focus.assert_called_once_with(session)
         self.assertTrue(any(event == "session.focused" and data["key"] == session.key
                              for event, data in events))
@@ -195,10 +195,9 @@ class ChatCorrelationTests(unittest.IsolatedAsyncioTestCase):
              patch("huginn.llm.chat.get_provider") as get_provider:
             daemon.bus.broadcast = lambda event, data: answers.append((event, data))
             result = await start_chat(daemon, {"question": "jump @test-agent"})
-            await daemon.active_chat
         get_provider.assert_not_called()
         self.assertTrue(result["ok"])
-        self.assertTrue(any("no tty" in data.get("text", "") for _e, data in answers))
+        self.assertIn("no tty", result["reply"])
 
     async def test_ask_peek_shows_and_returns_the_transcript_tail(self):
         daemon = Daemon(Config({}))
@@ -210,11 +209,9 @@ class ChatCorrelationTests(unittest.IsolatedAsyncioTestCase):
         with patch("huginn.llm.chat.evidence_for_session", return_value=["assistant: done"]):
             result = await start_chat(daemon, {"question": "peek @test-agent"})
         self.assertTrue(result["ok"])
-        await daemon.active_chat
         peeks = [data for event, data in events if event == "session.peek"]
         self.assertEqual(peeks, [{"key": session.key, "lines": ["assistant: done"]}])
-        self.assertTrue(any("assistant: done" in data.get("text", "")
-                             for event, data in events if event == "chat.delta"))
+        self.assertIn("assistant: done", result["reply"])
 
     async def test_jump_and_peek_report_ambiguous_names(self):
         daemon = Daemon(Config({}))
@@ -226,8 +223,7 @@ class ChatCorrelationTests(unittest.IsolatedAsyncioTestCase):
             key="codex:b", source="codex", session_id="b", cwd="/tmp", name="dup-two")
         result = await start_chat(daemon, {"question": "jump @dup"})
         self.assertTrue(result["ok"])
-        await daemon.active_chat
-        self.assertTrue(any("uniquely match" in data.get("text", "") for _e, data in events))
+        self.assertIn("uniquely match", result["reply"])
 
     async def test_roster_includes_title_or_blurb_for_open_ended_search(self):
         daemon = Daemon(Config({}))
@@ -255,7 +251,6 @@ class ChatCorrelationTests(unittest.IsolatedAsyncioTestCase):
         daemon.reducer.sessions[session.key] = session
         result = await start_chat(daemon, {"question": "dismiss @test-agent"})
         self.assertTrue(result["ok"])
-        await daemon.active_chat
         self.assertNotIn(session.key, daemon.reducer.sessions)
         self.assertIn(("session.remove", {"key": session.key}), events)
 
@@ -267,7 +262,6 @@ class ChatCorrelationTests(unittest.IsolatedAsyncioTestCase):
         daemon.reducer.sessions[session.key] = session
         result = await start_chat(daemon, {"question": "dismiss @test-agent"})
         self.assertTrue(result["ok"])
-        await daemon.active_chat
         self.assertIn(session.key, daemon.reducer.sessions)
 
     async def test_prompt_restricts_ask_agent_to_session_questions(self):
@@ -318,7 +312,7 @@ class ChatCorrelationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result["settings"]["ui"]["view"], "list")
             self.assertFalse(result["settings"]["ui"]["chat_open"])
             self.assertFalse(result["settings"]["ui"]["live"])
-            await daemon.active_chat
+            self.assertIn("Dashboard card view frozen", result["reply"])
         self.assertEqual(daemon.cfg.get("ui", "view"), "list")
         self.assertFalse(daemon.cfg.get("ui", "chat_open"))
         self.assertFalse(daemon.cfg.get("ui", "live"))

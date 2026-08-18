@@ -25,6 +25,7 @@ class PluginGroupRenderingTests(unittest.TestCase):
         source = APP_JS.read_text(encoding="utf-8")
 
         self.assertIn("s.source_label", source)
+        self.assertIn("sourceLabel", source)
 
 
 if __name__ == "__main__":

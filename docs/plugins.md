@@ -175,15 +175,51 @@ collision-proof namespace. Call `context.remove(key)` when a previously emitted
 record is definitively gone; do not infer removal from one partial poll. Report
 bounded failures with `context.error(exception)` and keep retry/backoff policy in
 the plugin. A source may put up to 4,000 characters of authoritative current
-evidence in `Session.source_summary`; Peek and Ask use it when there is no local
-transcript. Keep it factual, current, and free of credentials. The session's
-`source` must equal the source capability's `name`.
+evidence in `Session.source_summary`; Peek and Ask include it alongside a local
+transcript when present. Keep it factual, current, and free of credentials. The
+session's `source` must equal the source capability's `name`.
 
 At startup, `context.existing_keys()` returns only keys in this exact
 plugin/source namespace, including records restored from Huginn's private
 snapshot. Seed reconciliation state from those keys so a record removed while
 Huginn was stopped can age out after successful upstream polls. No other
 source's keys or session contents are exposed through this capability.
+
+### Enriching a local session and custom Jump
+
+A trusted source may read an external system's current presence record and
+attach its bounded result to an already-discovered local session:
+
+```python
+context.enrich(
+    "codex:" + external_thread_id,
+    source_summary="managed presence: verified\nneeds: explicit review",
+    state=SessionState.WAITING_INPUT,
+    state_since=verified_at_epoch,
+    focus_handler="managed-agent",
+)
+```
+
+`enrich()` never accepts a URL, token, or arbitrary action payload. The optional
+`focus_handler` is only a registered name. Declare that handler on the plugin
+and keep any private deep-link target inside its implementation:
+
+```python
+class ManagedAgentFocus:
+    name = "managed-agent"
+
+    def focus(self, session):
+        return open_private_client_target_for(session.session_id)
+
+plugin = PluginSpec(..., focusers=(ManagedAgentFocus(),))
+```
+
+Huginn calls the handler for Jump before attempting terminal focus. The handler
+must return a small result dictionary such as `{"ok": True, "target": "Client"}`;
+exceptions and malformed results fail closed. If a source cannot read a fresh,
+authoritative presence record, it must clear its focus handler and must not
+invent an attention state. This is appropriate when only the managed system can
+say what it currently needs.
 
 ### The Session shape is a stable, shared surface
 

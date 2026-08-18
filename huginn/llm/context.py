@@ -99,12 +99,14 @@ def distill(transcript_path: str, source: str, max_lines: int = 40) -> list[str]
 def evidence_for_session(s: Any, max_lines: int = 40) -> list[str]:
     """Bounded authoritative evidence for a built-in or plugin session."""
     transcript = distill(s.transcript_path or "", s.source, max_lines)
-    if transcript:
-        return transcript
     summary = getattr(s, "source_summary", None)
-    if not isinstance(summary, str):
-        return []
-    return [_clip(line) for line in summary.splitlines() if line.strip()][-max_lines:]
+    summary_lines = (
+        [_clip(line) for line in summary.splitlines() if line.strip()]
+        if isinstance(summary, str) else []
+    )
+    # Source-read context (for example a managed-agent presence record) is
+    # authoritative alongside the normal transcript, not a replacement for it.
+    return (summary_lines + transcript)[-max_lines:]
 
 
 def digest_for_session(s: Any, max_lines: int = 40) -> str:

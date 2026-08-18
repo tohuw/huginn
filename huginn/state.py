@@ -292,6 +292,23 @@ class Reducer:
             self.removed.append(s.key)
         return []
 
+    def _on_plugin_enrich(self, ev: Event, now: float) -> list[Session]:
+        """Apply a plugin's bounded context to a pre-existing local session."""
+        s = self.sessions.get(ev.session_key or "")
+        if s is None:
+            return []
+        payload = ev.payload
+        changed = False
+        for attr in ("source_summary", "focus_handler"):
+            value = payload.get(attr)
+            if value != getattr(s, attr):
+                setattr(s, attr, value)
+                changed = True
+        state = payload.get("state")
+        if isinstance(state, SessionState):
+            changed |= self._set_state(s, state, ev.origin, float(payload.get("state_since") or now))
+        return [s] if changed else []
+
     # hook events (installed in M3; reducer rules live here from the start)
     def _on_hook_claude(self, ev: Event, now: float) -> list[Session]:
         data = ev.payload.get("data", {})

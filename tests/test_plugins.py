@@ -48,6 +48,13 @@ class _Provider:
         return "anthropic.claude-haiku" if "haiku" in model else self.compatible_model(model)
 
 
+class _Focuser:
+    name = "managed-agent"
+
+    def focus(self, session):
+        return {"ok": True, "target": "managed agent"}
+
+
 class _Source:
     name = "workers"
 
@@ -336,6 +343,36 @@ class PluginSourceTests(unittest.TestCase):
         self.assertEqual(event.kind, "plugin.session")
         self.assertEqual(event.session_key, key)
         self.assertIs(event.payload["session"], session)
+
+    def test_context_enriches_an_existing_session_without_a_target_url(self):
+        self.context.enrich(
+            "codex:manager",
+            source_summary="presence: verified\nneeds: review",
+            focus_handler="managed-agent",
+        )
+        event = self.bus.events.get_nowait()
+        self.assertEqual(event.kind, "plugin.enrich")
+        self.assertEqual(event.session_key, "codex:manager")
+        self.assertNotIn("url", event.payload)
+
+    def test_reducer_applies_enrichment_to_existing_session(self):
+        reducer = Reducer(Config({}))
+        session = Session(
+            key="codex:manager", source="codex", session_id="manager",
+            cwd="/tmp", name="manager",
+        )
+        reducer.sessions[session.key] = session
+        self.context.enrich(
+            session.key, source_summary="presence: verified", focus_handler="managed-agent",
+        )
+        changed = reducer.apply(self.bus.events.get_nowait())
+        self.assertEqual(changed, [session])
+        self.assertEqual(session.source_summary, "presence: verified")
+        self.assertEqual(session.focus_handler, "managed-agent")
+
+    def test_registry_exposes_plugin_focusers(self):
+        registry = PluginRegistry((PluginSpec("managed", "1", focusers=(_Focuser(),)),))
+        self.assertIsInstance(registry.focusers()["managed-agent"], _Focuser)
 
     def test_context_bounds_authoritative_source_summary(self):
         session = Session(

@@ -101,6 +101,19 @@ def _focus_recorded_pane(s: Session) -> dict[str, Any] | None:
 
 
 def focus_session(s: Session) -> dict[str, Any]:
+    handler_name = getattr(s, "focus_handler", None)
+    if handler_name:
+        from .plugins import get_registry
+        handler = get_registry().focusers().get(handler_name)
+        if handler is None:
+            return _result(False, detail="session jump handler is unavailable")
+        try:
+            result = handler.focus(s)
+        except Exception:
+            return _result(False, detail="session jump handler failed")
+        if isinstance(result, dict) and isinstance(result.get("ok"), bool):
+            return result
+        return _result(False, detail="session jump handler returned an invalid result")
     if s.source == "codex":
         # A WSL Codex row is still source="codex" for reducer semantics, but
         # it is never a ChatGPT desktop session. We do not yet have a stable

@@ -59,6 +59,24 @@ class FocusRoutingTests(unittest.TestCase):
         terminal.assert_called_once_with(None, None)
         self.assertEqual(result["target"], "Windows Terminal")
 
+    def test_plugin_focus_handler_precedes_local_codex_focus(self):
+        managed = session()
+        managed.focus_handler = "managed-agent"
+
+        class Focuser:
+            def focus(self, _session):
+                return {"ok": True, "target": "Webex"}
+
+        class Registry:
+            def focusers(self):
+                return {"managed-agent": Focuser()}
+
+        with patch("huginn.plugins.get_registry", return_value=Registry()), \
+             patch("huginn.focus._codex_tty_for_cwd") as terminal:
+            result = focus_session(managed)
+        terminal.assert_not_called()
+        self.assertEqual(result["target"], "Webex")
+
 
 if __name__ == "__main__":
     unittest.main()

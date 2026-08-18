@@ -4,7 +4,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from huginn.focus import focus_session
+from huginn.focus import _codex_tty_for_cwd, focus_session
 from huginn.model import Session
 
 
@@ -16,6 +16,17 @@ def session(*, source: str = "codex", entrypoint: str = "cli") -> Session:
 
 
 class FocusRoutingTests(unittest.TestCase):
+    def test_codex_focus_falls_back_to_tty_owning_node_launcher(self):
+        def processes(executable):
+            return [] if executable == "codex" else [17]
+
+        with patch("huginn.focus._platform.find_processes", side_effect=processes), \
+             patch("huginn.focus._platform.process_cwd", return_value="/tmp/project"), \
+             patch("huginn.focus._platform.process_tty", return_value="ttys005"):
+            tty = _codex_tty_for_cwd("/tmp/project")
+
+        self.assertEqual(tty, "ttys005")
+
     def test_codex_cli_focuses_matching_iterm_cwd(self):
         with patch("huginn.focus._codex_tty_for_cwd", return_value="ttys005") as find, \
              patch("huginn.focus._focus_iterm_tty", return_value=True) as focus, \

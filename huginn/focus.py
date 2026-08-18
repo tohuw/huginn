@@ -43,11 +43,15 @@ def _focus_iterm_tty(tty: str) -> bool:
 
 def _codex_tty_for_cwd(cwd: str) -> str | None:
     """Find a terminal-owned Codex CLI whose process cwd matches the card."""
-    for pid in _platform.find_processes("codex"):
-        if _platform.process_cwd(pid) == cwd:
-            tty = _platform.process_tty(pid)
-            if tty:
-                return tty
+    # Current npm-distributed Codex keeps a TTY-owning Node launcher above the
+    # native `codex` process.  Prefer the native process, but use that launcher
+    # when process enumeration omits the descendant during a focus request.
+    for executable in ("codex", "node"):
+        for pid in _platform.find_processes(executable):
+            if _platform.process_cwd(pid) == cwd:
+                tty = _platform.process_tty(pid)
+                if tty:
+                    return tty
     return None
 
 

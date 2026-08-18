@@ -100,6 +100,14 @@ class SessionSource(Protocol):
     async def run(self, context: "SourceContext") -> None: ...
 
 
+class SessionFocuser(Protocol):
+    """Optional plugin-owned jump route for an existing local session."""
+
+    name: str
+
+    def focus(self, session: Session) -> dict[str, Any]: ...
+
+
 @dataclass(frozen=True)
 class PluginSpec:
     """Stable object returned by every ``huginn.plugins`` entry point.
@@ -123,6 +131,7 @@ class PluginSpec:
     sources: tuple[SessionSource, ...] = ()
     min_api: int | None = None
     max_api: int | None = None
+    focusers: tuple[SessionFocuser, ...] = ()
 
     @property
     def api_range(self) -> tuple[int, int]:
@@ -181,6 +190,13 @@ class PluginRegistry:
             for plugin in self.plugins
             for source in plugin.sources
         )
+
+    def focusers(self) -> dict[str, SessionFocuser]:
+        return {
+            focuser.name: focuser
+            for plugin in self.plugins
+            for focuser in plugin.focusers
+        }
 
     def api_mismatches(self) -> tuple[PluginLoadError, ...]:
         return tuple(error for error in self.errors if error.api_mismatch)
@@ -294,6 +310,16 @@ def _validate_plugin(plugin: Any) -> PluginSpec:
         if source.name in seen_sources:
             raise ValueError(f"duplicate source in plugin: {source.name}")
         seen_sources.add(source.name)
+    seen_focusers: set[str] = set()
+    for focuser in plugin.focusers:
+        invalid = _invalid_name("focuser", getattr(focuser, "name", None))
+        if invalid:
+            raise invalid
+        if focuser.name in seen_focusers:
+            raise ValueError(f"duplicate focuser in plugin: {focuser.name}")
+        if not callable(getattr(focuser, "focus", None)):
+            raise ValueError("plugin focuser must define focus(session)")
+        seen_focusers.add(focuser.name)
     return plugin
 
 
@@ -309,6 +335,7 @@ def discover_plugins(entry_points: Any = None) -> PluginRegistry:
     plugin_names: set[str] = set()
     provider_names: set[str] = set()
     source_names: set[str] = set()
+    focuser_names: set[str] = set()
     for entry_point in sorted(selected, key=lambda item: item.name):
         try:
             loaded = entry_point.load()
@@ -322,10 +349,14 @@ def discover_plugins(entry_points: Any = None) -> PluginRegistry:
             for source in plugin.sources:
                 if source.name in source_names:
                     raise ValueError(f"duplicate source name: {source.name}")
+            for focuser in plugin.focusers:
+                if focuser.name in focuser_names:
+                    raise ValueError(f"duplicate focuser name: {focuser.name}")
             plugins.append(plugin)
             plugin_names.add(plugin.name)
             provider_names.update(provider.name for provider in plugin.providers)
             source_names.update(source.name for source in plugin.sources)
+            focuser_names.update(focuser.name for focuser in plugin.focusers)
         except Exception as exc:
             # The API gets core validation/import details only. An arbitrary
             # plugin exception may contain credentials or payload data, so its
@@ -455,6 +486,37 @@ class SourceContext:
             self.diagnostic_name,
         ))
 
+    def enrich(
+        self,
+        key: str,
+        *,
+        source_summary: str | None = None,
+        state: Any = None,
+        state_since: float | None = None,
+        focus_handler: str | None = None,
+    ) -> None:
+        """Attach bounded, source-read context to an already-known session.
+
+        The plugin supplies only a handler name for Jump.  Any URL, token, or
+        other private target remains inside the installed plugin.
+        """
+        if not isinstance(key, str) or not key:
+            raise ValueError("session key must be non-empty text")
+        if source_summary is not None and (
+            not isinstance(source_summary, str) or len(source_summary) > MAX_SOURCE_SUMMARY_CHARS
+        ):
+            raise ValueError("plugin source summary is limited to 4000 characters")
+        if focus_handler is not None and _invalid_name("focuser", focus_handler):
+            raise ValueError("focuser name is invalid")
+        if state_since is not None and (isinstance(state_since, bool) or not isinstance(state_since, (int, float))):
+            raise ValueError("state_since must be a timestamp")
+        self.bus.emit(Event("plugin.enrich", key, time.time(), self.diagnostic_name, {
+            "source_summary": source_summary,
+            "state": state,
+            "state_since": state_since,
+            "focus_handler": focus_handler,
+        }))
+
     def ok(self) -> None:
         self.diagnostics.ok(self.diagnostic_name)
 
@@ -476,6 +538,7 @@ __all__ = [
     "PluginRegistry",
     "PluginSpec",
     "SessionSource",
+    "SessionFocuser",
     "SourceContext",
     "clear_registry_cache",
     "discover_plugins",

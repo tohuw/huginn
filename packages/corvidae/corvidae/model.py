@@ -91,6 +91,10 @@ class Session:
     # SourceContext.upsert()'s validation regex -- differ from what a user
     # sees on the card, e.g. source="neo-cortex" but source_label="NeoCortex".
     source_label: str | None = None
+    # Optional installed-plugin focus route.  This is deliberately just a
+    # registered handler name, never a URL or other external target: roster
+    # and Ask payloads are safe to expose without leaking a private deep link.
+    focus_handler: str | None = None
     # How to reach this session's *tab*, when its terminal can say.
     #
     # A pid identifies a process, not a place on screen, and on Windows that

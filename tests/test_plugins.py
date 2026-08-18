@@ -357,6 +357,29 @@ class PluginSourceTests(unittest.TestCase):
         self.assertNotIn("url", event.payload)
         self.assertEqual(event.payload["source_label"], "Managed Agent")
 
+    def test_context_accepts_only_a_bounded_state_lease(self):
+        from huginn.model import SessionState
+
+        self.context.enrich(
+            "codex:manager", state=SessionState.WAITING_INPUT, state_lease_s=90,
+        )
+        event = self.bus.events.get_nowait()
+        self.assertEqual(event.payload["state_lease_s"], 90)
+
+        self.context.enrich("codex:manager", state=SessionState.WAITING_INPUT)
+        event = self.bus.events.get_nowait()
+        self.assertEqual(event.payload["state_lease_s"], 90)
+
+        for value in (0, 301, float("inf"), float("nan"), True, "90"):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "between 1 and 300"):
+                self.context.enrich(
+                    "codex:manager", state=SessionState.WAITING_INPUT, state_lease_s=value,
+                )
+        with self.assertRaisesRegex(ValueError, "requires a valid SessionState"):
+            self.context.enrich("codex:manager", state_lease_s=90)
+        with self.assertRaisesRegex(ValueError, "requires a valid SessionState"):
+            self.context.enrich("codex:manager", state="waiting_input", state_lease_s=90)
+
     def test_reducer_applies_enrichment_to_existing_session(self):
         reducer = Reducer(Config({}))
         session = Session(

@@ -14,12 +14,13 @@ from __future__ import annotations
 import re
 import time
 import logging
+import math
 from dataclasses import dataclass, field
 from functools import lru_cache
 from importlib import metadata
 from typing import TYPE_CHECKING, Any, Callable, Protocol
 
-from .model import Event, Session
+from .model import Event, Session, SessionState
 
 if TYPE_CHECKING:
     from .bus import Bus
@@ -47,6 +48,8 @@ _EXTERNAL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$")
 MAX_SOURCE_SUMMARY_CHARS = 4000
 MAX_GROUP_LABEL_CHARS = 60
 MAX_SOURCE_LABEL_CHARS = 40
+DEFAULT_STATE_LEASE_S = 90.0
+MAX_STATE_LEASE_S = 300.0
 _RESERVED_PROVIDER_NAMES = frozenset({"claude", "codex"})
 LOG = logging.getLogger("huginn.plugins")
 
@@ -493,6 +496,7 @@ class SourceContext:
         source_summary: str | None = None,
         state: Any = None,
         state_since: float | None = None,
+        state_lease_s: float | None = None,
         focus_handler: str | None = None,
         source_label: str | None = None,
     ) -> None:
@@ -516,10 +520,22 @@ class SourceContext:
             raise ValueError("source label is invalid")
         if state_since is not None and (isinstance(state_since, bool) or not isinstance(state_since, (int, float))):
             raise ValueError("state_since must be a timestamp")
+        if state_lease_s is not None and (
+            isinstance(state_lease_s, bool)
+            or not isinstance(state_lease_s, (int, float))
+            or not math.isfinite(state_lease_s)
+            or not 1 <= state_lease_s <= MAX_STATE_LEASE_S
+        ):
+            raise ValueError("state_lease_s must be between 1 and 300 seconds")
+        if state_lease_s is not None and not isinstance(state, SessionState):
+            raise ValueError("state_lease_s requires a valid SessionState")
+        if state_lease_s is None and isinstance(state, SessionState):
+            state_lease_s = DEFAULT_STATE_LEASE_S
         self.bus.emit(Event("plugin.enrich", key, time.time(), self.diagnostic_name, {
             "source_summary": source_summary,
             "state": state,
             "state_since": state_since,
+            "state_lease_s": state_lease_s,
             "focus_handler": focus_handler,
             "source_label": source_label,
         }))

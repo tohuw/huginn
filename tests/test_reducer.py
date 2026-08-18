@@ -451,6 +451,40 @@ class CodexWaitingReducerTests(unittest.TestCase):
         self.feed("codex.thread", s.key, {"session": incoming}, ts=NOW + 1)
         self.assertEqual(s.state, SessionState.WORKING)
 
+    def test_plugin_state_lease_survives_polls_and_expires_fail_closed(self):
+        s = codex_session(state=SessionState.WORKING)
+        self.r.sessions[s.key] = s
+        origin = "plugin.managed.presence"
+        self.r.apply(Event("plugin.enrich", s.key, NOW, origin, {
+            "state": SessionState.WAITING_INPUT,
+            "state_since": NOW,
+            "state_lease_s": 90,
+        }))
+        self.assertEqual(s.state, SessionState.WAITING_INPUT)
+
+        incoming = codex_session(state=SessionState.WORKING)
+        self.feed("codex.thread", s.key, {"session": incoming}, ts=NOW + 2)
+        self.assertEqual(s.state, SessionState.WAITING_INPUT)
+
+        self.r.apply(Event("plugin.enrich", s.key, NOW + 3, "plugin.other.presence", {
+            "state": SessionState.ERROR,
+            "state_since": NOW + 3,
+            "state_lease_s": 90,
+        }))
+        self.assertEqual(s.state, SessionState.WAITING_INPUT)
+
+        self.r.apply(Event("plugin.enrich", s.key, NOW + 80, origin, {
+            "state": SessionState.WAITING_INPUT,
+            "state_since": NOW,
+            "state_lease_s": 90,
+        }))
+        self.feed("codex.thread", s.key, {"session": incoming}, ts=NOW + 100)
+        self.assertEqual(s.state, SessionState.WAITING_INPUT)
+
+        self.feed("codex.thread", s.key, {"session": incoming}, ts=NOW + 171)
+        self.assertEqual(s.state, SessionState.WORKING)
+        self.assertNotIn(s.key, self.r.plugin_state_leases)
+
     def test_session_hide_removes_idle_source_record(self):
         s = codex_session(state=SessionState.IDLE)
         self.r.sessions[s.key] = s

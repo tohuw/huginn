@@ -196,12 +196,17 @@ context.enrich(
     source_summary="managed presence: verified\nneeds: explicit review",
     state=SessionState.WAITING_INPUT,
     state_since=verified_at_epoch,
+    state_lease_s=90,
     focus_handler="managed-agent",
 )
 ```
 
 `enrich()` never accepts a URL, token, or arbitrary action payload. The optional
-`focus_handler` is only a registered name. Declare that handler on the plugin
+`state_lease_s` makes a verified plugin state authoritative for 1 to 300 seconds
+(90 seconds by default), so ordinary local polling cannot immediately overwrite it. Refresh the lease on
+every successful presence read. If the plugin stops producing fresh evidence,
+the lease expires and Huginn's normal local evidence resumes automatically. The
+optional `focus_handler` is only a registered name. Declare that handler on the plugin
 and keep any private deep-link target inside its implementation:
 
 ```python

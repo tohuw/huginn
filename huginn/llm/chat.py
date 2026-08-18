@@ -217,16 +217,13 @@ async def start_chat(daemon: "Daemon", body: dict) -> dict:
                       or _apply_dismiss_control(daemon, question))
     if session_reply:
         request_id = uuid.uuid4().hex[:12]
-        daemon.active_chat = asyncio.create_task(
-            _confirm_controls(daemon, [session_reply], request_id))
-        return {"ok": True, "request_id": request_id}
+        return {"ok": True, "request_id": request_id, "reply": session_reply}
     actions = _control_actions(question)
     if actions:
         request_id = uuid.uuid4().hex[:12]
         replies = _apply_controls(daemon, actions)
-        daemon.active_chat = asyncio.create_task(
-            _confirm_controls(daemon, replies, request_id))
         return {"ok": True, "request_id": request_id,
+                "reply": " ".join(replies),
                 "settings": daemon.cfg.to_dict()}
     requested_name = body.get("provider") or daemon.cfg.get("llm", "provider")
     provider = get_provider(requested_name, daemon.plugins)
@@ -279,14 +276,6 @@ def _apply_controls(daemon: "Daemon", actions) -> list[str]:
         daemon.blurbs.set_enabled(new_enabled)
     daemon.bus.broadcast("settings.changed", daemon.cfg.to_dict())
     return replies
-
-
-async def _confirm_controls(daemon: "Daemon", replies: list[str], request_id: str) -> None:
-    # Let POST /chat deliver request_id before the SSE confirmation arrives.
-    await asyncio.sleep(0.05)
-    daemon.bus.broadcast("chat.delta", {
-        "request_id": request_id, "text": " ".join(replies)})
-    daemon.bus.broadcast("chat.done", {"request_id": request_id})
 
 
 async def _run_chat(daemon: "Daemon", provider, question: str, request_id: str,

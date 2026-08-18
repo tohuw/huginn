@@ -885,6 +885,12 @@ document.getElementById("chat-form").onsubmit = async (e) => {
   } else {
     currentRequestId = body.request_id || null;
     if (body.settings) applySettings(body.settings);
+    if (body.reply !== undefined) {
+      setMarkdownText(currentAnswer, body.reply);
+      setChatBusy(false);
+      currentAnswer = null;
+      persistTranscript();
+    }
   }
 };
 

@@ -267,6 +267,14 @@ source does not watch files; doctor then reports it as not measuring artifact
 times. The call must be quick and must not raise; an exception is reported as
 unknown lag rather than failing the report.
 
+### Naming the source badge (optional)
+
+Set `Session.source_label` to override the text on a card's source badge
+without changing the machine-readable `source` name — for example
+`source="sessions"` with `source_label="Example Sessions"`. It must be
+non-empty and at most 40 characters; leave it unset to show the `source`
+name as-is.
+
 ## Dashboard session groups
 
 Set `Session.group` (and, optionally, `Session.group_label`) to have every

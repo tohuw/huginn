@@ -257,6 +257,8 @@ expanded evidence across roster polls, and keep their action rails aligned. Per 
 **jump** focuses the exact iTerm2 tab on macOS (hotkey windows included; VS Code
 sessions open the workspace; Windows Terminal currently focuses the owning window),
 **peek** shows a distilled transcript tail,
+**dismiss** (shown only on ended cards) removes a stale card immediately
+instead of waiting out the ended-card TTL,
 **ask** feeds the chat panel — a Q&A agent (Claude or Codex, switchable
 top-right) that reads current per-session digests and answers questions about
 what's going on. Ask stays in that monitoring scope; it can also toggle blurbs,
@@ -269,7 +271,8 @@ code blocks through DOM construction without HTML injection. The pencil edits a
 short ephemeral card title; absent a manual title,
 the configured LLM may guess one from current session evidence. Titles belong
 to that card only and disappear when it does. Dashboard settings persist across
-reloads and synchronize across open tabs.
+reloads and synchronize across open tabs; the Ask transcript survives a browser
+refresh but clears when the daemon restarts.
 
 For open-ended questions ("which session is fixing the login bug?"), Ask's
 roster includes each session's current title or blurb alongside its name and
@@ -280,7 +283,8 @@ state or a blocker; only the transcript and live state are.
 Ask can also drive the jump and peek buttons directly — "jump @session-name"
 focuses that session's terminal exactly as clicking jump would, and "peek
 @session-name" expands that card's transcript tail (also echoed in the chat
-reply). Both resolve @name the same way titling does: an exact match, or a
+reply), and "dismiss @session-name" removes an ended card (live sessions are
+refused). All resolve @name the same way titling does: an exact match, or a
 unique prefix.
 
 ## Session states
@@ -345,7 +349,7 @@ kept separate even when their repositories share the same basename.
   process presence and recent Electron activity on macOS and Windows without
   attempting to extract cloud conversation content.
 - Hooks (optional, recommended): `huginn-hook` forwards Claude Code and Codex
-  hook events to `POST /api/hook/...` with 0.2s connect timeout — if the
+  hook events to `POST /api/hook/...` with a 1s timeout — if the
   daemon is down the hook is a no-op; sessions never block. Codex hooks are
   installed sync (its `async` hooks are skipped as of 0.145). Installation is
   append-only + idempotent into `~/.claude/settings.json` / `~/.codex/hooks.json`
@@ -518,13 +522,22 @@ way, independently, and its compatibility promise is keyed to the year component
 ## Dev
 
 ```sh
-uv run pytest -q     # huginn's tests + the shared package's
+uv run pytest -q                       # huginn's tests + the shared package's
+uv run ruff check .                    # lint
+git config core.hooksPath .githooks    # once per clone: local CI floor on push
 ```
+
+The hosted CI matrix (macOS + Windows) is manual-only to avoid metered Actions
+minutes; the pre-push hook runs the same floor locally — lockfile sync, lint,
+tests, wheel build, and a clean-venv smoke test — and blocks a red push.
+Trigger the full matrix by hand (Actions → CI → Run workflow) before a release.
+Versioning policy is under [Versioning](#versioning) above.
 
 Architecture: sources (fsevents watchers + pollers) → event bus → one reducer
 (`huginn/state.py`, pure transition rules, unit-tested) → SSE → vanilla-JS
 dashboard. No build step, three runtime dependencies (fastapi, uvicorn,
-watchfiles) plus the in-repo `corvidae`.
+watchfiles) plus the in-repo `corvidae`. Longer-form architecture notes live in
+the [`.valholl/` wiki](.valholl/index.md).
 
 **The console keeps itself current without a reload**, which takes more than the
 event stream. SSE is the fast path; a snapshot poll reconciles what the stream

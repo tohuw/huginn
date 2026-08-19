@@ -6,10 +6,9 @@
 #
 # Activate once per clone:  git config core.hooksPath .githooks
 #
-# This runs on the pushing developer's OS only. The Windows tray build
-# (dotnet / build.ps1) can only run on Windows, so it is guarded and skipped
-# elsewhere. When you need the full cross-OS matrix, trigger the ci workflow by
-# hand (Actions → CI → Run workflow) before a release.
+# This runs on the pushing developer's OS only. When you need the full cross-OS
+# matrix, trigger the ci workflow by hand (Actions → CI → Run workflow) before a
+# release.
 
 echo "huginn pre-push: lint + tests + wheel build + smoke (local CI)..."
 
@@ -32,6 +31,10 @@ uv run pytest -q || {
 	echo "huginn pre-push: pytest failed — push blocked. (--no-verify to override)"
 	exit 1
 }
+
+# Stale artifacts from earlier versions make the dist/*.whl glob below match
+# more than one huginn wheel, which pip refuses to co-install.
+rm -f dist/*.whl dist/*.tar.gz
 
 # --all-packages: two distributables since issue #42 (huginn + shared corvidae),
 # and huginn's wheel depends on corvidae's, so the smoke test below needs both.
@@ -57,16 +60,6 @@ if command -v python3 >/dev/null 2>&1; then
 	fi
 else
 	echo "huginn pre-push: WARNING — python3 not found; skipped wheel smoke test."
-fi
-
-# Windows tray build is Windows-only; skip with a note on other platforms.
-if command -v dotnet >/dev/null 2>&1; then
-	dotnet build windows/Huginn.Tray/Huginn.Tray.csproj --configuration Release || {
-		echo "huginn pre-push: Windows tray build failed — push blocked. (--no-verify to override)"
-		exit 1
-	}
-else
-	echo "huginn pre-push: NOTE — dotnet not found; skipped Windows tray build (runs only on Windows / in the manual CI matrix)."
 fi
 
 echo "huginn pre-push: green."

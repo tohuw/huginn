@@ -54,7 +54,7 @@ enum (as of CLI 0.145) only has three: `SessionStart`, `UserPromptSubmit`,
 Claude's hooks are installed with `"async": true`; Codex 0.145 silently skips
 hooks marked async ("not supported yet"), so Codex's are installed
 synchronously instead — safe only because the forwarder's own worst case is a
-capped ~0.3s round trip against a local daemon.
+round trip against a local daemon capped by its 1-second timeout.
 
 ## From HTTP request to session state
 

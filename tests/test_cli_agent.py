@@ -216,7 +216,15 @@ class AgentCliTests(unittest.TestCase):
             with self.subTest(platform=platform):
                 backend = agent_install.get_login_agent(platform)
                 self.assertIsNotNone(backend)
+                # The bundle step is stubbed for the same reason the login-agent
+                # backends are: this test is about which backend each platform
+                # reaches, and the darwin pass would otherwise write a real
+                # bundle into the developer's own ~/Applications (and fail
+                # outright when an unrelated Huginn.app already sits there).
+                # `app_bundle` itself is covered by tests/test_app_bundle.py.
                 with patch.object(agent_install.sys, "platform", platform), \
+                        patch("huginn.app_bundle.install", return_value=None), \
+                        patch("huginn.app_bundle.uninstall", return_value=False), \
                         patch.object(type(backend), "install", return_value=0) as install, \
                         patch.object(type(backend), "uninstall", return_value=0) as uninstall:
                     self.assertEqual(cli.cmd_install_agent(Namespace()), 0)

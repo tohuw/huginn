@@ -129,7 +129,7 @@ wheels = [
 
 [[package]]
 name = "huginn"
-version = "2026.8.19"
+version = "2026.8.20"
 source = { editable = "." }
 dependencies = [
     { name = "corvidae" },

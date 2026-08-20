@@ -43,6 +43,27 @@ _OSA_FOCUS_TTY = '''
 on run argv
   set targetTty to item 1 of argv
   tell application "iTerm2"
+    if my findAndSelect(targetTty) then
+      activate
+      return "ok"
+    end if
+    -- A quake-style hotkey window that is currently dropped up is hidden and
+    -- excluded from `windows`, so its sessions cannot match above. Reveal it
+    -- and search again before giving up; this is a no-op for setups without
+    -- one configured.
+    try
+      reveal hotkey window
+    end try
+    if my findAndSelect(targetTty) then
+      activate
+      return "ok"
+    end if
+  end tell
+  return "notfound"
+end run
+
+on findAndSelect(targetTty)
+  tell application "iTerm2"
     repeat with w in windows
       repeat with t in tabs of w
         repeat with s in sessions of t
@@ -52,33 +73,14 @@ on run argv
             try
               tell t to select s
             end try
-            activate
-            return "ok"
+            return true
           end if
         end repeat
       end repeat
     end repeat
-    try
-      tell current window
-        repeat with t in tabs
-          repeat with s in sessions of t
-            if tty of s is targetTty then
-              select t
-              try
-                tell t to select s
-              end try
-              try
-                reveal hotkey window
-              end try
-              return "ok"
-            end if
-          end repeat
-        end repeat
-      end tell
-    end try
   end tell
-  return "notfound"
-end run
+  return false
+end findAndSelect
 '''
 
 _OSA_SEND_TTY = '''

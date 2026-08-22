@@ -78,6 +78,23 @@ class AuthTests(unittest.TestCase):
         r = c.get("/api/sessions", headers={"X-Huginn-Token": "wrong"})
         self.assertEqual(r.status_code, 401)
 
+    def test_a_non_ascii_token_is_refused_not_a_server_error(self):
+        """hmac.compare_digest raises on two non-ASCII strs rather than
+        returning False, so one accented byte in the header turned a rejection
+        into a 500 and a traceback -- reachable without a token. Sent as bytes
+        because that is what arrives on the wire; the server decodes headers as
+        latin-1, which is how a str with no ASCII form gets that far at all."""
+        c = make_client()
+        r = c.get("/api/sessions",
+                  headers={"X-Huginn-Token": "tökén".encode("latin-1")})
+        self.assertEqual(r.status_code, 401)
+
+    def test_a_non_ascii_refresh_cookie_is_refused_not_a_server_error(self):
+        c = make_client()
+        r = c.post("/api/session/refresh",
+                   headers={"Cookie": "huginn_refresh=tökén".encode("latin-1")})
+        self.assertEqual(r.status_code, 401)
+
     def test_hook_requires_token(self):
         c = make_client()
         r = c.post("/api/hook/claude/Stop", json={})

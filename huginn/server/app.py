@@ -57,6 +57,24 @@ def _log_notification(source: str, message: str, diagnostics: "Diagnostics") -> 
         diagnostics.error("notifications_log", e)
 
 
+def _secret_matches(supplied: object, expected: object) -> bool:
+    """Constant-time compare of two credentials that cannot be made to raise.
+
+    ``hmac.compare_digest`` refuses two ``str`` arguments unless both are
+    ASCII-only, and it raises TypeError rather than returning False. A header is
+    whatever the caller put in it, so one non-ASCII character turned a request
+    that should have been a plain 401 into a 500 with a traceback in the log --
+    reachable by anyone who can reach the port, without a token. Comparing the
+    encoded bytes compares what actually arrived.
+    """
+    if not isinstance(supplied, str) or not isinstance(expected, str) or not expected:
+        return False
+    return hmac.compare_digest(
+        supplied.encode("utf-8", "surrogateescape"),
+        expected.encode("utf-8", "surrogateescape"),
+    )
+
+
 def create_app(daemon: "Daemon") -> FastAPI:
     app = FastAPI(title="huginn")
     bus, reducer, cfg = daemon.bus, daemon.reducer, daemon.cfg
@@ -68,7 +86,7 @@ def create_app(daemon: "Daemon") -> FastAPI:
         # (browser history, access logs). SSE authenticates via the cookie
         # set by POST /api/session instead -- see issue #23.
         supplied = request.headers.get("X-Huginn-Token") or request.cookies.get(SESSION_COOKIE) or ""
-        if not hmac.compare_digest(supplied, daemon.token):
+        if not _secret_matches(supplied, daemon.token):
             raise HTTPException(401, "bad or missing token")
 
     def require_local_origin(request: Request) -> None:
@@ -112,7 +130,7 @@ def create_app(daemon: "Daemon") -> FastAPI:
     def refresh_session(request: Request, response: Response):
         """Rotate an already-authorized browser tab onto this daemon's token."""
         supplied = request.cookies.get(REFRESH_COOKIE) or ""
-        if not daemon.refresh_token or not hmac.compare_digest(supplied, daemon.refresh_token):
+        if not _secret_matches(supplied, daemon.refresh_token):
             raise HTTPException(401, "bad or missing refresh token")
         response.set_cookie(SESSION_COOKIE, daemon.token, httponly=True,
                             samesite="strict", path="/")

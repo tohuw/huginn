@@ -4,7 +4,9 @@ from __future__ import annotations
 import ctypes
 import datetime as dt
 import json
+import logging
 import os
+import re
 import shutil
 import subprocess
 import urllib.parse
@@ -12,6 +14,8 @@ from ctypes import wintypes
 from pathlib import Path
 
 from .base import FocusResult, Platform
+
+log = logging.getLogger(__name__)
 
 
 CREATE_NO_WINDOW = 0x08000000
@@ -113,6 +117,37 @@ def _toolhelp_parents() -> dict[int, int] | None:
         return parents
     finally:
         kernel32.CloseHandle(snapshot)
+
+
+#: What a Windows executable's file name may contain before it is allowed into
+#: a WMI filter. The filter is interpolated into a PowerShell double-quoted
+#: string, where ``$(...)`` is a subexpression PowerShell *evaluates* and a
+#: quote ends the string -- so escaping the single quotes the WMI syntax needs
+#: is not, on its own, enough to make an arbitrary name safe to put there.
+#: Every caller today passes a literal, and this is what keeps that from being
+#: the only thing standing between a process name and a shell.
+_SAFE_PROCESS_NAME = re.compile(r"\A[A-Za-z0-9 ._+-]{1,120}\Z")
+
+
+#: The only file names this platform will execute from a recorded terminal
+#: identity. The path beside them is not checked and cannot usefully be: WezTerm
+#: is installed wherever its owner put it. The *name* is the part that has to
+#: hold, because the value arrives in a hook payload -- written by the session's
+#: own environment, which a repository's env file can set -- and is then run,
+#: much later, when someone clicks jump. A recorded path is a place to look for
+#: wezterm, never a licence to run something else.
+_WEZTERM_BINARIES = {"wezterm", "wezterm.exe"}
+
+
+def _wezterm_binary(recorded: object) -> str | None:
+    """``recorded`` if it names the WezTerm CLI, "wezterm" if nothing was, else None."""
+    if not recorded:
+        return "wezterm"
+    if not isinstance(recorded, str):
+        return None
+    if os.path.basename(recorded).lower() not in _WEZTERM_BINARIES:
+        return None
+    return recorded
 
 
 def _process_json(where: str) -> list[dict]:
@@ -237,6 +272,11 @@ class WindowsPlatform(Platform):
 
     def find_processes(self, executable: str) -> list[int]:
         name = executable if executable.lower().endswith(".exe") else f"{executable}.exe"
+        if not _SAFE_PROCESS_NAME.match(name):
+            # Not an error worth raising: no process is named this, so the
+            # honest answer to "which pids run it" is none.
+            log.debug("Refusing to search for an implausible process name")
+            return []
         escaped = name.replace("'", "''")
         return [int(row["ProcessId"]) for row in _process_json(f"Name='{escaped}'")]
 
@@ -420,7 +460,9 @@ class WindowsPlatform(Platform):
         pane = terminal.get("pane")
         if not pane:
             return FocusResult(False, None, "no pane recorded for this session")
-        executable = terminal.get("executable") or "wezterm"
+        executable = _wezterm_binary(terminal.get("executable"))
+        if executable is None:
+            return FocusResult(False, None, "recorded terminal binary is not wezterm")
         env = dict(os.environ)
         socket = terminal.get("socket")
         if socket:

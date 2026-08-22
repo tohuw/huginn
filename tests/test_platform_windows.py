@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from huginn.platform import windows
 from huginn.platform.windows import WindowsPlatform
 
 
@@ -279,3 +280,25 @@ def test_windows_vscode_uses_existing_window():
         result = adapter.focus_vscode("C:\\work")
     assert result.ok
     assert popen.call_args.args[0] == ["code.cmd", "--reuse-window", "C:\\work"]
+
+
+def test_an_implausible_process_name_never_reaches_powershell():
+    """The WMI filter is interpolated into a PowerShell double-quoted string.
+
+    Escaping the single quotes WMI needs does nothing about `$(...)`, which
+    PowerShell evaluates, or about a double quote, which ends the string. Every
+    caller passes a literal today; this is what keeps that from being the only
+    thing between a process name and a shell.
+    """
+    adapter = WindowsPlatform()
+    with patch.object(windows, "_process_json") as query:
+        assert adapter.find_processes('x$(calc)') == []
+        assert adapter.find_processes('a"; calc; "') == []
+    query.assert_not_called()
+
+
+def test_an_ordinary_process_name_is_still_looked_up():
+    adapter = WindowsPlatform()
+    with patch.object(windows, "_process_json", return_value=[{"ProcessId": 4}]) as query:
+        assert adapter.find_processes("wezterm-gui") == [4]
+    assert query.call_args.args[0] == "Name='wezterm-gui.exe'"

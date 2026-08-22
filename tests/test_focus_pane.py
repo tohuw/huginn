@@ -159,6 +159,34 @@ class ActivatingThePane(unittest.TestCase):
         result = WindowsPlatform().focus_pane({"kind": "someterm", "pane": "1"})
         self.assertFalse(result.ok)
 
+    def test_only_a_binary_named_wezterm_is_run(self):
+        """The recorded path comes from the pane's own environment.
+
+        A hook forwards whatever WEZTERM_EXECUTABLE_DIR pointed at, and a
+        repository's env file can point that anywhere. Where WezTerm is
+        installed is nobody's business but its owner's; the file name is the
+        part that has to hold, because clicking jump runs it -- much later, in
+        the daemon, far from the session that recorded it.
+        """
+        planted = dict(WEZ, executable=r"C:\repo\.tools\notwezterm.exe")
+        with patch.object(subprocess, "run") as run:
+            result = WindowsPlatform().focus_pane(planted)
+        run.assert_not_called()
+        self.assertFalse(result.ok)
+        self.assertIn("not wezterm", result.detail)
+
+    def test_wezterm_installed_anywhere_still_runs(self):
+        odd = dict(WEZ, executable=r"D:\portable apps\wezterm\wezterm.exe")
+        with self._run() as run:
+            result = WindowsPlatform().focus_pane(odd)
+        self.assertTrue(result.ok)
+        self.assertEqual(run.call_args.args[0][0], odd["executable"])
+
+    def test_a_session_with_no_recorded_binary_falls_back_to_the_path(self):
+        with self._run() as run:
+            WindowsPlatform().focus_pane({"kind": "wezterm", "pane": "7"})
+        self.assertEqual(run.call_args.args[0][0], "wezterm")
+
     def test_the_pipe_is_decoded_as_utf8_not_the_locale(self):
         """WezTerm echoes tab titles, and those are full of non-cp1252 text.
 

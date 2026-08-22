@@ -325,10 +325,18 @@ def build_menu(sessions: Iterable[Session], *, now: float | None = None) -> dict
         key=lambda s: -s.state_since,
     )
 
+    # The verdict row carries the console action, which is what makes it
+    # clickable -- and, less obviously, what gives it a stable identity. A host
+    # that has to tell one poll's rows from the next has only the id, falling
+    # back to the label; this row's label is a count, so every session that
+    # arrived or left rewrote it into a row the host had never seen. Roost read
+    # that as a newly attention-worthy item and toasted the summary again beside
+    # the session's own toast.
     sections: list[dict] = [{
         "id": "status",
         "items": [_row(
             safe_text(triage["verdict"]["headline"], MAX_LABEL),
+            action=OPEN_CONSOLE,
             style="attention" if triage["verdict"]["level"] in ("attention", "contention") else "muted",
         )],
     }]

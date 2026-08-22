@@ -503,6 +503,23 @@ class MenuShapeTests(unittest.TestCase):
         self.assertNotIn("attention", by_id)
         self.assertIn("console", by_id)
 
+    def test_the_verdict_row_keeps_one_identity_as_its_count_moves(self):
+        """The host tells rows apart by id, and a count is not an identity.
+
+        Without one, "1 session needs you" and "2 sessions need you" are two
+        different rows to a host that toasts what is newly attention-worthy --
+        so the summary toasted again every time a session arrived or left.
+        """
+        one = session("claude:1", "alpha", SessionState.WAITING_PERMISSION)
+        two = session("claude:2", "beta", SessionState.WAITING_INPUT)
+        rows = [next(s for s in parse_menu(raven.build_menu(roster))["sections"]
+                     if s["id"] == "status")["items"][0]
+                for roster in ([one], [one, two])]
+
+        self.assertNotEqual(rows[0]["label"], rows[1]["label"])
+        self.assertEqual({row["action_id"] for row in rows}, {raven.OPEN_CONSOLE})
+        self.assertTrue(all(row["enabled"] for row in rows))
+
     def test_worktree_contention_is_named_and_inert(self):
         shared = str(Path(tempfile.gettempdir(), "shared").resolve())
         sessions = [

@@ -141,6 +141,9 @@ and calls two authenticated routes:
   attention, worktree contention, what is working, and dismissable ended
   sessions, plus a badge carrying the same attention count the dashboard tab
   title shows. The menu bar renders these labels without interpreting them.
+  The headline carries the `open-console` action, so it is both a summary and
+  a way in — and, less visibly, an id is what lets a host tell one poll's rows
+  from the next, which a label that counts sessions cannot do.
 - `POST /api/menu/action` — an action id from that menu, handed back unchanged.
   `focus:<key>` jumps to a session exactly as the dashboard's **jump** does,
   `dismiss:<key>` removes an ended card, and `open-console` opens the dashboard
@@ -411,7 +414,10 @@ this does and doesn't protect against:
   itself carries no secret, so it's safe for any local process to fetch. The
   refresh credential can only mint a new session cookie; it is never accepted
   by other API routes. `Origin`/`Host` header checks reject cross-origin and
-  DNS-rebinding requests on top of that.
+  DNS-rebinding requests on top of that. Request bodies are bounded as they
+  are read (4 MiB, and 8 KiB for a menu click), so an authenticated caller
+  cannot make the daemon allocate without limit; a wrong token is a 401
+  whatever bytes it contains.
 - **Does not protect against:** another process running *as you* that can
   read your files — it can read `~/.local/state/huginn/token` directly (same
   permission boundary as reading your Claude transcripts), so this isn't

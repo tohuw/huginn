@@ -57,6 +57,41 @@ def _log_notification(source: str, message: str, diagnostics: "Diagnostics") -> 
         diagnostics.error("notifications_log", e)
 
 
+#: The largest request body any route here will hold in memory. Deliberately far
+#: above anything Huginn sends itself and far below "as much as the caller feels
+#: like": the biggest real body is a Claude hook forwarding a UserPromptSubmit,
+#: which carries whatever the user just pasted into their terminal, so a tight
+#: cap would drop legitimate traffic and lose a state change. Every route was
+#: previously unbounded -- ``request.json()`` reads to EOF -- and while the token
+#: gate means the caller is already trusted with a great deal more than memory,
+#: "authenticated" is not a reason for a daemon to allocate without limit.
+MAX_BODY_BYTES = 4 * 1024 * 1024
+
+
+async def _read_body(request: Request, limit: int = MAX_BODY_BYTES) -> bytes:
+    """Read a request body, refusing one over ``limit`` as it arrives.
+
+    Streamed rather than measured by ``Content-Length``: a chunked request
+    declares no length at all, and a declared one is a claim rather than a
+    measurement. Refusing after reading the whole body would have bounded
+    nothing.
+    """
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > limit:
+            raise HTTPException(413, "request body is too large")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+async def _read_json(request: Request, limit: int = MAX_BODY_BYTES) -> object:
+    """A bounded body, parsed. Raises ValueError exactly as ``json.loads`` does."""
+    raw = await _read_body(request, limit)
+    return json.loads(raw) if raw.strip() else {}
+
+
 def _secret_matches(supplied: object, expected: object) -> bool:
     """Constant-time compare of two credentials that cannot be made to raise.
 
@@ -233,7 +268,7 @@ def create_app(daemon: "Daemon") -> FastAPI:
         if s is None:
             raise HTTPException(404)
         try:
-            body = await request.json()
+            body = await _read_json(request)
             level = body.get("level") if isinstance(body, dict) else None
             return set_authority(s, level)
         except ValueError as exc:
@@ -245,7 +280,7 @@ def create_app(daemon: "Daemon") -> FastAPI:
         if s is None:
             raise HTTPException(404)
         try:
-            body = await request.json()
+            body = await _read_json(request)
             if not isinstance(body, dict):
                 raise ValueError("request body must be an object")
             pending = daemon.steering_confirmations.create(
@@ -266,7 +301,7 @@ def create_app(daemon: "Daemon") -> FastAPI:
     @api.post("/steering/confirm")
     async def confirm_steering(request: Request):
         try:
-            body = await request.json()
+            body = await _read_json(request)
             if not isinstance(body, dict) or not isinstance(body.get("confirmed"), bool):
                 raise ValueError("confirmed must be a boolean")
             pending = daemon.steering_confirmations.consume(body.get("confirmation_id"))
@@ -286,7 +321,7 @@ def create_app(daemon: "Daemon") -> FastAPI:
         s = reducer.sessions.get(key)
         if s is None:
             raise HTTPException(404)
-        body = await request.json()
+        body = await _read_json(request)
         title = str(body.get("title") or "").strip()[:60]
         s.title = title or None
         s.title_origin = "manual" if title else None
@@ -299,8 +334,12 @@ def create_app(daemon: "Daemon") -> FastAPI:
     @api.post("/hook/{source}/{event}")
     async def hook(source: str, event: str, request: Request):
         try:
-            data = await request.json()
-        except Exception:
+            data = await _read_json(request)
+        except ValueError:
+            # Malformed JSON from a hook is still a hook worth recording: the
+            # event and its source are in the URL. Narrowed from `except
+            # Exception`, which would have swallowed the 413 above and answered
+            # a four-megabyte body with "ok".
             data = {}
         payload = {"event": event, "data": data}
         daemon.record_hook_hit(source, event)
@@ -348,13 +387,10 @@ def create_app(daemon: "Daemon") -> FastAPI:
         request that could not be honoured, not a malformed one, and the host
         renders the menu again on its next poll regardless."""
         from ..raven import MAX_ACTION_BODY, perform_action
-        # Bounded before parsing: a menu click carries an id of at most a
-        # hundred-odd bytes, so anything larger is not one of ours.
-        raw = await request.body()
-        if len(raw) > MAX_ACTION_BODY:
-            raise HTTPException(413, "request body is too large")
+        # Bounded as it is read, not after: a menu click carries an id of at
+        # most a hundred-odd bytes, so anything larger is not one of ours.
         try:
-            body = json.loads(raw or b"{}")
+            body = await _read_json(request, MAX_ACTION_BODY)
         except ValueError as exc:
             raise HTTPException(400, "body is not JSON") from exc
         if not isinstance(body, dict):
@@ -419,7 +455,7 @@ def create_app(daemon: "Daemon") -> FastAPI:
 
     @api.put("/settings")
     async def put_settings(request: Request):
-        body = await request.json()
+        body = await _read_json(request)
         # Validate the whole batch before mutating anything (issue #18) --
         # a partially-invalid update must not poison runtime/disk config.
         errors: list[str] = []
@@ -455,7 +491,7 @@ def create_app(daemon: "Daemon") -> FastAPI:
 
     @api.post("/chat")
     async def chat(request: Request):
-        body = await request.json()
+        body = await _read_json(request)
         from ..llm.chat import start_chat
         result = await start_chat(daemon, body)
         if not result.get("ok"):

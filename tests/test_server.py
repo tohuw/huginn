@@ -13,6 +13,7 @@ from huginn.config import Config
 from huginn.daemon import Daemon
 from huginn.model import Session, SessionState
 from huginn.plugins import get_registry
+import huginn.server.app as app_module
 from huginn.server.app import create_app
 
 
@@ -94,6 +95,45 @@ class AuthTests(unittest.TestCase):
         r = c.post("/api/session/refresh",
                    headers={"Cookie": "huginn_refresh=tökén".encode("latin-1")})
         self.assertEqual(r.status_code, 401)
+
+    def test_an_oversized_body_is_refused_before_it_is_all_read(self):
+        """Every /api route read to EOF. The token gate means the caller is
+        already trusted with more than memory, but that is not a reason for a
+        daemon to allocate without limit."""
+        c = make_client()
+        r = c.post("/api/hook/claude/UserPromptSubmit",
+                   headers={"X-Huginn-Token": "secret-token",
+                            "Content-Type": "application/json"},
+                   content=b'{"prompt": "' + b"x" * (app_module.MAX_BODY_BYTES + 1) + b'"}')
+        self.assertEqual(r.status_code, 413)
+
+    def test_a_long_pasted_prompt_still_gets_through(self):
+        """The biggest real body is a hook carrying what someone just pasted."""
+        c = make_client()
+        r = c.post("/api/hook/claude/UserPromptSubmit",
+                   headers={"X-Huginn-Token": "secret-token",
+                            "Content-Type": "application/json"},
+                   content=b'{"session_id": "sid-100", "prompt": "'
+                           + b"x" * 500_000 + b'"}')
+        self.assertEqual(r.status_code, 200)
+
+    def test_a_menu_click_body_is_bounded_far_tighter(self):
+        """An action id is a hundred-odd bytes; a megabyte is not one of ours."""
+        c = make_client()
+        r = c.post("/api/menu/action",
+                   headers={"X-Huginn-Token": "secret-token",
+                            "Content-Type": "application/json"},
+                   content=b'{"id": "' + b"x" * 100_000 + b'"}')
+        self.assertEqual(r.status_code, 413)
+
+    def test_a_hook_with_a_malformed_body_is_still_recorded(self):
+        """Narrowing the hook's `except Exception` must not change this."""
+        c = make_client()
+        r = c.post("/api/hook/claude/Stop",
+                   headers={"X-Huginn-Token": "secret-token",
+                            "Content-Type": "application/json"},
+                   content=b"not json at all")
+        self.assertEqual(r.status_code, 200)
 
     def test_hook_requires_token(self):
         c = make_client()

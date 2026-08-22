@@ -88,8 +88,8 @@ class _PROCESSENTRY32W(ctypes.Structure):
     ]
 
 
-def _toolhelp_parents() -> dict[int, int] | None:
-    """Every pid's parent, from one process snapshot. None if unavailable.
+def _toolhelp_processes() -> dict[int, tuple[int, str]] | None:
+    """Every pid's parent and executable name, from one snapshot. None if unavailable.
 
     Focus walks up to twelve levels of ancestry, and each level used to be a
     separate ``Get-CimInstance`` -- one PowerShell process per hop, measured at
@@ -97,6 +97,12 @@ def _toolhelp_parents() -> dict[int, int] | None:
     could raise it. The whole table comes back from a single snapshot here, so
     the walk costs one call regardless of depth. ``_process_json`` remains the
     fallback and the only path off Windows.
+
+    The name comes along because the callers that want children almost always
+    want to know *what* they are: ``child_shell_count`` asks for a session's
+    children and then asks each one's name, and paying a snapshot per answer
+    would trade one slow mechanism for a faster one used slowly. One snapshot
+    answers the whole question.
     """
     if os.name != "nt":
         return None
@@ -109,14 +115,22 @@ def _toolhelp_parents() -> dict[int, int] | None:
         entry.dwSize = ctypes.sizeof(_PROCESSENTRY32W)
         if not kernel32.Process32FirstW(snapshot, ctypes.byref(entry)):
             return None
-        parents: dict[int, int] = {}
+        table: dict[int, tuple[int, str]] = {}
         while True:
-            parents[entry.th32ProcessID] = entry.th32ParentProcessID
+            table[entry.th32ProcessID] = (entry.th32ParentProcessID, entry.szExeFile)
             if not kernel32.Process32NextW(snapshot, ctypes.byref(entry)):
                 break
-        return parents
+        return table
     finally:
         kernel32.CloseHandle(snapshot)
+
+
+def _toolhelp_parents() -> dict[int, int] | None:
+    """Just the parent column of :func:`_toolhelp_processes`."""
+    table = _toolhelp_processes()
+    if table is None:
+        return None
+    return {pid: parent for pid, (parent, _name) in table.items()}
 
 
 #: What a Windows executable's file name may contain before it is allowed into
@@ -222,6 +236,19 @@ class WindowsPlatform(Platform):
             return None
 
     def children(self, pid: int) -> list[int]:
+        """Direct children of ``pid``, from one snapshot where there is one.
+
+        This is on the roster scan's hot path -- every Claude session's shell
+        count asks for it on every sweep -- and it was a ``Get-CimInstance``
+        per session. Measured on a four-session roster: 4.6s for the children
+        alone, 8.9s once each child's name was asked for, all of it on the
+        daemon's event loop. That is the whole reason /api/menu could take
+        seconds to answer and why the menu bar's two-second budget was missed.
+        """
+        table = _toolhelp_processes()
+        if table is not None:
+            target = int(pid)
+            return [child for child, (parent, _name) in table.items() if parent == target]
         return [int(row["ProcessId"]) for row in _process_json(f"ParentProcessId={int(pid)}")]
 
     def parent(self, pid: int) -> int | None:
@@ -260,6 +287,10 @@ class WindowsPlatform(Platform):
         # lived shell that exits in between leaves no row, and the unguarded
         # rows[0] raised IndexError out of a routine scan -- taking down
         # `huginn doctor`, and any roster refresh that crossed the same exit.
+        table = _toolhelp_processes()
+        if table is not None:
+            entry = table.get(int(pid))
+            return (entry[1] or None) if entry else None
         rows = _process_json(f"ProcessId={int(pid)}")
         return (str(rows[0].get("Name") or "") or None) if rows else None
 
@@ -271,7 +302,20 @@ class WindowsPlatform(Platform):
         return None
 
     def find_processes(self, executable: str) -> list[int]:
+        """Every pid running ``executable``, by file name.
+
+        From the same snapshot as :meth:`children`, and for the same reason:
+        this is what the two desktop-presence pollers call on every tick, and a
+        ``Get-CimInstance`` each measured 1.3s for Claude Desktop and 2.3s for
+        ChatGPT (which asks twice). That ran on the daemon's event loop, so
+        every HTTP request that landed during one waited behind it.
+        """
         name = executable if executable.lower().endswith(".exe") else f"{executable}.exe"
+        table = _toolhelp_processes()
+        if table is not None:
+            wanted = name.lower()
+            return [pid for pid, (_parent, found) in table.items()
+                    if found.lower() == wanted]
         if not _SAFE_PROCESS_NAME.match(name):
             # Not an error worth raising: no process is named this, so the
             # honest answer to "which pids run it" is none.

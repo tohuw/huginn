@@ -10,15 +10,39 @@ from huginn.platform.windows import WindowsPlatform
 
 
 def test_windows_process_relationships_use_cim_rows():
+    """The fallback path, for a machine where no snapshot can be taken.
+
+    None from the snapshot helpers means "no process snapshot here" -- the path
+    off Windows, and what a refused CreateToolhelp32Snapshot leaves.
+    """
     adapter = WindowsPlatform()
-    with patch("huginn.platform.windows._process_json", return_value=[{"ProcessId": 4}, {"ProcessId": 9}]):
+    with patch("huginn.platform.windows._toolhelp_processes", return_value=None), \
+         patch("huginn.platform.windows._process_json",
+               return_value=[{"ProcessId": 4}, {"ProcessId": 9}]):
         assert adapter.children(2) == [4, 9]
 
-    # None means "no process snapshot here", which is the path off Windows and
-    # the fallback when a snapshot cannot be taken.
     with patch("huginn.platform.windows._toolhelp_parents", return_value=None), \
          patch("huginn.platform.windows._process_json", return_value=[{"ParentProcessId": 7}]):
         assert adapter.parent(9) == 7
+
+
+def test_children_and_names_come_from_one_snapshot_not_a_subprocess_each():
+    """The roster's hot path: every session's shell count asks for both.
+
+    Measured on a four-session roster before this: 4.6s for the children, and
+    8.9s once each child's name was asked for -- per sweep, on the daemon's
+    event loop, which is what made /api/menu miss the menu bar's two-second
+    budget.
+    """
+    adapter = WindowsPlatform()
+    table = {4: (2, "bash.exe"), 9: (2, "pwsh.exe"), 11: (1, "explorer.exe")}
+    with patch("huginn.platform.windows._toolhelp_processes", return_value=table) as snapshot, \
+         patch("huginn.platform.windows._process_json") as shelled_out:
+        assert sorted(adapter.children(2)) == [4, 9]
+        assert adapter.process_name(9) == "pwsh.exe"
+        assert adapter.process_name(404) is None
+    assert snapshot.called
+    shelled_out.assert_not_called()
 
 
 def test_parent_prefers_one_process_snapshot_over_a_powershell_call_each():
@@ -288,10 +312,12 @@ def test_an_implausible_process_name_never_reaches_powershell():
     Escaping the single quotes WMI needs does nothing about `$(...)`, which
     PowerShell evaluates, or about a double quote, which ends the string. Every
     caller passes a literal today; this is what keeps that from being the only
-    thing between a process name and a shell.
+    thing between a process name and a shell. Asserted on the fallback path,
+    since that is the only one that can reach a shell at all.
     """
     adapter = WindowsPlatform()
-    with patch.object(windows, "_process_json") as query:
+    with patch.object(windows, "_toolhelp_processes", return_value=None), \
+         patch.object(windows, "_process_json") as query:
         assert adapter.find_processes('x$(calc)') == []
         assert adapter.find_processes('a"; calc; "') == []
     query.assert_not_called()
@@ -299,6 +325,20 @@ def test_an_implausible_process_name_never_reaches_powershell():
 
 def test_an_ordinary_process_name_is_still_looked_up():
     adapter = WindowsPlatform()
-    with patch.object(windows, "_process_json", return_value=[{"ProcessId": 4}]) as query:
+    with patch.object(windows, "_toolhelp_processes", return_value=None), \
+         patch.object(windows, "_process_json", return_value=[{"ProcessId": 4}]) as query:
         assert adapter.find_processes("wezterm-gui") == [4]
     assert query.call_args.args[0] == "Name='wezterm-gui.exe'"
+
+
+def test_finding_a_running_app_does_not_shell_out_either():
+    """Both desktop-presence pollers call this on every tick."""
+    adapter = WindowsPlatform()
+    table = {4: (1, "ChatGPT.exe"), 9: (1, "chatgpt.exe"), 11: (1, "explorer.exe")}
+    with patch.object(windows, "_toolhelp_processes", return_value=table), \
+         patch.object(windows, "_process_json") as shelled_out:
+        # Windows matches an executable name case-insensitively, and the two
+        # spellings here are one app started two ways.
+        assert sorted(adapter.find_processes("ChatGPT")) == [4, 9]
+        assert adapter.find_processes("nothing-runs-this") == []
+    shelled_out.assert_not_called()

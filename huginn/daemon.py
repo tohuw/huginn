@@ -217,7 +217,7 @@ class Daemon:
     # ------------------------------------------------------------- watchers
     async def claude_watcher(self) -> None:
         from watchfiles import awatch
-        self._scan_claude()
+        await self._scan_claude()
         # The first scan is what makes absence meaningful for Claude sessions:
         # until it has run, a session missing from the roster only means nobody
         # has looked yet. See `roster_complete`.
@@ -238,22 +238,55 @@ class Daemon:
                                 self.bus.emit(Event("claude.dead", key,
                                                     time.time(), "statusfile"))
                         else:
-                            self._emit_claude_file(p)
+                            self._emit_claude_parsed(
+                                *await asyncio.to_thread(self._read_claude_file, p))
         finally:
             sweep.cancel()
 
-    def _scan_claude(self) -> None:
-        if claude_code.SESSIONS_DIR.is_dir():
-            for p in claude_code.SESSIONS_DIR.glob("*.json"):
-                self._emit_claude_file(p)
+    async def _scan_claude(self) -> None:
+        """Read every status file off the loop, then act on the loop.
 
-    def _emit_claude_file(self, path: Path) -> None:
+        Reading is what takes the time -- each session's shell count is a walk
+        of the process table -- and it used to happen here, on the event loop,
+        which is the thread that also answers HTTP. A sweep therefore stalled
+        /api/menu for as long as it ran, which is how the menu bar's
+        two-second budget came to be missed by a daemon that was not otherwise
+        busy. The reading is pure: it touches no daemon state, so it can go to
+        a thread. Deciding and emitting stay here, where the reducer lives.
+        """
+        if not claude_code.SESSIONS_DIR.is_dir():
+            return
+        for parsed in await asyncio.to_thread(self._read_claude_files):
+            self._emit_claude_parsed(*parsed)
+
+    def _read_claude_files(self) -> list[tuple[Path, dict, Session | None]]:
+        """Parse every Claude status file. Blocking, and daemon state is not touched."""
+        out: list[tuple[Path, dict, Session | None]] = []
+        for path in claude_code.SESSIONS_DIR.glob("*.json"):
+            parsed = self._read_claude_file(path)
+            if parsed[1] is not None:
+                out.append(parsed)
+        return out
+
+    def _read_claude_file(self, path: Path) -> tuple[Path, dict | None, Session | None]:
+        """One status file's contents and parse. Blocking; safe off the loop."""
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            return
-        sess = claude_code.parse_session_file(path)
-        if sess is None:
+            return (path, None, None)
+        return (path, raw, claude_code.parse_session_file(path))
+
+    def _emit_claude_file(self, path: Path) -> None:
+        """Read and act on one status file, without leaving this thread.
+
+        Kept for callers outside the daemon's own loops -- tests, and anything
+        that wants the whole step in one call.
+        """
+        self._emit_claude_parsed(*self._read_claude_file(path))
+
+    def _emit_claude_parsed(self, path: Path, raw: dict | None,
+                            sess: "Session | None") -> None:
+        if raw is None or sess is None:
             return
         # VS Code keeps one Claude backend alive for days. Once an idle
         # session has aged out it is real, but no longer useful in a live
@@ -283,7 +316,7 @@ class Daemon:
                     continue
                 if not claude_code.pid_alive(s.pid):
                     self.bus.emit(Event("claude.dead", key, time.time(), "timeout"))
-            self._scan_claude()   # catch files awatch missed
+            await self._scan_claude()   # catch files awatch missed
             # Reported so `roster_complete` can tell "Claude has been swept" from
             # "Claude has not been looked at yet". The other pollers already do
             # this for their own health; this one had nothing reading it.
@@ -325,15 +358,19 @@ class Daemon:
     async def codex_poller(self) -> None:
         while True:
             try:
-                self._poll_codex_once()
+                # Reading the thread index and each rollout is file and process
+                # work; only the emitting below belongs on this thread.
+                self._poll_codex_once(
+                    await asyncio.to_thread(codex.scan_with_status, self.cfg))
                 self.diagnostics.ok("codex_poller")
             except Exception as e:
                 self.diagnostics.error("codex_poller", e)
             self.roster_reported("codex_poller")
             await asyncio.sleep(self.cfg.get("codex", "poll_s"))
 
-    def _poll_codex_once(self) -> None:
-        sessions, succeeded = codex.scan_with_status(self.cfg)
+    def _poll_codex_once(self, scanned: "tuple[list[Session], bool] | None" = None) -> None:
+        """Act on one Codex scan, taking one that has already been read if given."""
+        sessions, succeeded = scanned if scanned is not None else codex.scan_with_status(self.cfg)
         seen = {s.key for s in sessions}
         for sess in sessions:
             self._codex_missing_polls.pop(sess.key, None)
@@ -416,7 +453,7 @@ class Daemon:
             return
         while self.cfg.get("claude_desktop", "enabled"):
             try:
-                sess = claude_desktop.scan()
+                sess = await asyncio.to_thread(claude_desktop.scan)
                 if sess is not None:
                     self.bus.emit(Event("desktop.tile", sess.key, time.time(), "poll",
                                         {"session": sess}))
@@ -439,7 +476,7 @@ class Daemon:
             return
         while self.cfg.get("chatgpt_desktop", "enabled"):
             try:
-                sess = chatgpt_desktop.scan()
+                sess = await asyncio.to_thread(chatgpt_desktop.scan)
                 if sess is not None:
                     self.bus.emit(Event("desktop.tile", sess.key, time.time(), "poll",
                                         {"session": sess}))

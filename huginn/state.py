@@ -131,9 +131,9 @@ class Reducer:
         one conversation, sharing one transcript.
 
         Nothing cleaned that up, and three things conspired to keep it. A
-        session that dies mid-work becomes ERROR rather than ENDED, and
-        ``snapshot`` only drops ENDED -- so the stale twin survived daemon
-        restarts. ``find_by_transcript`` returns the first match, so the live
+        session that died mid-work was recorded as ERROR rather than ENDED
+        (``_on_claude_dead`` no longer does that), and ``snapshot`` only drops
+        ENDED -- so the stale twin survived daemon restarts. ``find_by_transcript`` returns the first match, so the live
         session's own transcript activity kept landing on whichever record came
         first in the dict, flipping the dead one back to working after each
         sweep marked it dead. And triage counted both, reporting the user as
@@ -192,12 +192,26 @@ class Reducer:
         return [s] if changed else []
 
     def _on_claude_dead(self, ev: Event, now: float) -> list[Session]:
+        """The process is gone. That is an ending, and never an error.
+
+        This used to record ERROR when the last known state was WORKING, on the
+        theory that an agent vanishing mid-turn had crashed. It does not read as
+        one: the only way to leave a session is to close it, and Claude's status
+        file says ``shell`` for as long as one background shell outlives a turn
+        -- so an ordinary quit from an ordinary session arrived here as WORKING
+        and was published as "reported an error", to the dashboard and now to a
+        toast. Nothing here saw an error; it saw an exit.
+
+        A real error still becomes ERROR, from evidence rather than from
+        absence: an ``isApiErrorMessage`` entry in the transcript, or Codex's
+        own ``error`` phase. Those set the state before the process goes away
+        and are what ATTENTION_REASONS' "reported an error" was written for.
+        """
         s = self.sessions.get(ev.session_key or "")
         if s is None:
             return []
-        died_mid_work = s.source == "claude" and s.state == SessionState.WORKING
         prev_state = s.state
-        target = SessionState.ERROR if died_mid_work else SessionState.ENDED
+        target = SessionState.ENDED
         s.state = target
         s.state_origin = "timeout"
         s.state_since = now

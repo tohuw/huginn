@@ -267,11 +267,24 @@ class ReducerTests(unittest.TestCase):
             "event": "Stop", "data": {"session_id": "sid-100"}})
         self.assertEqual(s.state, SessionState.DONE)
 
-    def test_dead_while_working_is_error(self):
+    def test_dead_while_working_is_ended_not_error(self):
+        """Quitting a session is an ending, whatever it was doing.
+
+        Claude's status file reads ``shell`` while a background shell outlives a
+        turn, so a perfectly ordinary quit reached the reducer as WORKING and
+        was published as "reported an error".
+        """
         s = claude_session(state=SessionState.WORKING)
         self.r.sessions[s.key] = s
         self.feed("claude.dead", s.key, {})
-        self.assertEqual(s.state, SessionState.ERROR)
+        self.assertEqual(s.state, SessionState.ENDED)
+
+    def test_dead_keeps_an_error_out_of_the_attention_list(self):
+        """An error already recorded from evidence still ends when it exits."""
+        s = claude_session(state=SessionState.ERROR)
+        self.r.sessions[s.key] = s
+        self.feed("claude.dead", s.key, {})
+        self.assertEqual(s.state, SessionState.ENDED)
 
     def test_pending_tool_timeout(self):
         s = claude_session(state=SessionState.IDLE)

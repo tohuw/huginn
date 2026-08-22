@@ -295,7 +295,7 @@ unique prefix.
 | `waiting_permission` | blocked on a permission prompt | Claude Notification; Codex approval event when emitted; fallback: pending tool use >20s |
 | `waiting_input` | explicitly asked you something | elicitation/Stop hooks + transcript (AskUserQuestion) |
 | `done` | turn finished cleanly | Stop hook, busy→idle after turn end |
-| `error` | API error or died mid-work | transcript error lines, dead pid while working |
+| `error` | the agent reported an error | transcript error lines, Codex `error` phase |
 | `idle` / `ended` | nothing happening / process gone | status file, pid liveness |
 
 Desktop tiles are a different observation class. `active` means the native app

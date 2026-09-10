@@ -5,6 +5,7 @@ import ctypes
 import datetime as dt
 import json
 import logging
+import ntpath
 import os
 import re
 import shutil
@@ -159,7 +160,7 @@ def _wezterm_binary(recorded: object) -> str | None:
         return "wezterm"
     if not isinstance(recorded, str):
         return None
-    if os.path.basename(recorded).lower() not in _WEZTERM_BINARIES:
+    if ntpath.basename(recorded).lower() not in _WEZTERM_BINARIES:
         return None
     return recorded
 

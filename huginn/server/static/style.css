@@ -329,3 +329,76 @@ body[data-chat-span="horizontal"] #chat-span::before { box-shadow: inset 0 -3px 
 #chat-form button { background: var(--accent); border: none; border-radius: 6px;
   padding: 0 14px; font: inherit; font-weight: 700; cursor: pointer; }
 #chat-form button:disabled { opacity: .4; cursor: default; }
+
+/* ------------------------------------------------------------------
+   Compact view: a small glance-only "who's waiting on me" queue,
+   sized for a second display,
+   1024x600 panel. Filtered to attention-needing sessions in app.js;
+   this block just makes the remaining rows big and gets everything
+   else out of the way.
+------------------------------------------------------------------ */
+#view:disabled { opacity: .7; cursor: default; }
+body.compact-view {
+  grid-template-columns: 1fr;
+  grid-template-areas: "header" "main";
+}
+body.compact-view aside#chat,
+body.compact-view #app-tiles,
+body.compact-view #plugin-groups,
+body.compact-view label:has(#llm-toggle),
+body.compact-view label:has(#desktop-toggle),
+body.compact-view #provider,
+body.compact-view #chat-toggle,
+body.compact-view #help {
+  display: none;
+}
+#grid[data-view="compact"] {
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+#grid[data-view="compact"] .card {
+  flex-direction: row;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 20px;
+  border-left-width: 6px;
+}
+#grid[data-view="compact"] .row2,
+#grid[data-view="compact"] .card-title-row,
+#grid[data-view="compact"] .blurb-wrap,
+#grid[data-view="compact"] .subagents,
+#grid[data-view="compact"] .tokens,
+#grid[data-view="compact"] .edit-title,
+#grid[data-view="compact"] .ask,
+#grid[data-view="compact"] .peek-btn {
+  display: none;
+}
+#grid[data-view="compact"] .row1 {
+  flex: 1;
+  min-width: 0;
+  gap: 14px;
+}
+#grid[data-view="compact"] .name {
+  font-size: 1.75rem;
+  -webkit-line-clamp: 1;
+}
+#grid[data-view="compact"] .badge {
+  font-size: 1.125rem;
+  padding: 3px 12px;
+}
+#grid[data-view="compact"] .src {
+  font-size: 1rem;
+  padding: 2px 8px;
+}
+#grid[data-view="compact"] .dur {
+  font-size: 1.25rem;
+}
+#grid[data-view="compact"] .actions {
+  margin: 0;
+  padding: 0;
+  flex: 0 0 auto;
+}
+#grid[data-view="compact"] .actions button {
+  font-size: 1.25rem;
+  padding: 10px 20px;
+}

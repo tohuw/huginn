@@ -9,6 +9,14 @@
 let refreshInFlight = null;
 const DEMO_MODE = new URLSearchParams(location.search).get("demo") === "1";
 const DEMO_TOUR = DEMO_MODE && new URLSearchParams(location.search).get("tour") === "1";
+// A bookmarkable kiosk URL for a second, small display (e.g. a 1024x600
+// small second panel): forces the compact view locally without touching the
+// shared ui.view setting, which broadcasts to every connected tab.
+const COMPACT_MODE = new URLSearchParams(location.search).get("view") === "compact";
+
+function effectiveView() {
+  return COMPACT_MODE ? "compact" : (document.getElementById("view").value || "cards");
+}
 
 async function bootstrapSession() {
   const params = new URLSearchParams(location.hash.slice(1));
@@ -526,7 +534,12 @@ function reorder() {
     newest: (a, b) => byClass(a, b) || b.last_activity - a.last_activity || byName(a, b),
     oldest: (a, b) => byClass(a, b) || a.last_activity - b.last_activity || byName(a, b),
   }[mode];
-  const sorted = [...sessions.values()].sort(compare);
+  const view = effectiveView();
+  document.body.classList.toggle("compact-view", view === "compact");
+  const visible = view === "compact"
+    ? [...sessions.values()].filter((s) => s.attention)
+    : [...sessions.values()];
+  const sorted = visible.sort(compare);
   const active = document.activeElement;
   const restore = (grid.contains(active) || appGrid.contains(active) || pluginGroupsContainer.contains(active))
     ? { el: active, range: typeof active.selectionStart === "number"
@@ -557,7 +570,6 @@ function reorder() {
   grid.replaceChildren(sessionFrag);
   appGrid.replaceChildren(appFrag);
   appTiles.hidden = !desktopVisible || appCount === 0;
-  const view = document.getElementById("view").value || "cards";
   for (const [groupKey, g] of grouped) {
     const entry = getOrCreatePluginGroupSection(groupKey, g.label, g.sortLabel);
     const showSortBoundaries = groupSorts.has(groupKey);
@@ -616,9 +628,15 @@ function reorder() {
 
 function renderEmpty() {
   const empty = document.getElementById("empty");
-  empty.hidden = sessions.size > 0;
+  const compact = effectiveView() === "compact";
+  const visibleCount = compact
+    ? [...sessions.values()].filter((s) => s.attention).length
+    : sessions.size;
+  empty.hidden = visibleCount > 0;
   document.getElementById("roster-throbber").hidden = !rosterLoading;
-  document.getElementById("empty-label").textContent = rosterLoading ? "finding agents" : "no sessions";
+  document.getElementById("empty-label").textContent = rosterLoading
+    ? "finding agents"
+    : (compact ? "all clear — nothing needs you" : "no sessions");
 }
 
 function removeCard(key) {
@@ -1214,8 +1232,14 @@ function applySettings(cfg) {
   }
   providerSelect.value = cfg.llm.provider;
   rememberProvider(cfg.llm.provider);
-  const view = cfg.ui.view || "cards";
-  document.getElementById("view").value = view;
+  const viewSelect = document.getElementById("view");
+  viewSelect.value = COMPACT_MODE ? "compact" : (cfg.ui.view || "cards");
+  viewSelect.disabled = COMPACT_MODE;
+  viewSelect.title = COMPACT_MODE
+    ? "Locked to compact view by ?view=compact in the URL"
+    : "Session view";
+  const view = effectiveView();
+  document.body.classList.toggle("compact-view", view === "compact");
   grid.dataset.view = view;
   appGrid.dataset.view = view;
   const sort = cfg.ui.sort || "state";
@@ -1282,11 +1306,15 @@ document.getElementById("view").onchange = async (e) => {
   const previous = grid.dataset.view || "cards";
   grid.dataset.view = e.target.value;
   appGrid.dataset.view = e.target.value;
+  document.body.classList.toggle("compact-view", e.target.value === "compact");
+  reorder();
   const r = await saveSettings({ ui: { view: e.target.value } });
   if (!r.ok) {
     grid.dataset.view = previous;
     appGrid.dataset.view = previous;
     e.target.value = previous;
+    document.body.classList.toggle("compact-view", previous === "compact");
+    reorder();
   }
 };
 document.getElementById("sort").onchange = async (e) => {

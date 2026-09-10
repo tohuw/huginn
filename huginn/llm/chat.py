@@ -77,9 +77,10 @@ def _control_actions(question: str) -> list[tuple[str, str, object, str]]:
         name = provider.group(1)
         actions.append(("llm", "provider", name, f"Ask agent set to {name}."))
     view = re.search(
-        r"\b(?:use|switch|set|change|show|restore)\b.{0,30}\b(list|cards?)\b(?:\s+view)?", q)
+        r"\b(?:use|switch|set|change|show|restore)\b.{0,30}\b(list|cards?|compact)\b(?:\s+view)?", q)
     if view:
-        name = "cards" if view.group(1).startswith("card") else "list"
+        raw = view.group(1)
+        name = "cards" if raw.startswith("card") else ("compact" if raw == "compact" else "list")
         actions.append(("ui", "view", name, f"{name.title()} view enabled."))
     sort = re.search(
         r"\b(?:sort|order)\b.{0,30}\b(state|status|alpha(?:betical(?:ly)?)?|a[-– ]?z|newest|recent|oldest)\b", q)

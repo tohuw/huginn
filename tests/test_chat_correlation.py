@@ -285,6 +285,7 @@ class ChatCorrelationTests(unittest.IsolatedAsyncioTestCase):
             "switch the agent preference to codex": ("llm", "provider", "codex"),
             "show list view": ("ui", "view", "list"),
             "switch back to cards": ("ui", "view", "cards"),
+            "switch to compact view": ("ui", "view", "compact"),
             "hide the ask panel": ("ui", "chat_open", False),
             "hide desktop presence": ("ui", "show_desktop", False),
             "show app tiles": ("ui", "show_desktop", True),

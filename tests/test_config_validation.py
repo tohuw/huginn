@@ -58,6 +58,11 @@ class ValidateSettingTests(unittest.TestCase):
             self.assertIsNone(validate_setting("ui", "sort", value))
         self.assertIsNotNone(validate_setting("ui", "sort", "random"))
 
+    def test_view_enum_includes_compact(self):
+        for value in ("cards", "list", "compact"):
+            self.assertIsNone(validate_setting("ui", "view", value))
+        self.assertIsNotNone(validate_setting("ui", "view", "prompter"))
+
     def test_string_list_type_enforced(self):
         self.assertIsNone(validate_setting("patterns", "permission", ["a", "b"]))
         self.assertIsNotNone(validate_setting("patterns", "permission", "not-a-list"))

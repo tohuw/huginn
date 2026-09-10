@@ -51,6 +51,27 @@ class CardLayoutTests(unittest.TestCase):
         self.assertIn("font-size: 16px", css)
         self.assertIn("text-size-adjust: 100%", css)
 
+    def test_compact_view_is_bookmarkable_and_attention_only(self):
+        source = APP_JS.read_text(encoding="utf-8")
+
+        self.assertIn(
+            'const COMPACT_MODE = new URLSearchParams(location.search).get("view") === "compact";',
+            source,
+        )
+        self.assertIn('document.body.classList.toggle("compact-view", view === "compact");', source)
+        self.assertIn('const visible = view === "compact"', source)
+        self.assertIn('[...sessions.values()].filter((s) => s.attention)', source)
+
+    def test_compact_view_removes_chrome_and_enlarges_the_attention_rows(self):
+        css = STYLE_CSS.read_text(encoding="utf-8")
+
+        self.assertIn("body.compact-view", css)
+        self.assertIn('body.compact-view aside#chat', css)
+        self.assertRegex(
+            css,
+            re.compile(r'#grid\[data-view="compact"\] \.name \{[^}]*font-size: 1\.75rem;', re.S),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

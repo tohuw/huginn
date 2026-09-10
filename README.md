@@ -253,7 +253,13 @@ and editor-hosted sessions fail closed until an exact target can be guaranteed.
 
 Dashboard: session cards sort needs-you-first (permission → input → error →
 done → working → idle); ambient desktop-app tiles form a separate group below
-them. A persistent compact list view is available from the top bar. Tab title +
+them. A persistent compact list view is available from the top bar, alongside a
+**compact** view: large type, attention-needing sessions only, everything else
+stripped away, sized for glancing at a small second display. Load
+`http://127.0.0.1:47100/?view=compact` on that display to lock it to compact mode
+independent of whatever view the
+main dashboard tab is set to — the `view` setting otherwise synchronizes across
+every open tab. Tab title +
 favicon carry only actionable session attention, never app activity. Cards use
 native display scaling, show four lines of session evidence by default, preserve
 expanded evidence across roster polls, and keep their action rails aligned. Per session:

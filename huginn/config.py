@@ -47,7 +47,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "ui": {
         "show_ended": True,
         "show_desktop": True,
-        "view": "cards",                 # cards | list
+        "view": "cards",                 # cards | list | compact
         "sort": "state",                 # state | alpha | newest | oldest
         "live": True,                     # false holds the dashboard card snapshot
         "chat_open": True,
@@ -96,7 +96,7 @@ _POSITIVE_NUMERIC_KEYS = {
     ("doctor", "max_lag_s"),
 }
 _ENUM_KEYS: dict[tuple[str, str], set[str]] = {
-    ("ui", "view"): {"cards", "list"},
+    ("ui", "view"): {"cards", "list", "compact"},
     ("ui", "sort"): {"state", "alpha", "newest", "oldest"},
     ("ui", "chat_span"): {"vertical", "horizontal"},
 }
